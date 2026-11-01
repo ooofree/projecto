@@ -1,0 +1,49 @@
+{
+    "id": "document.management",
+    "name": "文档管理",
+    "version": "0.1.0",
+    "class": "ProjectO\\Modules\\DocumentManagement\\DocumentManagementPlugin",
+    "enabled": true,
+    "requires": [
+        "platform.core",
+        "project.foundation"
+    ],
+    "routes": {
+        "GET documents": "documents",
+        "GET issues": "issues",
+        "GET rfis": "rfis",
+        "POST issue.create": "issue.create",
+        "POST issue.transition": "issue.transition",
+        "POST issue.followup.create": "issue.followup.create",
+        "POST issue.followup.complete": "issue.followup.complete",
+        "POST rfi.create": "rfi.create",
+        "POST rfi.transition": "rfi.transition",
+        "POST rfi.followup.create": "rfi.followup.create",
+        "POST rfi.followup.complete": "rfi.followup.complete"
+    },
+    "migrations": [
+        "database/migrations"
+    ],
+    "permissions": [
+        {
+            "name": "view_issues",
+            "display_name": "查看问题与 RFI",
+            "description": "允许查看当前项目的问题和 RFI"
+        },
+        {
+            "name": "create_issues",
+            "display_name": "创建问题与 RFI",
+            "description": "允许在当前项目登记问题并创建 RFI"
+        },
+        {
+            "name": "edit_issues",
+            "display_name": "处理问题与 RFI",
+            "description": "允许编辑状态、答复和后续事项"
+        },
+        {
+            "name": "manage_issues",
+            "display_name": "管理问题与 RFI",
+            "description": "允许重新打开已关闭的问题或 RFI"
+        }
+    ]
+}

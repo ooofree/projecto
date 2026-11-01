@@ -23,6 +23,9 @@ ob_start();
             <h2><?= $escape($currentProject['project_name']) ?></h2>
         </div>
         <span class="badge"><?= $escape($statusLabels[$currentProject['status']] ?? $currentProject['status']) ?></span>
+        <?php if ($canViewDocuments): ?>
+            <a class="button button-secondary" href="?page=documents">文档管理</a>
+        <?php endif; ?>
     </section>
 <?php else: ?>
     <div class="notice notice-info">请创建或选择一个项目以建立当前工作上下文。</div>

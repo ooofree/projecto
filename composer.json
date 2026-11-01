@@ -14,6 +14,7 @@
             "php tests/auth_service_test.php",
             "php tests/project_foundation_plugin_test.php",
             "php tests/project_service_test.php",
+            "php tests/document_management_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php"
         ]
@@ -21,7 +22,8 @@
     "autoload": {
         "psr-4": {
             "ProjectO\\": "src/",
-            "ProjectO\\Modules\\ProjectFoundation\\": "modules/project-foundation/src/"
+            "ProjectO\\Modules\\ProjectFoundation\\": "modules/project-foundation/src/",
+            "ProjectO\\Modules\\DocumentManagement\\": "modules/document-management/src/"
         }
     }
 }

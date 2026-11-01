@@ -12,6 +12,7 @@
         "POST project.create": "create",
         "POST project.select": "select"
     },
+    "migrations": [],
     "permissions": [
         {
             "name": "view_projects",

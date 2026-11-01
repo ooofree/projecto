@@ -11,6 +11,7 @@ final class PluginRegistry
     private array $routes = [];
     private array $permissions = [];
     private array $permissionNames = [];
+    private array $migrations = [];
 
     public function __construct(PDO $db, string $modulesDirectory)
     {
@@ -80,6 +81,33 @@ final class PluginRegistry
                 $permission['module'] = $manifest['name'] ?? $id;
                 $this->permissions[] = $permission;
             }
+
+            $moduleDirectory = realpath($manifest['directory']);
+            if ($moduleDirectory === false) {
+                throw new RuntimeException("Plugin {$id} directory could not be resolved.");
+            }
+            foreach ($manifest['migrations'] ?? [] as $migrationDirectory) {
+                if (!is_string($migrationDirectory) || $migrationDirectory === '') {
+                    throw new RuntimeException("Plugin {$id} declares an invalid migration directory.");
+                }
+
+                $resolvedDirectory = realpath($moduleDirectory . DIRECTORY_SEPARATOR . $migrationDirectory);
+                if (
+                    $resolvedDirectory === false
+                    || !str_starts_with($resolvedDirectory, $moduleDirectory . DIRECTORY_SEPARATOR)
+                    || !is_dir($resolvedDirectory)
+                ) {
+                    throw new RuntimeException("Plugin {$id} migration directory is invalid.");
+                }
+
+                foreach (glob($resolvedDirectory . DIRECTORY_SEPARATOR . '*.sql') ?: [] as $migrationPath) {
+                    $migrationKey = $id . '/' . basename($migrationPath);
+                    if (isset($this->migrations[$migrationKey])) {
+                        throw new RuntimeException("Duplicate plugin migration: {$migrationKey}.");
+                    }
+                    $this->migrations[$migrationKey] = $migrationPath;
+                }
+            }
         }
     }
 
@@ -97,5 +125,10 @@ final class PluginRegistry
     public function permissions(): array
     {
         return $this->permissions;
+    }
+
+    public function migrations(): array
+    {
+        return $this->migrations;
     }
 }

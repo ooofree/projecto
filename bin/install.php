@@ -72,6 +72,31 @@ try {
         fwrite(STDOUT, "Applied migration: {$migration}\n");
     }
 
+    $plugins = new PluginRegistry($db, dirname(__DIR__) . '/modules');
+    foreach ($plugins->migrations() as $migration => $migrationFile) {
+        $check = $db->prepare('SELECT 1 FROM `ProjectO_Migrations` WHERE `migration` = :migration');
+        $check->execute(['migration' => $migration]);
+        if ($check->fetchColumn() !== false) {
+            continue;
+        }
+
+        $contents = file_get_contents($migrationFile);
+        if ($contents === false) {
+            throw new RuntimeException('Unable to read plugin migration: ' . $migration);
+        }
+
+        foreach (explode(';', $contents) as $statement) {
+            $statement = trim($statement);
+            if ($statement !== '') {
+                $db->exec($statement);
+            }
+        }
+
+        $mark = $db->prepare('INSERT INTO `ProjectO_Migrations` (`migration`) VALUES (:migration)');
+        $mark->execute(['migration' => $migration]);
+        fwrite(STDOUT, "Applied plugin migration: {$migration}\n");
+    }
+
     $db->beginTransaction();
     $db->exec(
         "INSERT INTO `Roles` (`role_name`, `description`)
@@ -82,7 +107,6 @@ try {
         "SELECT `role_id` FROM `Roles` WHERE `role_name` = 'administrator'"
     )->fetchColumn();
 
-    $plugins = new PluginRegistry($db, dirname(__DIR__) . '/modules');
     $permissionInsert = $db->prepare(
         "INSERT INTO `Permissions` (`permission_name`, `display_name`, `description`, `module`)
          VALUES (:name, :display_name, :description, :module)

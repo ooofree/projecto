@@ -38,6 +38,7 @@ final class ProjectFoundationPlugin implements PluginInterface
             'projects' => $this->projects->list(),
             'currentProject' => $this->context->currentProject(),
             'canCreate' => Support::hasPermission($this->context->db, 'create_projects'),
+            'canViewDocuments' => Support::hasPermission($this->context->db, 'view_issues'),
         ]);
     }
 

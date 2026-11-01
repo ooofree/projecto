@@ -57,7 +57,37 @@ tbody tr:last-child td { border-bottom: 0; }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 label { display: grid; gap: 7px; color: #3a465b; font-size: .88rem; font-weight: 650; }
 input, select { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #cfd7e3; border-radius: 8px; background: #fff; color: #172033; font: inherit; }
+textarea { width: 100%; min-height: 92px; padding: 9px 11px; border: 1px solid #cfd7e3; border-radius: 8px; background: #fff; color: #172033; font: inherit; resize: vertical; }
 input:focus, select:focus { outline: 3px solid rgb(53 105 189 / 16%); border-color: #3569bd; }
+textarea:focus { outline: 3px solid rgb(53 105 189 / 16%); border-color: #3569bd; }
+.module-nav { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
+.record-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.record-summary { margin: 0; }
+.record-summary h2 { margin-bottom: 8px; }
+.record-summary p { margin-bottom: 12px; }
+.record-list { display: grid; gap: 14px; }
+.record-card { padding: 18px; border: 1px solid #e4e9f1; border-radius: 12px; background: #fff; }
+.record-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.record-heading h3 { margin: 0; font-size: 1.02rem; line-height: 1.5; overflow-wrap: anywhere; }
+.record-heading .eyebrow { margin-bottom: 5px; }
+.record-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.badge-neutral { background: #f0f2f6; color: #536176; }
+.record-meta { margin: 10px 0; font-size: .84rem; line-height: 1.6; }
+.record-tools { padding-top: 12px; margin-top: 12px; border-top: 1px solid #edf0f5; }
+.record-tools > summary { color: #315d9f; font-weight: 650; cursor: pointer; }
+.record-form { margin-top: 14px; }
+.follow-up-list { display: grid; gap: 8px; padding-left: 20px; }
+.follow-up-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.follow-up-list form { margin: 0; }
+.is-complete { color: #68758a; text-decoration: line-through; }
+.inline-form { display: flex; align-items: flex-end; gap: 10px; margin-top: 12px; }
+.inline-form label { flex: 1; }
+.history-list { display: grid; gap: 12px; padding-left: 24px; }
+.history-list li { padding-left: 4px; }
+.history-list span { display: block; color: #68758a; font-size: .82rem; }
+.history-list p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.checkbox-field { display: flex; grid-template-columns: auto 1fr; align-items: center; justify-content: flex-start; }
+.checkbox-field input { width: 18px; min-height: 18px; margin: 0; }
 .field-wide { grid-column: 1 / -1; }
 .auth-card { width: min(440px, 100%); margin: 8vh auto; padding: 30px; }
 .auth-card .button { width: 100%; }
@@ -71,6 +101,11 @@ input:focus, select:focus { outline: 3px solid rgb(53 105 189 / 16%); border-col
     .form-grid { grid-template-columns: 1fr; }
     .field-wide { grid-column: auto; }
     .panel { padding: 18px 14px; }
+    .record-grid { grid-template-columns: 1fr; }
+    .record-heading { flex-direction: column; }
+    .record-badges { justify-content: flex-start; }
+    .inline-form { align-items: stretch; flex-direction: column; }
+    .checkbox-field { grid-column: 1 / -1; }
     .topbar { padding: 0 18px; }
     .container { width: min(100% - 28px, 1120px); margin-top: 24px; }
 }
