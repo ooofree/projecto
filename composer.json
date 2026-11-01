@@ -1,0 +1,27 @@
+{
+    "name": "project-o/project-manager",
+    "description": "Lightweight, project-centered construction management platform",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.2",
+        "ext-mbstring": "*",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*"
+    },
+    "scripts": {
+        "test": [
+            "php tests/auth_service_test.php",
+            "php tests/project_foundation_plugin_test.php",
+            "php tests/project_service_test.php",
+            "php tests/login_page_smoke_test.php",
+            "php tests/projects_page_smoke_test.php"
+        ]
+    },
+    "autoload": {
+        "psr-4": {
+            "ProjectO\\": "src/",
+            "ProjectO\\Modules\\ProjectFoundation\\": "modules/project-foundation/src/"
+        }
+    }
+}

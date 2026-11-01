@@ -1,0 +1,65 @@
+<?php
+declare(strict_types=1);
+
+use ProjectO\HttpException;
+use ProjectO\Modules\ProjectFoundation\ProjectFoundationPlugin;
+use ProjectO\Plugin\PluginContext;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$db = new PDO('sqlite::memory:', options: [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+]);
+$db->exec('CREATE TABLE Projects (project_id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT, start_date TEXT, end_date TEXT, status TEXT)');
+$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, is_active INTEGER)');
+$db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
+$db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY)');
+$db->exec('CREATE TABLE Role_Permissions (role_id INTEGER, permission_id INTEGER)');
+$db->exec('CREATE TABLE Permissions (permission_id INTEGER PRIMARY KEY, permission_name TEXT)');
+$db->exec('CREATE TABLE audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, ip_address TEXT, user_agent TEXT)');
+$db->exec('INSERT INTO Users (user_id, is_active) VALUES (1, 1)');
+$db->exec('INSERT INTO Roles (role_id) VALUES (1)');
+$db->exec('INSERT INTO User_Roles (user_id, role_id) VALUES (1, 1)');
+$db->exec("INSERT INTO Permissions (permission_id, permission_name) VALUES (1, 'view_projects'), (2, 'create_projects')");
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 1), (1, 2)');
+
+$_SESSION = ['user_id' => 1, 'username' => 'admin'];
+$_SERVER = [];
+$moduleDirectory = dirname(__DIR__) . '/modules/project-foundation';
+$plugin = new ProjectFoundationPlugin(new PluginContext($db, $moduleDirectory));
+$response = $plugin->dispatch('create', [
+    'project_name' => 'Project O Site',
+    'start_date' => '2026-03-01',
+    'end_date' => '2026-11-30',
+    'status' => 'planning',
+]);
+
+if ($response->type !== 'redirect' || $response->location !== '?page=projects') {
+    throw new RuntimeException('Project creation should return to the project list.');
+}
+if ((int) $_SESSION['active_project_id'] !== 1) {
+    throw new RuntimeException('Newly created project should become the active project.');
+}
+if ((int) $db->query('SELECT COUNT(*) FROM Projects')->fetchColumn() !== 1) {
+    throw new RuntimeException('Project plugin should persist the created project.');
+}
+if ((int) $db->query('SELECT COUNT(*) FROM audit_logs')->fetchColumn() !== 2) {
+    throw new RuntimeException('Project creation and selection should both be audited.');
+}
+
+$pageResponse = $plugin->dispatch('index', []);
+if ($pageResponse->type !== 'view' || !is_file((string) $pageResponse->viewPath)) {
+    throw new RuntimeException('Project plugin should resolve its own page template.');
+}
+
+try {
+    $plugin->dispatch('select', ['project_id' => ['1']]);
+    throw new RuntimeException('Malformed project IDs should be rejected.');
+} catch (HttpException $exception) {
+    if ($exception->statusCode !== 422) {
+        throw $exception;
+    }
+}
+
+echo "Project foundation plugin tests passed.\n";

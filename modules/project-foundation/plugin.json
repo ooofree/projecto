@@ -1,0 +1,27 @@
+{
+    "id": "project.foundation",
+    "name": "Project Foundation",
+    "version": "0.1.0",
+    "class": "ProjectO\\Modules\\ProjectFoundation\\ProjectFoundationPlugin",
+    "enabled": true,
+    "requires": [
+        "platform.core"
+    ],
+    "routes": {
+        "GET projects": "index",
+        "POST project.create": "create",
+        "POST project.select": "select"
+    },
+    "permissions": [
+        {
+            "name": "view_projects",
+            "display_name": "查看项目",
+            "description": "允许查看并选择项目"
+        },
+        {
+            "name": "create_projects",
+            "display_name": "创建项目",
+            "description": "允许创建项目"
+        }
+    ]
+}
