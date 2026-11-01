@@ -120,7 +120,14 @@ try {
          VALUES (:role_id, :permission_id)'
     );
 
-    foreach ($plugins->permissions() as $permission) {
+    $permissions = $plugins->permissions();
+    $permissions[] = [
+        'name' => 'manage_platform',
+        'display_name' => '管理平台',
+        'description' => '管理用户、角色权限、插件和系统设置',
+        'module' => '平台管理',
+    ];
+    foreach ($permissions as $permission) {
         $permissionInsert->execute([
             'name' => $permission['name'],
             'display_name' => $permission['display_name'],

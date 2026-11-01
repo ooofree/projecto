@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ProjectO\Plugin;
 
 use PDO;
+use ProjectO\Storage\ObjectStorageInterface;
 use RuntimeException;
 
 final class PluginRegistry
@@ -12,10 +13,22 @@ final class PluginRegistry
     private array $permissions = [];
     private array $permissionNames = [];
     private array $migrations = [];
+    private array $manifests = [];
+    private array $enabledStates = [];
 
-    public function __construct(PDO $db, string $modulesDirectory)
+    public function __construct(
+        private readonly PDO $db,
+        string $modulesDirectory,
+        private readonly ?ObjectStorageInterface $objectStorage = null
+    )
     {
+        $this->permissionNames['manage_platform'] = true;
         $manifests = [];
+        $states = $db->query('SELECT plugin_id, is_enabled FROM Plugin_States')->fetchAll();
+        foreach ($states as $state) {
+            $this->enabledStates[(string) $state['plugin_id']] = (bool) $state['is_enabled'];
+        }
+
         foreach (glob($modulesDirectory . '/*/plugin.json') ?: [] as $manifestPath) {
             $contents = file_get_contents($manifestPath);
             if ($contents === false) {
@@ -34,8 +47,11 @@ final class PluginRegistry
             $manifests[$manifest['id']] = $manifest;
         }
 
-        foreach ($manifests as $id => $manifest) {
-            if (($manifest['enabled'] ?? true) !== true) {
+        $this->manifests = $manifests;
+        foreach ($this->orderedPluginIds($manifests) as $id) {
+            $manifest = $manifests[$id];
+            $enabled = $this->isEnabled($id);
+            if (!$enabled) {
                 continue;
             }
 
@@ -45,7 +61,7 @@ final class PluginRegistry
                 }
                 if (
                     $dependency !== 'platform.core'
-                    && ($manifests[$dependency]['enabled'] ?? true) !== true
+                    && !$this->isEnabled($dependency)
                 ) {
                     throw new RuntimeException("Plugin {$id} requires disabled plugin {$dependency}.");
                 }
@@ -56,7 +72,7 @@ final class PluginRegistry
                 throw new RuntimeException("Plugin class {$class} could not be loaded.");
             }
 
-            $plugin = new $class(new PluginContext($db, $manifest['directory']));
+            $plugin = new $class(new PluginContext($db, $manifest['directory'], $this->objectStorage));
             if (!$plugin instanceof PluginInterface) {
                 throw new RuntimeException("Plugin {$id} must implement PluginInterface.");
             }
@@ -130,5 +146,117 @@ final class PluginRegistry
     public function migrations(): array
     {
         return $this->migrations;
+    }
+
+    public function catalog(): array
+    {
+        $plugins = [];
+        foreach ($this->manifests as $id => $manifest) {
+            $plugins[] = [
+                'id' => $id,
+                'name' => (string) ($manifest['name'] ?? $id),
+                'version' => (string) ($manifest['version'] ?? 'unknown'),
+                'enabled' => $this->isEnabled($id),
+                'required' => ($manifest['required'] ?? false) === true,
+                'requires' => $manifest['requires'] ?? [],
+            ];
+        }
+
+        return $plugins;
+    }
+
+    private function orderedPluginIds(array $manifests): array
+    {
+        $ordered = [];
+        $visited = [];
+        $visiting = [];
+        $visit = function (string $pluginId) use (&$visit, &$ordered, &$visited, &$visiting, $manifests): void {
+            if (isset($visited[$pluginId])) {
+                return;
+            }
+            if (isset($visiting[$pluginId])) {
+                throw new RuntimeException('Plugin dependency cycle detected at ' . $pluginId . '.');
+            }
+            $visiting[$pluginId] = true;
+            foreach ($manifests[$pluginId]['requires'] ?? [] as $dependency) {
+                if ($dependency !== 'platform.core' && isset($manifests[$dependency])) {
+                    $visit($dependency);
+                }
+            }
+            unset($visiting[$pluginId]);
+            $visited[$pluginId] = true;
+            $ordered[] = $pluginId;
+        };
+
+        foreach (array_keys($manifests) as $pluginId) {
+            $visit($pluginId);
+        }
+        return $ordered;
+    }
+
+    public function setEnabled(string $pluginId, bool $enabled): void
+    {
+        if (!isset($this->manifests[$pluginId])) {
+            throw new \ProjectO\HttpException('插件不存在。', 404);
+        }
+
+        $manifest = $this->manifests[$pluginId];
+        if (!$enabled && ($manifest['required'] ?? false) === true) {
+            throw new \ProjectO\HttpException('必需插件不可停用。', 422);
+        }
+
+        if ($enabled) {
+            foreach ($manifest['requires'] ?? [] as $dependency) {
+                if ($dependency !== 'platform.core' && !isset($this->manifests[$dependency])) {
+                    throw new \ProjectO\HttpException('缺少必需插件：' . $dependency, 422);
+                }
+                if ($dependency !== 'platform.core' && !$this->isEnabled($dependency)) {
+                    throw new \ProjectO\HttpException('请先启用依赖插件：' . $dependency, 422);
+                }
+            }
+        } else {
+            foreach ($this->manifests as $dependentId => $dependent) {
+                if (
+                    $dependentId !== $pluginId
+                    && $this->isEnabled($dependentId)
+                    && in_array($pluginId, $dependent['requires'] ?? [], true)
+                ) {
+                    throw new \ProjectO\HttpException(
+                        '仍有已启用插件依赖此插件：' . $dependentId,
+                        422
+                    );
+                }
+            }
+        }
+
+        $select = $this->db->prepare('SELECT 1 FROM Plugin_States WHERE plugin_id = :plugin_id');
+        $select->execute(['plugin_id' => $pluginId]);
+        if ($select->fetchColumn() === false) {
+            $write = $this->db->prepare(
+                'INSERT INTO Plugin_States (plugin_id, is_enabled, updated_by)
+                 VALUES (:plugin_id, :is_enabled, :updated_by)'
+            );
+        } else {
+            $write = $this->db->prepare(
+                'UPDATE Plugin_States
+                 SET is_enabled = :is_enabled, updated_by = :updated_by
+                 WHERE plugin_id = :plugin_id'
+            );
+        }
+        $write->execute([
+            'plugin_id' => $pluginId,
+            'is_enabled' => $enabled ? 1 : 0,
+            'updated_by' => (int) ($_SESSION['user_id'] ?? 0),
+        ]);
+        $this->enabledStates[$pluginId] = $enabled;
+    }
+
+    private function isEnabled(string $pluginId): bool
+    {
+        if (array_key_exists($pluginId, $this->enabledStates)) {
+            return $this->enabledStates[$pluginId];
+        }
+
+        return ($this->manifests[$pluginId]['enabled'] ?? true) === true;
     }
 }

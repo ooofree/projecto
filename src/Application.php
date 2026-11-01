@@ -6,17 +6,24 @@ namespace ProjectO;
 use PDO;
 use ProjectO\Plugin\PluginRegistry;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Storage\StorageFactory;
 use Throwable;
 
 final class Application
 {
     private AuthService $auth;
     private PluginRegistry $plugins;
+    private PlatformAdministrationService $platformAdministration;
 
     public function __construct(private readonly PDO $db)
     {
         $this->auth = new AuthService($db);
-        $this->plugins = new PluginRegistry($db, dirname(__DIR__) . '/modules');
+        $this->plugins = new PluginRegistry(
+            $db,
+            dirname(__DIR__) . '/modules',
+            StorageFactory::fromEnvironment()
+        );
+        $this->platformAdministration = new PlatformAdministrationService($db, $this->plugins);
     }
 
     public function run(): void
@@ -70,7 +77,15 @@ final class Application
             $this->redirect('?page=login');
         }
 
-        $response = $this->plugins->dispatch('POST', $action, $_POST);
+        if (str_starts_with($action, 'admin.')) {
+            $this->respond($this->platformAdministration->dispatch($action, $_POST));
+        }
+
+        $input = $_POST;
+        if ($_FILES !== []) {
+            $input['_files'] = $_FILES;
+        }
+        $response = $this->plugins->dispatch('POST', $action, $input);
         if ($response === null) {
             throw new HttpException('未找到对应操作。', 404);
         }
@@ -92,6 +107,15 @@ final class Application
         }
 
         Support::requireLogin();
+        if ($page === 'admin') {
+            $this->render(
+                dirname(__DIR__) . '/views/admin.php',
+                $this->platformAdministration->pageData(),
+                true
+            );
+            return;
+        }
+
         $response = $this->plugins->dispatch('GET', $page, $_GET);
         if ($response === null) {
             throw new HttpException('页面不存在。', 404);
@@ -120,7 +144,7 @@ final class Application
         $this->render($response->viewPath, $response->data, true);
     }
 
-    private function render(string $view, array $data = [], bool $isAbsolutePath = false): void
+    private function render(string $view, array $viewData = [], bool $isAbsolutePath = false): void
     {
         $flash = $_SESSION['flash'] ?? null;
         unset($_SESSION['flash']);
@@ -128,7 +152,10 @@ final class Application
         $escape = [Support::class, 'escape'];
         $csrfToken = Support::csrfToken();
         $username = (string) ($_SESSION['username'] ?? '');
-        extract($data, EXTR_SKIP);
+        $canManagePlatform = isset($_SESSION['user_id'])
+            && Support::hasPermission($this->db, 'manage_platform');
+        $theme = $this->platformAdministration->theme();
+        extract($viewData, EXTR_SKIP);
         $viewPath = $isAbsolutePath ? $view : dirname(__DIR__) . '/views/' . $view . '.php';
         if (!is_file($viewPath)) {
             throw new HttpException('页面模板不存在。', 500);

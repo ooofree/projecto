@@ -3,16 +3,23 @@
     "name": "Project Foundation",
     "version": "0.1.0",
     "class": "ProjectO\\Modules\\ProjectFoundation\\ProjectFoundationPlugin",
+    "required": true,
     "enabled": true,
     "requires": [
         "platform.core"
     ],
     "routes": {
         "GET projects": "index",
+        "GET spaces": "spaces",
         "POST project.create": "create",
-        "POST project.select": "select"
+        "POST project.select": "select",
+        "POST space.save": "space.save",
+        "POST space.room.map": "space.room.map",
+        "POST space.room.unmap": "space.room.unmap"
     },
-    "migrations": [],
+    "migrations": [
+        "database/migrations"
+    ],
     "permissions": [
         {
             "name": "view_projects",
@@ -23,6 +30,16 @@
             "name": "create_projects",
             "display_name": "创建项目",
             "description": "允许创建项目"
+        },
+        {
+            "name": "view_project_spaces",
+            "display_name": "查看项目空间",
+            "description": "允许查看当前项目楼栋、楼层、区域和房间"
+        },
+        {
+            "name": "manage_project_spaces",
+            "display_name": "管理项目空间",
+            "description": "允许维护当前项目楼栋、楼层、区域和房间"
         }
     ]
 }

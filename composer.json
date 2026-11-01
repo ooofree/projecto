@@ -9,12 +9,17 @@
         "ext-pdo": "*",
         "ext-pdo_mysql": "*"
     },
+    "suggest": {
+        "aws/aws-sdk-php": "Required only when enabling Cloudflare R2 sample-image storage"
+    },
     "scripts": {
         "test": [
             "php tests/auth_service_test.php",
             "php tests/project_foundation_plugin_test.php",
             "php tests/project_service_test.php",
             "php tests/document_management_test.php",
+            "php tests/material_management_test.php",
+            "php tests/platform_administration_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php"
         ]
@@ -23,7 +28,8 @@
         "psr-4": {
             "ProjectO\\": "src/",
             "ProjectO\\Modules\\ProjectFoundation\\": "modules/project-foundation/src/",
-            "ProjectO\\Modules\\DocumentManagement\\": "modules/document-management/src/"
+            "ProjectO\\Modules\\DocumentManagement\\": "modules/document-management/src/",
+            "ProjectO\\Modules\\MaterialManagement\\": "modules/material-management/src/"
         }
     }
 }

@@ -1,0 +1,142 @@
+{
+    "id": "material.management",
+    "name": "材料与样品跟踪",
+    "version": "0.1.0",
+    "class": "ProjectO\\Modules\\MaterialManagement\\MaterialManagementPlugin",
+    "enabled": true,
+    "requires": [
+        "platform.core",
+        "project.foundation"
+    ],
+    "routes": {
+        "GET materials": "materials",
+        "GET brands": "brands",
+        "GET auxiliary-materials": "auxiliaries",
+        "GET suppliers": "suppliers",
+        "GET supplier-materials": "supplier-materials",
+        "GET quotations": "quotations",
+        "GET samples": "samples",
+        "GET estimates": "estimates",
+        "POST material.category.save": "category.save",
+        "POST material.category.delete": "category.delete",
+        "POST material.save": "material.save",
+        "POST material.delete": "material.delete",
+        "POST material.brand.save": "brand.save",
+        "POST material.brand.delete": "brand.delete",
+        "POST material.auxiliary.save": "auxiliary.save",
+        "POST material.auxiliary.delete": "auxiliary.delete",
+        "POST material.supplier.save": "supplier.save",
+        "POST material.supplier.delete": "supplier.delete",
+        "POST material.supplier_material.save": "supplier_material.save",
+        "POST material.supplier_material.delete": "supplier_material.delete",
+        "POST material.quotation.save": "quotation.save",
+        "POST material.quotation.default": "quotation.default",
+        "POST material.quotation.clear_default": "quotation.clear_default",
+        "POST material.quotation.delete": "quotation.delete",
+        "POST material.sample.save": "sample.save",
+        "POST material.sample.archive": "sample.archive",
+        "POST material.sample.image.upload": "sample.image.upload",
+        "POST material.estimate.save": "estimate.save",
+        "POST material.estimate.delete": "estimate.delete"
+    },
+    "migrations": [
+        "database/migrations"
+    ],
+    "permissions": [
+        {
+            "name": "view_materials",
+            "display_name": "查看材料",
+            "description": "查看全局材料目录和材料估算所用材料"
+        },
+        {
+            "name": "edit_materials",
+            "display_name": "编辑材料",
+            "description": "维护材料和分类"
+        },
+        {
+            "name": "delete_materials",
+            "display_name": "删除材料",
+            "description": "删除未被业务记录引用的材料或分类"
+        },
+        {
+            "name": "view_brands",
+            "display_name": "查看品牌",
+            "description": "查看全局品牌目录"
+        },
+        {
+            "name": "edit_brands",
+            "display_name": "编辑品牌",
+            "description": "维护品牌"
+        },
+        {
+            "name": "delete_brands",
+            "display_name": "删除品牌",
+            "description": "删除未被供应商材料引用的品牌"
+        },
+        {
+            "name": "edit_auxiliary_materials",
+            "display_name": "编辑辅材",
+            "description": "维护全局辅材目录"
+        },
+        {
+            "name": "view_suppliers",
+            "display_name": "查看供应商",
+            "description": "查看全局供应商目录"
+        },
+        {
+            "name": "edit_suppliers",
+            "display_name": "编辑供应商",
+            "description": "维护供应商信息"
+        },
+        {
+            "name": "view_supplier_materials",
+            "display_name": "查看供应商材料",
+            "description": "查看供应商产品及其品牌/规格"
+        },
+        {
+            "name": "edit_supplier_materials",
+            "display_name": "编辑供应商材料",
+            "description": "维护供应商材料"
+        },
+        {
+            "name": "view_material_quotations",
+            "display_name": "查看材料报价",
+            "description": "查看报价记录与默认报价"
+        },
+        {
+            "name": "edit_material_quotations",
+            "display_name": "编辑材料报价",
+            "description": "创建、更新、删除报价并人工选择默认报价"
+        },
+        {
+            "name": "view_material_samples",
+            "display_name": "查看材料样品",
+            "description": "查看当前项目的样品跟踪记录和受控图片"
+        },
+        {
+            "name": "add_sample",
+            "display_name": "登记材料样品",
+            "description": "在当前项目登记样品及其项目位置"
+        },
+        {
+            "name": "edit_sample",
+            "display_name": "编辑材料样品",
+            "description": "维护当前项目样品状态并上传图片"
+        },
+        {
+            "name": "delete_sample",
+            "display_name": "归档材料样品",
+            "description": "归档当前项目样品，不硬删除记录或图片"
+        },
+        {
+            "name": "view_material_estimates",
+            "display_name": "查看材料估算明细",
+            "description": "查看当前项目按空间归属的材料数量和备注"
+        },
+        {
+            "name": "edit_material_estimates",
+            "display_name": "编辑材料估算明细",
+            "description": "维护当前项目材料估算数量和备注"
+        }
+    ]
+}

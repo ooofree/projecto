@@ -16,11 +16,33 @@ $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
 $db->exec('CREATE TABLE Permissions (permission_id INTEGER PRIMARY KEY, permission_name TEXT)');
 $db->exec('CREATE TABLE Role_Permissions (role_id INTEGER, permission_id INTEGER)');
 $db->exec('CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, ip_address TEXT, user_agent TEXT)');
+$db->exec('CREATE TABLE Plugin_States (plugin_id TEXT PRIMARY KEY, is_enabled INTEGER)');
+$db->exec(
+    "CREATE TABLE System_Settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL,
+        updated_by INTEGER,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )"
+);
+$db->exec(
+    "INSERT INTO System_Settings (setting_key, setting_value) VALUES
+        ('theme', 'light'),
+        ('language', 'zh-CN'),
+        ('default_country_code', 'CN'),
+        ('default_currency_code', 'CNY'),
+        ('admin_guard', '1')"
+);
 $db->exec("INSERT INTO Users (user_id, is_active) VALUES (1, 1)");
 $db->exec('INSERT INTO Roles (role_id) VALUES (1)');
-$db->exec("INSERT INTO Permissions (permission_id, permission_name) VALUES (1, 'view_projects')");
+$db->exec(
+    "INSERT INTO Permissions (permission_id, permission_name) VALUES
+        (1, 'view_projects'),
+        (2, 'view_material_samples'),
+        (3, 'view_material_quotations')"
+);
 $db->exec('INSERT INTO User_Roles (user_id, role_id) VALUES (1, 1)');
-$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 1)');
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 1), (1, 2), (1, 3)');
 $db->exec(
     "INSERT INTO Projects (project_id, project_name, start_date, end_date, status)
      VALUES (1, '<script>alert(1)</script>', NULL, NULL, 'planning')"
@@ -45,8 +67,10 @@ if (
     || !str_contains($html, '&lt;script&gt;alert(1)&lt;/script&gt;')
     || str_contains($html, '<script>alert(1)</script>')
     || str_contains($html, '创建项目')
+    || !str_contains($html, 'href="?page=samples">材料样品</a>')
+    || str_contains($html, 'href="?page=spaces">项目空间</a>')
 ) {
-    throw new RuntimeException('Projects page context, escaping, or permission display check failed.');
+    throw new RuntimeException('Projects page context, sample-link visibility, escaping, or permission display check failed.');
 }
 
 http_response_code(200);

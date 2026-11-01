@@ -5,6 +5,7 @@ namespace ProjectO\Plugin;
 
 use PDO;
 use ProjectO\ProjectContext;
+use ProjectO\Storage\ObjectStorageInterface;
 use RuntimeException;
 
 final class PluginContext
@@ -13,7 +14,8 @@ final class PluginContext
 
     public function __construct(
         public readonly PDO $db,
-        private readonly string $moduleDirectory
+        private readonly string $moduleDirectory,
+        private readonly ?ObjectStorageInterface $objectStorage = null
     ) {
         $this->projectContext = new ProjectContext($db);
     }
@@ -26,6 +28,11 @@ final class PluginContext
     public function requireCurrentProject(): array
     {
         return $this->projectContext->requireCurrent();
+    }
+
+    public function objectStorage(): ?ObjectStorageInterface
+    {
+        return $this->objectStorage;
     }
 
     public function view(string $relativePath, array $data = []): PluginResponse

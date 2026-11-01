@@ -26,6 +26,13 @@ ob_start();
         <?php if ($canViewDocuments): ?>
             <a class="button button-secondary" href="?page=documents">文档管理</a>
         <?php endif; ?>
+        <?php if ($canViewMaterials): ?><a class="button button-secondary" href="?page=materials">材料目录</a><?php endif; ?>
+        <?php if ($canViewQuotations): ?><a class="button button-secondary" href="?page=quotations">材料报价</a><?php endif; ?>
+        <?php if ($canViewSamples): ?><a class="button button-secondary" href="?page=samples">材料样品</a><?php endif; ?>
+        <?php if ($canViewSpaces): ?>
+            <a class="button button-secondary" href="?page=spaces">项目空间</a>
+            <?php if ($canViewEstimates): ?><a class="button button-secondary" href="?page=estimates">材料估算明细</a><?php endif; ?>
+        <?php endif; ?>
     </section>
 <?php else: ?>
     <div class="notice notice-info">请创建或选择一个项目以建立当前工作上下文。</div>

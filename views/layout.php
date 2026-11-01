@@ -6,11 +6,14 @@
     <title><?= $escape($title ?? 'Project O') ?> · Project O</title>
     <link rel="stylesheet" href="assets/app.css">
 </head>
-<body>
+<body class="theme-<?= $escape($theme) ?>">
 <header class="topbar">
     <a class="brand" href="?page=projects">Project O</a>
     <?php if ($username !== ''): ?>
         <div class="account">
+            <?php if ($canManagePlatform): ?>
+                <a class="button button-quiet" href="?page=admin">平台管理</a>
+            <?php endif; ?>
             <span><?= $escape($username) ?></span>
             <form method="post" action="">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">

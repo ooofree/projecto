@@ -6,6 +6,23 @@ use ProjectO\Application;
 require dirname(__DIR__) . '/vendor/autoload.php';
 
 $db = new PDO('sqlite::memory:');
+$db->exec('CREATE TABLE Plugin_States (plugin_id TEXT PRIMARY KEY, is_enabled INTEGER)');
+$db->exec(
+    "CREATE TABLE System_Settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL,
+        updated_by INTEGER,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )"
+);
+$db->exec(
+    "INSERT INTO System_Settings (setting_key, setting_value) VALUES
+        ('theme', 'light'),
+        ('language', 'zh-CN'),
+        ('default_country_code', 'CN'),
+        ('default_currency_code', 'CNY'),
+        ('admin_guard', '1')"
+);
 $_SESSION = [];
 $_GET = ['page' => 'login'];
 $_POST = [];

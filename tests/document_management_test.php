@@ -54,6 +54,23 @@ $db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY)');
 $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
 $db->exec('CREATE TABLE Permissions (permission_id INTEGER PRIMARY KEY, permission_name TEXT)');
 $db->exec('CREATE TABLE Role_Permissions (role_id INTEGER, permission_id INTEGER)');
+$db->exec('CREATE TABLE Plugin_States (plugin_id TEXT PRIMARY KEY, is_enabled INTEGER)');
+$db->exec(
+    "CREATE TABLE System_Settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL,
+        updated_by INTEGER,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )"
+);
+$db->exec(
+    "INSERT INTO System_Settings (setting_key, setting_value) VALUES
+        ('theme', 'light'),
+        ('language', 'zh-CN'),
+        ('default_country_code', 'CN'),
+        ('default_currency_code', 'CNY'),
+        ('admin_guard', '1')"
+);
 $db->exec(
     "CREATE TABLE audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
