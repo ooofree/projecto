@@ -3,11 +3,14 @@
 <section class="panel">
     <div class="panel-heading"><h2>辅材目录</h2><span class="muted"><?= count($auxiliaries) ?> 项</span></div>
     <?php if ($canEdit): ?>
-        <form method="post" class="form-grid">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.auxiliary.save">
-            <label>辅材名称<input name="aux_name" maxlength="255" required></label><label>计量单位<input name="unit" maxlength="50" required></label><label class="field-wide">说明<textarea name="description" rows="2" maxlength="20000"></textarea></label>
-            <div class="field-wide"><button class="button button-primary" type="submit">新增辅材</button></div>
-        </form>
+        <details class="entry-disclosure">
+            <summary>新增辅材</summary>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.auxiliary.save">
+                <label>辅材名称<input name="aux_name" maxlength="255" required></label><label>计量单位<input name="unit" maxlength="50" required></label><label class="field-wide">说明<textarea name="description" rows="2" maxlength="20000"></textarea></label>
+                <div class="field-wide"><button class="button button-primary" type="submit">保存辅材</button></div>
+            </form>
+        </details>
     <?php endif; ?>
     <?php foreach ($auxiliaries as $auxiliary): ?>
         <form method="post" class="form-grid record-form">

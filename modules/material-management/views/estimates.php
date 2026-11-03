@@ -3,22 +3,25 @@
 <?php if ($canEdit && ($choices['buildings'] === [] || $choices['materials'] === [])): ?><div class="notice notice-info">创建估算明细前，请先建立项目楼栋和全局材料目录。</div><?php endif; ?>
 <?php if ($canEdit && $choices['buildings'] !== [] && $choices['materials'] !== []): ?>
     <section class="panel">
-        <div class="panel-heading"><h2>新增材料估算明细</h2></div>
-        <form method="post" class="form-grid">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.estimate.save">
-            <label>楼栋<select name="building_id" required><?php foreach ($choices['buildings'] as $building): ?><option value="<?= (int) $building['building_id'] ?>"><?= $escape($building['building_number'] . ' ' . $building['building_name']) ?></option><?php endforeach; ?></select></label>
-            <label>楼层（可选）<select name="floor_id"><option value="">不指定</option><?php foreach ($choices['floors'] as $floor): ?><option value="<?= (int) $floor['floor_id'] ?>"><?= $escape($floor['floor_number'] . ' ' . ($floor['floor_name'] ?? '')) ?></option><?php endforeach; ?></select></label>
-            <label>房间（可选）<select name="room_id"><option value="">不指定</option><?php foreach ($choices['rooms'] as $room): ?><option value="<?= (int) $room['room_id'] ?>"><?= $escape($room['floor_number'] . ' · ' . $room['room_number']) ?></option><?php endforeach; ?></select></label>
-            <label>材料<select name="material_id" required><?php foreach ($choices['materials'] as $material): ?><option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ' (' . $material['unit'] . ')') ?></option><?php endforeach; ?></select></label>
-            <label>估算数量<input type="number" name="estimated_quantity" min="0" step="0.0001" value="0" required></label>
-            <label class="field-wide">备注<textarea name="remarks" rows="2" maxlength="20000"></textarea></label>
-            <div class="field-wide"><button class="button button-primary" type="submit">新增明细</button></div>
-        </form>
+        <div class="panel-heading"><h2>材料估算台账</h2><span class="muted"><?= count($estimates) ?> 条</span></div>
+        <details class="entry-disclosure">
+            <summary>新增估算明细</summary>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.estimate.save">
+                <label>楼栋<select name="building_id" required><?php foreach ($choices['buildings'] as $building): ?><option value="<?= (int) $building['building_id'] ?>"><?= $escape($building['building_number'] . ' ' . $building['building_name']) ?></option><?php endforeach; ?></select></label>
+                <label>楼层（可选）<select name="floor_id"><option value="">不指定</option><?php foreach ($choices['floors'] as $floor): ?><option value="<?= (int) $floor['floor_id'] ?>"><?= $escape($floor['floor_number'] . ' ' . ($floor['floor_name'] ?? '')) ?></option><?php endforeach; ?></select></label>
+                <label>房间（可选）<select name="room_id"><option value="">不指定</option><?php foreach ($choices['rooms'] as $room): ?><option value="<?= (int) $room['room_id'] ?>"><?= $escape($room['floor_number'] . ' · ' . $room['room_number']) ?></option><?php endforeach; ?></select></label>
+                <label>材料<select name="material_id" required><?php foreach ($choices['materials'] as $material): ?><option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ' (' . $material['unit'] . ')') ?></option><?php endforeach; ?></select></label>
+                <label>估算数量<input type="number" name="estimated_quantity" min="0" step="0.0001" value="0" required></label>
+                <label class="field-wide">备注<textarea name="remarks" rows="2" maxlength="20000"></textarea></label>
+                <div class="field-wide"><button class="button button-primary" type="submit">保存明细</button></div>
+            </form>
+        </details>
     </section>
 <?php endif; ?>
 
 <section class="panel">
-    <div class="panel-heading"><h2>当前项目估算明细</h2><span class="muted"><?= count($estimates) ?> 条（最多显示最近 500 条）</span></div>
+    <div class="panel-heading"><h2>估算记录</h2><span class="muted">最多显示最近 500 条</span></div>
     <?php if ($estimates === []): ?><p class="empty-state">当前项目尚无材料估算明细。</p><?php endif; ?>
     <?php foreach ($estimates as $estimate): ?>
         <details class="record-card">

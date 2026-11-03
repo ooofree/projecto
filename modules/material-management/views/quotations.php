@@ -7,17 +7,20 @@ $today = date('Y-m-d');
     <div><p class="eyebrow">供应链主数据 · 全局报价</p><h1>材料报价</h1><p class="muted">报价按币种分别比较，不做汇率、税费或成本计算；默认报价由用户手动指定。</p></div>
 </section>
 <section class="panel">
-    <div class="panel-heading"><h2>新增报价</h2></div>
+    <div class="panel-heading"><h2>报价录入</h2></div>
     <?php if (!$canEdit): ?><p class="muted">当前账号仅有查看权限。</p><?php elseif ($data['materials'] === [] || $data['supplierMaterials'] === []): ?><p class="empty-state">请先创建材料、供应商和供应商材料。</p><?php else: ?>
-        <form method="post" class="form-grid">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.quotation.save">
-            <label>内部材料<select name="material_id" required><?php foreach ($data['materials'] as $material): ?><option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name']) ?></option><?php endforeach; ?></select></label>
-            <label>供应商材料<select name="supplier_material_id" required><?php foreach ($data['supplierMaterials'] as $item): ?><option value="<?= (int) $item['supplier_material_id'] ?>"><?= $escape($item['supplier_name'] . ' · ' . $item['supplier_material_name'] . ' [' . $item['supplier_material_code'] . ']') ?></option><?php endforeach; ?></select></label>
-            <label>采购单价<input type="number" name="purchase_unit_price" min="0" step="0.0001" required></label><label>报价日期<input type="date" name="quotation_date" value="<?= $escape($today) ?>" required></label>
-            <label>币种代码<input name="currency_code" maxlength="3" pattern="[A-Za-z]{3}" required></label><label>最小起订量<input type="number" name="min_order_quantity" min="0" step="0.0001"></label>
-            <label>确认税率（%）<input type="number" name="confirmed_tax_rate" min="0" max="100" step="0.01" value="0"></label>
-            <div class="field-wide"><button class="button button-primary" type="submit">创建报价</button></div>
-        </form>
+        <details class="entry-disclosure">
+            <summary>新增报价</summary>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.quotation.save">
+                <label>内部材料<select name="material_id" required><?php foreach ($data['materials'] as $material): ?><option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name']) ?></option><?php endforeach; ?></select></label>
+                <label>供应商材料<select name="supplier_material_id" required><?php foreach ($data['supplierMaterials'] as $item): ?><option value="<?= (int) $item['supplier_material_id'] ?>"><?= $escape($item['supplier_name'] . ' · ' . $item['supplier_material_name'] . ' [' . $item['supplier_material_code'] . ']') ?></option><?php endforeach; ?></select></label>
+                <label>采购单价<input type="number" name="purchase_unit_price" min="0" step="0.0001" required></label><label>报价日期<input type="date" name="quotation_date" value="<?= $escape($today) ?>" required></label>
+                <label>币种代码<input name="currency_code" maxlength="3" pattern="[A-Za-z]{3}" required></label><label>最小起订量<input type="number" name="min_order_quantity" min="0" step="0.0001"></label>
+                <label>确认税率（%）<input type="number" name="confirmed_tax_rate" min="0" max="100" step="0.01" value="0"></label>
+                <div class="field-wide"><button class="button button-primary" type="submit">保存报价</button></div>
+            </form>
+        </details>
     <?php endif; ?>
 </section>
 

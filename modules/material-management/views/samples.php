@@ -23,25 +23,28 @@ require __DIR__ . '/_nav.php';
 
 <?php if ($canCreate && $quotations !== [] && $locationOptions !== []): ?>
     <section class="panel">
-        <div class="panel-heading"><div><h2>登记样品</h2><p class="muted">先在项目空间建立楼栋、楼层或区域，再关联样品。</p></div></div>
-        <form method="post" class="form-grid">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.sample.save">
-            <label>材料报价<select name="quotation_id" required><?php foreach ($quotations as $quote): ?><option value="<?= (int) $quote['quotation_id'] ?>"><?= $escape(($quote['material_code'] ? $quote['material_code'] . ' · ' : '') . $quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code']) ?></option><?php endforeach; ?></select></label>
-            <label>项目位置<select name="location" required><option value="">请选择当前项目位置</option><?php foreach ($locationOptions as $location): ?><option value="<?= $escape($location['value']) ?>"><?= $escape($location['label']) ?></option><?php endforeach; ?></select></label>
-            <label>送样数量<input type="number" name="sample_quantity" min="0" step="1" value="0" required></label><label>颜色<input name="color" maxlength="50"></label>
-            <label>资料状态<select name="document_status"><option value="pending_submission">待提交</option><option value="submitted">已提交</option><option value="reviewed">已审核</option></select></label>
-            <label>送样状态<select name="sent_status"><option value="not_sent">未送</option><option value="sent">已送</option><option value="partially_sent">部分送样</option></select></label>
-            <label>送样日期<input type="date" name="sent_date"></label><label>业主审批状态<select name="owner_approval_status"><option value="pending">待审批</option><option value="approved">已通过</option><option value="rejected">已拒绝</option></select></label>
-            <label>业主审批日期<input type="date" name="owner_approval_date"></label><label class="field-wide">备注<textarea name="remarks" rows="2" maxlength="20000"></textarea></label>
-            <div class="field-wide"><button class="button button-primary" type="submit">登记样品</button></div>
-        </form>
+        <div class="panel-heading"><div><h2>样品台账</h2><p class="muted">项目：<?= $escape($currentProject['project_name']) ?></p></div><span class="muted"><?= count($samples) ?> 条</span></div>
+        <details class="entry-disclosure">
+            <summary>登记样品</summary>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.sample.save">
+                <label>材料报价<select name="quotation_id" required><?php foreach ($quotations as $quote): ?><option value="<?= (int) $quote['quotation_id'] ?>"><?= $escape(($quote['material_code'] ? $quote['material_code'] . ' · ' : '') . $quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code']) ?></option><?php endforeach; ?></select></label>
+                <label>项目位置<select name="location" required><option value="">请选择当前项目位置</option><?php foreach ($locationOptions as $location): ?><option value="<?= $escape($location['value']) ?>"><?= $escape($location['label']) ?></option><?php endforeach; ?></select></label>
+                <label>送样数量<input type="number" name="sample_quantity" min="0" step="1" value="0" required></label><label>颜色<input name="color" maxlength="50"></label>
+                <label>资料状态<select name="document_status"><option value="pending_submission">待提交</option><option value="submitted">已提交</option><option value="reviewed">已审核</option></select></label>
+                <label>送样状态<select name="sent_status"><option value="not_sent">未送</option><option value="sent">已送</option><option value="partially_sent">部分送样</option></select></label>
+                <label>送样日期<input type="date" name="sent_date"></label><label>业主审批状态<select name="owner_approval_status"><option value="pending">待审批</option><option value="approved">已通过</option><option value="rejected">已拒绝</option></select></label>
+                <label>业主审批日期<input type="date" name="owner_approval_date"></label><label class="field-wide">备注<textarea name="remarks" rows="2" maxlength="20000"></textarea></label>
+                <div class="field-wide"><button class="button button-primary" type="submit">保存样品</button></div>
+            </form>
+        </details>
     </section>
 <?php elseif ($canCreate): ?>
     <div class="notice notice-info">登记样品前，需先建立至少一个项目空间位置和一个材料报价。</div>
 <?php endif; ?>
 
 <section class="panel">
-    <div class="panel-heading"><h2>当前项目样品</h2><span class="muted"><?= count($samples) ?> 条（最多显示最近 200 条）</span></div>
+    <div class="panel-heading"><h2>样品跟踪记录</h2><span class="muted">最多显示最近 200 条</span></div>
     <?php if ($samples === []): ?><p class="empty-state">当前项目尚无未归档样品。</p><?php endif; ?>
     <?php foreach ($samples as $sample): ?>
         <details class="record-card" open>

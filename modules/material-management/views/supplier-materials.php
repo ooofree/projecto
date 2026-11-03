@@ -3,16 +3,19 @@
 <section class="panel">
     <div class="panel-heading"><h2>供应商材料目录</h2><span class="muted"><?= count($supplierMaterials) ?> 项</span></div>
     <?php if ($canEdit): ?>
-        <form method="post" class="form-grid">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.supplier_material.save">
-            <label>供应商<select name="supplier_id" required><?php foreach ($suppliers as $supplier): ?><option value="<?= (int) $supplier['supplier_id'] ?>"><?= $escape($supplier['supplier_name']) ?></option><?php endforeach; ?></select></label>
-            <label>品牌<select name="brand_id"><option value="">无</option><?php foreach ($brands as $brand): ?><option value="<?= (int) $brand['brand_id'] ?>"><?= $escape($brand['brand_name']) ?></option><?php endforeach; ?></select></label>
-            <label>供应商材料编号<input name="supplier_material_code" maxlength="100" required></label><label>供应商材料名称<input name="supplier_material_name" maxlength="255" required></label>
-            <label>交期（天）<input type="number" name="lead_time_days" min="0" max="36500"></label><label>覆盖数量<input type="number" name="coverage_quantity" min="0" step="0.0001"></label>
-            <label>覆盖单位<input name="coverage_unit" maxlength="50"></label><label>包装总价<input type="number" name="price_total" min="0" step="0.0001"></label><label>币种代码<input name="currency_code" maxlength="3" pattern="[A-Za-z]{3}"></label>
-            <label class="field-wide">规格<textarea name="specification" rows="2" maxlength="20000"></textarea></label><label class="field-wide">详情<textarea name="material_details" rows="2" maxlength="20000"></textarea></label>
-            <div class="field-wide"><button class="button button-primary" type="submit">新增供应商材料</button></div>
-        </form>
+        <details class="entry-disclosure">
+            <summary>新增供应商材料</summary>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.supplier_material.save">
+                <label>供应商<select name="supplier_id" required><?php foreach ($suppliers as $supplier): ?><option value="<?= (int) $supplier['supplier_id'] ?>"><?= $escape($supplier['supplier_name']) ?></option><?php endforeach; ?></select></label>
+                <label>品牌<select name="brand_id"><option value="">无</option><?php foreach ($brands as $brand): ?><option value="<?= (int) $brand['brand_id'] ?>"><?= $escape($brand['brand_name']) ?></option><?php endforeach; ?></select></label>
+                <label>供应商材料编号<input name="supplier_material_code" maxlength="100" required></label><label>供应商材料名称<input name="supplier_material_name" maxlength="255" required></label>
+                <label>交期（天）<input type="number" name="lead_time_days" min="0" max="36500"></label><label>覆盖数量<input type="number" name="coverage_quantity" min="0" step="0.0001"></label>
+                <label>覆盖单位<input name="coverage_unit" maxlength="50"></label><label>包装总价<input type="number" name="price_total" min="0" step="0.0001"></label><label>币种代码<input name="currency_code" maxlength="3" pattern="[A-Za-z]{3}"></label>
+                <label class="field-wide">规格<textarea name="specification" rows="2" maxlength="20000"></textarea></label><label class="field-wide">详情<textarea name="material_details" rows="2" maxlength="20000"></textarea></label>
+                <div class="field-wide"><button class="button button-primary" type="submit">保存供应商材料</button></div>
+            </form>
+        </details>
     <?php endif; ?>
     <?php foreach ($supplierMaterials as $item): ?>
         <details class="record-card">

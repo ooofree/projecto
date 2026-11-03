@@ -3,11 +3,14 @@
 <section class="panel">
     <div class="panel-heading"><h2>品牌</h2><span class="muted"><?= count($brands) ?> 项</span></div>
     <?php if ($canEdit): ?>
-        <form method="post" class="form-grid">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.brand.save">
-            <label>品牌名称<input name="brand_name" maxlength="255" required></label><label>外部链接<input type="url" name="external_link" maxlength="2048"></label>
-            <button class="button button-primary" type="submit">新增品牌</button>
-        </form>
+        <details class="entry-disclosure">
+            <summary>新增品牌</summary>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.brand.save">
+                <label>品牌名称<input name="brand_name" maxlength="255" required></label><label>外部链接<input type="url" name="external_link" maxlength="2048"></label>
+                <div class="field-wide"><button class="button button-primary" type="submit">保存品牌</button></div>
+            </form>
+        </details>
     <?php endif; ?>
     <?php foreach ($brands as $brand): ?>
         <form method="post" class="form-grid record-form">

@@ -120,34 +120,37 @@ ob_start();
             <p class="muted">账号通过停用保留历史关联；不提供硬删除。重设密码可留空。</p>
         </div>
     </div>
-    <form method="post" action="" class="form-grid admin-form">
-        <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-        <input type="hidden" name="action" value="admin.user.create">
-        <label>
-            用户名
-            <input name="username" maxlength="255" required>
-        </label>
-        <label>
-            初始密码（至少 12 位）
-            <input type="password" name="password" minlength="12" autocomplete="new-password" required>
-        </label>
-        <label>
-            国家代码
-            <input name="country_code" value="<?= $escape($settings['default_country_code']) ?>" maxlength="2" pattern="[A-Za-z]{2}" required>
-        </label>
-        <fieldset class="field-wide checkbox-group">
-            <legend>分配角色（至少选择一个）</legend>
-            <?php foreach ($roles as $role): ?>
-                <label class="checkbox-field">
-                    <input type="checkbox" name="role_ids[]" value="<?= (int) $role['role_id'] ?>">
-                    <span><?= $escape($role['role_name']) ?></span>
-                </label>
-            <?php endforeach; ?>
-        </fieldset>
-        <div class="field-wide">
-            <button class="button button-primary" type="submit">创建用户</button>
-        </div>
-    </form>
+    <details class="entry-disclosure">
+        <summary>新增用户</summary>
+        <form method="post" action="" class="form-grid admin-form">
+            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+            <input type="hidden" name="action" value="admin.user.create">
+            <label>
+                用户名
+                <input name="username" maxlength="255" required>
+            </label>
+            <label>
+                初始密码（至少 12 位）
+                <input type="password" name="password" minlength="12" autocomplete="new-password" required>
+            </label>
+            <label>
+                国家代码
+                <input name="country_code" value="<?= $escape($settings['default_country_code']) ?>" maxlength="2" pattern="[A-Za-z]{2}" required>
+            </label>
+            <fieldset class="field-wide checkbox-group">
+                <legend>分配角色（至少选择一个）</legend>
+                <?php foreach ($roles as $role): ?>
+                    <label class="checkbox-field">
+                        <input type="checkbox" name="role_ids[]" value="<?= (int) $role['role_id'] ?>">
+                        <span><?= $escape($role['role_name']) ?></span>
+                    </label>
+                <?php endforeach; ?>
+            </fieldset>
+            <div class="field-wide">
+                <button class="button button-primary" type="submit">创建用户</button>
+            </div>
+        </form>
+    </details>
 
     <?php if ($users === []): ?>
         <p class="empty-state">暂无用户。</p>
@@ -209,32 +212,35 @@ ob_start();
             <p class="muted">平台管理权限可委派给其他角色；至少保留一个启用且具备平台管理权限的账号。</p>
         </div>
     </div>
-    <form method="post" action="" class="admin-record">
-        <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-        <input type="hidden" name="action" value="admin.role.create">
-        <div class="form-grid">
-            <label>
-                新角色名称
-                <input name="role_name" maxlength="50" required>
-            </label>
-            <label class="field-wide">
-                说明
-                <textarea name="description" maxlength="4000"></textarea>
-            </label>
-            <fieldset class="field-wide checkbox-group">
-                <legend>权限</legend>
-                <?php foreach ($permissions as $permission): ?>
-                    <label class="checkbox-field">
-                        <input type="checkbox" name="permission_ids[]" value="<?= (int) $permission['permission_id'] ?>">
-                        <span><?= $escape($permission['module']) ?> · <?= $escape($permission['display_name'] ?: $permission['permission_name']) ?></span>
-                    </label>
-                <?php endforeach; ?>
-            </fieldset>
-            <div class="field-wide">
-                <button class="button button-primary" type="submit">创建角色</button>
+    <details class="entry-disclosure">
+        <summary>新增角色</summary>
+        <form method="post" action="" class="admin-record">
+            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+            <input type="hidden" name="action" value="admin.role.create">
+            <div class="form-grid">
+                <label>
+                    新角色名称
+                    <input name="role_name" maxlength="50" required>
+                </label>
+                <label class="field-wide">
+                    说明
+                    <textarea name="description" maxlength="4000"></textarea>
+                </label>
+                <fieldset class="field-wide checkbox-group">
+                    <legend>权限</legend>
+                    <?php foreach ($permissions as $permission): ?>
+                        <label class="checkbox-field">
+                            <input type="checkbox" name="permission_ids[]" value="<?= (int) $permission['permission_id'] ?>">
+                            <span><?= $escape($permission['module']) ?> · <?= $escape($permission['display_name'] ?: $permission['permission_name']) ?></span>
+                        </label>
+                    <?php endforeach; ?>
+                </fieldset>
+                <div class="field-wide">
+                    <button class="button button-primary" type="submit">创建角色</button>
+                </div>
             </div>
-        </div>
-    </form>
+        </form>
+    </details>
 
     <?php foreach ($roles as $role): ?>
         <form method="post" action="" class="admin-record">

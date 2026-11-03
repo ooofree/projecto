@@ -476,7 +476,7 @@ foreach ([
 
 $_SERVER['REQUEST_METHOD'] = 'GET';
 foreach ([
-    'materials' => '材料与分类',
+    'materials' => '材料目录',
     'quotations' => '材料报价',
 ] as $page => $heading) {
     $_GET = ['page' => $page];
@@ -485,9 +485,18 @@ foreach ([
     (new \ProjectO\Application($db))->run();
     $html = (string) ob_get_clean();
     materialTestCheck(
-        http_response_code() === 200 && str_contains($html, '<h1>' . $heading . '</h1>'),
+        http_response_code() === 200 && str_contains($html, $heading),
         "Application must render the {$page} page data without errors."
     );
+    if ($page === 'materials') {
+        materialTestCheck(
+            str_contains($html, 'id="material-search"')
+            && str_contains($html, 'id="material-category"')
+            && str_contains($html, 'class="report-table"')
+            && str_contains($html, 'data-dialog-open="material-edit-'),
+            'Materials page should render its report filters, table, and edit dialog controls.'
+        );
+    }
 }
 $db->exec(
     "DELETE FROM Role_Permissions

@@ -66,7 +66,8 @@ if (
     !str_contains($html, '当前项目')
     || !str_contains($html, '&lt;script&gt;alert(1)&lt;/script&gt;')
     || str_contains($html, '<script>alert(1)</script>')
-    || str_contains($html, '创建项目')
+    || !str_contains($html, '项目清单')
+    || !str_contains($html, 'class="project-table"')
     || !str_contains($html, 'href="?page=samples">材料样品</a>')
     || str_contains($html, 'href="?page=spaces">项目空间</a>')
 ) {

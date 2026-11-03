@@ -27,42 +27,39 @@ ob_start();
 
 <?php if ($canCreate): ?>
     <section class="panel">
-        <div class="panel-heading">
-            <div>
-                <h2>登记问题</h2>
-                <p class="muted">问题是现场问题、图纸冲突和设计疑问的统一入口。</p>
-            </div>
-        </div>
-        <form method="post" class="form-grid">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-            <input type="hidden" name="action" value="issue.create">
-            <label class="field-wide">
-                问题描述
-                <textarea name="description" rows="3" maxlength="10000" required></textarea>
-            </label>
-            <label>
-                严重程度
-                <select name="severity">
-                    <option value="low">低</option>
-                    <option value="medium" selected>中</option>
-                    <option value="high">高</option>
-                    <option value="critical">紧急</option>
-                </select>
-            </label>
-            <label class="field-wide">
-                位置（可选）
-                <input name="location" maxlength="255">
-            </label>
-            <div class="field-wide">
-                <button class="button button-primary" type="submit">登记问题</button>
-            </div>
-        </form>
+        <details class="entry-disclosure">
+            <summary>登记问题</summary>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                <input type="hidden" name="action" value="issue.create">
+                <label class="field-wide">
+                    问题描述
+                    <textarea name="description" rows="3" maxlength="10000" required></textarea>
+                </label>
+                <label>
+                    严重程度
+                    <select name="severity">
+                        <option value="low">低</option>
+                        <option value="medium" selected>中</option>
+                        <option value="high">高</option>
+                        <option value="critical">紧急</option>
+                    </select>
+                </label>
+                <label class="field-wide">
+                    位置（可选）
+                    <input name="location" maxlength="255">
+                </label>
+                <div class="field-wide">
+                    <button class="button button-primary" type="submit">保存问题</button>
+                </div>
+            </form>
+        </details>
     </section>
 <?php endif; ?>
 
 <section class="panel">
     <div class="panel-heading">
-        <h2>问题记录</h2>
+        <h2>问题台账</h2>
         <span class="muted"><?= count($issues) ?> 条</span>
     </div>
     <?php if ($issues === []): ?>

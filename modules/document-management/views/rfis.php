@@ -28,80 +28,77 @@ ob_start();
 
 <?php if ($canCreate): ?>
     <section class="panel">
-        <div class="panel-heading">
-            <div>
-                <h2>创建 RFI 草稿</h2>
-                <p class="muted">RFI 不会关闭或自动改变关联问题；答复后请重新评估主问题。</p>
-            </div>
-        </div>
         <?php if ($issues === []): ?>
             <p class="empty-state">请先登记问题，再从问题创建 RFI。</p>
         <?php else: ?>
-            <form method="post" class="form-grid">
-                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                <input type="hidden" name="action" value="rfi.create">
-                <label class="field-wide">
-                    主问题（必选）
-                    <select name="primary_issue_id" required>
-                        <option value="">请选择</option>
-                        <?php foreach ($issues as $issue): ?>
-                            <option value="<?= (int) $issue['issue_id'] ?>">
-                                #<?= (int) $issue['issue_id'] ?> · <?= $escape($issue['status']) ?> · <?= $escape(mb_substr($issue['description'], 0, 100)) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
-                <label class="field-wide">
-                    其他相关问题（可多选）
-                    <select name="related_issue_ids[]" multiple size="4">
-                        <?php foreach ($issues as $issue): ?>
-                            <option value="<?= (int) $issue['issue_id'] ?>">
-                                #<?= (int) $issue['issue_id'] ?> · <?= $escape(mb_substr($issue['description'], 0, 100)) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
-                <label>
-                    负责人
-                    <select name="assigned_to" required>
-                        <option value="">请选择</option>
-                        <?php foreach ($users as $user): ?>
-                            <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['username']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
-                <label>
-                    优先级
-                    <select name="priority">
-                        <option value="low">低</option>
-                        <option value="medium" selected>中</option>
-                        <option value="high">高</option>
-                        <option value="urgent">紧急</option>
-                    </select>
-                </label>
-                <label>
-                    答复截止时间
-                    <input type="datetime-local" name="due_date" required>
-                </label>
-                <label class="field-wide">
-                    澄清问题
-                    <textarea name="description" rows="3" maxlength="10000" required></textarea>
-                </label>
-                <label class="checkbox-field field-wide">
-                    <input type="checkbox" name="evidence_required" value="1">
-                    关闭前必须填写证据档案引用
-                </label>
-                <div class="field-wide">
-                    <button class="button button-primary" type="submit">创建草稿</button>
-                </div>
-            </form>
+            <details class="entry-disclosure">
+                <summary>创建 RFI 草稿</summary>
+                <form method="post" class="form-grid">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="rfi.create">
+                    <label class="field-wide">
+                        主问题（必选）
+                        <select name="primary_issue_id" required>
+                            <option value="">请选择</option>
+                            <?php foreach ($issues as $issue): ?>
+                                <option value="<?= (int) $issue['issue_id'] ?>">
+                                    #<?= (int) $issue['issue_id'] ?> · <?= $escape($issue['status']) ?> · <?= $escape(mb_substr($issue['description'], 0, 100)) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <label class="field-wide">
+                        其他相关问题（可多选）
+                        <select name="related_issue_ids[]" multiple size="4">
+                            <?php foreach ($issues as $issue): ?>
+                                <option value="<?= (int) $issue['issue_id'] ?>">
+                                    #<?= (int) $issue['issue_id'] ?> · <?= $escape(mb_substr($issue['description'], 0, 100)) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <label>
+                        负责人
+                        <select name="assigned_to" required>
+                            <option value="">请选择</option>
+                            <?php foreach ($users as $user): ?>
+                                <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['username']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <label>
+                        优先级
+                        <select name="priority">
+                            <option value="low">低</option>
+                            <option value="medium" selected>中</option>
+                            <option value="high">高</option>
+                            <option value="urgent">紧急</option>
+                        </select>
+                    </label>
+                    <label>
+                        答复截止时间
+                        <input type="datetime-local" name="due_date" required>
+                    </label>
+                    <label class="field-wide">
+                        澄清问题
+                        <textarea name="description" rows="3" maxlength="10000" required></textarea>
+                    </label>
+                    <label class="checkbox-field field-wide">
+                        <input type="checkbox" name="evidence_required" value="1">
+                        关闭前必须填写证据档案引用
+                    </label>
+                    <div class="field-wide">
+                        <button class="button button-primary" type="submit">创建草稿</button>
+                    </div>
+                </form>
+            </details>
         <?php endif; ?>
     </section>
 <?php endif; ?>
 
 <section class="panel">
     <div class="panel-heading">
-        <h2>RFI 记录</h2>
+        <h2>RFI 台账</h2>
         <span class="muted"><?= count($rfis) ?> 份</span>
     </div>
     <?php if ($rfis === []): ?>
