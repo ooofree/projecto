@@ -76,11 +76,6 @@ final class ProjectFoundationPlugin implements PluginInterface
             'buildings' => $this->spaces->list($projectId, $archivedView),
             'archivedView' => $archivedView,
             'canManage' => Support::hasPermission($this->context->db, 'manage_project_spaces'),
-            'canViewMaterials' => Support::hasPermission($this->context->db, 'view_materials'),
-            'canViewSamples' => Support::hasPermission($this->context->db, 'view_projects')
-                && Support::hasPermission($this->context->db, 'view_material_samples')
-                && Support::hasPermission($this->context->db, 'view_material_quotations'),
-            'canViewEstimates' => Support::hasPermission($this->context->db, 'view_material_estimates'),
         ]);
     }
 

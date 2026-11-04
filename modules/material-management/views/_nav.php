@@ -1,4 +1,5 @@
 <nav class="module-nav" aria-label="材料管理">
+    <?php if ($nav['projects']): ?><a class="button button-secondary" href="?page=projects">项目首页</a><?php endif; ?>
     <?php if ($nav['materials']): ?><a class="button button-secondary" href="?page=materials">材料目录</a><?php endif; ?>
     <?php if ($nav['brands']): ?><a class="button button-secondary" href="?page=brands">品牌</a><?php endif; ?>
     <?php if ($nav['auxiliaries']): ?><a class="button button-secondary" href="?page=auxiliary-materials">辅材</a><?php endif; ?>

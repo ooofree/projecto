@@ -25,8 +25,10 @@ ob_start();
     <?php endif; ?>
 </section>
 <nav class="module-nav" aria-label="文档管理">
+    <a class="button button-secondary" href="?page=projects">项目首页</a>
     <a class="button button-secondary" href="?page=documents">文档管理首页</a>
     <a class="button button-secondary" href="?page=issues">问题管理</a>
+    <a class="button button-primary" href="?page=rfis" aria-current="page">RFI 管理</a>
 </nav>
 
 <?php if ($canCreate): ?>

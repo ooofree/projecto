@@ -521,6 +521,13 @@ foreach ([
     );
     if ($page === 'materials') {
         materialTestCheck(
+            str_contains($html, 'href="?page=projects">项目首页</a>')
+                && str_contains($html, 'href="?page=quotations">报价</a>'),
+            'Material pages should link to the project home and all authorized material pages.'
+        );
+    }
+    if ($page === 'materials') {
+        materialTestCheck(
             str_contains($html, 'id="material-search"')
             && str_contains($html, 'id="material-category"')
             && str_contains($html, 'class="report-table"')

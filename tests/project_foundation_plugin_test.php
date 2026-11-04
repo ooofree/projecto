@@ -4,6 +4,7 @@ declare(strict_types=1);
 use ProjectO\HttpException;
 use ProjectO\Modules\ProjectFoundation\ProjectFoundationPlugin;
 use ProjectO\Plugin\PluginContext;
+use ProjectO\Support;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -52,6 +53,33 @@ if ((int) $db->query('SELECT COUNT(*) FROM audit_logs')->fetchColumn() !== 2) {
 $pageResponse = $plugin->dispatch('index', []);
 if ($pageResponse->type !== 'view' || !is_file((string) $pageResponse->viewPath)) {
     throw new RuntimeException('Project plugin should resolve its own page template.');
+}
+$renderSpacesPage = static function (bool $archivedView): string {
+    $escape = [Support::class, 'escape'];
+    $currentProject = ['project_name' => 'Project O Site'];
+    $buildings = [];
+    $canManage = false;
+    $csrfToken = 'test-token';
+    $title = '项目空间';
+    $theme = 'light';
+    $username = '';
+    $canManagePlatform = false;
+    $flash = null;
+    ob_start();
+    require dirname(__DIR__) . '/modules/project-foundation/views/spaces.php';
+    return (string) ob_get_clean();
+};
+$currentSpacesPage = $renderSpacesPage(false);
+$archivedSpacesPage = $renderSpacesPage(true);
+if (
+    !str_contains($currentSpacesPage, 'href="?page=projects">项目首页</a>')
+    || str_contains($currentSpacesPage, 'href="?page=spaces&amp;archived=1" aria-current="page"')
+    || !str_contains($currentSpacesPage, 'href="?page=spaces" aria-current="page"')
+    || !str_contains($archivedSpacesPage, 'href="?page=projects">项目首页</a>')
+    || !str_contains($archivedSpacesPage, 'href="?page=spaces&amp;archived=1" aria-current="page"')
+    || !str_contains($archivedSpacesPage, 'href="?page=spaces">当前空间</a>')
+) {
+    throw new RuntimeException('Project-space pages should expose project-home and in-module navigation.');
 }
 
 try {

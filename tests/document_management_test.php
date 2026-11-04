@@ -664,9 +664,12 @@ documentTestCheck(
     str_contains($renderedRfiPage, 'RFI 管理')
         && str_contains($renderedRfiPage, 'RFI-')
         && str_contains($renderedRfiPage, '项目：Project One')
+        && str_contains($renderedRfiPage, 'href="?page=projects">项目首页</a>')
+        && str_contains($renderedRfiPage, 'href="?page=issues">问题管理</a>')
+        && str_contains($renderedRfiPage, 'href="?page=documents">文档管理首页</a>')
         && str_contains($renderedRfiPage, 'rfis-table')
         && str_contains($renderedRfiPage, 'rfi.update'),
-    'The RFI route should render project-scoped records through the host application.'
+    'The RFI route should render project-scoped records and module navigation through the host application.'
 );
 $_GET = ['page' => 'issues'];
 ob_start();
@@ -674,6 +677,8 @@ ob_start();
 $renderedIssuesPage = ob_get_clean();
 documentTestCheck(
     str_contains($renderedIssuesPage, '问题管理')
+        && str_contains($renderedIssuesPage, 'href="?page=projects">项目首页</a>')
+        && str_contains($renderedIssuesPage, 'href="?page=rfis">RFI 管理</a>')
         && str_contains($renderedIssuesPage, '登记问题')
         && str_contains($renderedIssuesPage, 'Updated north facade dimension conflict')
         && str_contains($renderedIssuesPage, 'issues-table')

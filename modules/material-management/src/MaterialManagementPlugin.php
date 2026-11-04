@@ -474,6 +474,7 @@ final class MaterialManagementPlugin implements PluginInterface
     private function nav(): array
     {
         return [
+            'projects' => Support::hasPermission($this->context->db, 'view_projects'),
             'materials' => Support::hasPermission($this->context->db, 'view_materials'),
             'brands' => Support::hasPermission($this->context->db, 'view_brands'),
             'auxiliaries' => Support::hasPermission($this->context->db, 'view_materials'),

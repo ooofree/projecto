@@ -8,19 +8,11 @@ ob_start();
         <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。楼栋、楼层、区域和房间均由当前项目上下文确定。</p>
     </div>
 </section>
-<nav class="module-nav" aria-label="项目基础">
-    <a class="button button-secondary" href="?page=projects">项目</a>
-    <?php if ($canViewMaterials): ?><a class="button button-secondary" href="?page=materials">材料目录</a><?php endif; ?>
-    <?php if ($canViewSamples): ?><a class="button button-secondary" href="?page=samples">材料样品</a><?php endif; ?>
-    <?php if ($canViewEstimates): ?><a class="button button-secondary" href="?page=estimates">材料估算明细</a><?php endif; ?>
+<nav class="module-nav" aria-label="项目空间">
+    <a class="button button-secondary" href="?page=projects">项目首页</a>
+    <a class="button button-<?= $archivedView ? 'secondary' : 'primary' ?>" href="?page=spaces"<?= !$archivedView ? ' aria-current="page"' : '' ?>>当前空间</a>
+    <a class="button button-<?= $archivedView ? 'primary' : 'secondary' ?>" href="?page=spaces&amp;archived=1"<?= $archivedView ? ' aria-current="page"' : '' ?>>空间回收站</a>
 </nav>
-<div class="module-nav">
-    <?php if ($archivedView): ?>
-        <a class="button button-secondary" href="?page=spaces">返回当前空间</a>
-    <?php else: ?>
-        <a class="button button-secondary" href="?page=spaces&archived=1">查看已删除 / 归档空间</a>
-    <?php endif; ?>
-</div>
 
 <?php if (!$canManage): ?><div class="notice notice-info">当前账号仅有查看权限。</div><?php endif; ?>
 <section class="panel">
