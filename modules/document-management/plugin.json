@@ -13,10 +13,12 @@
         "GET issues": "issues",
         "GET rfis": "rfis",
         "POST issue.create": "issue.create",
+        "POST issue.update": "issue.update",
         "POST issue.transition": "issue.transition",
         "POST issue.followup.create": "issue.followup.create",
         "POST issue.followup.complete": "issue.followup.complete",
         "POST rfi.create": "rfi.create",
+        "POST rfi.update": "rfi.update",
         "POST rfi.transition": "rfi.transition",
         "POST rfi.followup.create": "rfi.followup.create",
         "POST rfi.followup.complete": "rfi.followup.complete"
@@ -38,7 +40,7 @@
         {
             "name": "edit_issues",
             "display_name": "处理问题与 RFI",
-            "description": "允许编辑状态、答复和后续事项"
+            "description": "允许编辑问题与 RFI 信息、状态、答复和后续事项"
         },
         {
             "name": "manage_issues",

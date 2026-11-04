@@ -5,20 +5,33 @@ namespace ProjectO\Modules\ProjectFoundation;
 
 use PDO;
 use ProjectO\HttpException;
-use ProjectO\Support;
+use Throwable;
 
 final class ProjectSpaceService
 {
+    private ProjectArchiveService $archive;
+
     public function __construct(private readonly PDO $db)
     {
+        $this->archive = new ProjectArchiveService($db);
     }
 
-    public function list(int $projectId): array
+    public function list(int $projectId, bool $includeArchived = false): array
     {
         $buildings = $this->db->prepare(
-            'SELECT building_id, building_number, building_name
-             FROM Buildings WHERE project_id = :project_id
-             ORDER BY building_number, building_id'
+            'SELECT b.building_id, b.building_number, b.building_name,
+                    EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records a
+                        WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                          AND a.project_id = b.project_id
+                    ) AS is_archived
+             FROM Buildings b WHERE b.project_id = :project_id'
+                . ($includeArchived ? '' : ' AND NOT EXISTS (
+                    SELECT 1 FROM project_foundation_archive_records a
+                    WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                      AND a.project_id = b.project_id
+                )')
+                . ' ORDER BY b.building_number, b.building_id'
         );
         $buildings->execute(['project_id' => $projectId]);
         $rows = $buildings->fetchAll();
@@ -26,19 +39,47 @@ final class ProjectSpaceService
         foreach ($rows as &$building) {
             $buildingId = (int) $building['building_id'];
             $floors = $this->db->prepare(
-                'SELECT floor_id, floor_number, floor_name, usage_type
-                 FROM Building_Floors WHERE building_id = :building_id
-                 ORDER BY floor_number, floor_id'
+                'SELECT f.floor_id, f.floor_number, f.floor_name, f.usage_type,
+                        EXISTS (
+                            SELECT 1 FROM project_foundation_archive_records a
+                            WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                              AND a.project_id = :project_id
+                        ) AS is_archived
+                 FROM Building_Floors f WHERE f.building_id = :building_id'
+                    . ($includeArchived ? '' : ' AND NOT EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records a
+                        WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                          AND a.project_id = :active_project_id
+                    )')
+                    . ' ORDER BY f.floor_number, f.floor_id'
             );
-            $floors->execute(['building_id' => $buildingId]);
+            $floorParams = ['building_id' => $buildingId, 'project_id' => $projectId];
+            if (!$includeArchived) {
+                $floorParams['active_project_id'] = $projectId;
+            }
+            $floors->execute($floorParams);
             $building['floors'] = $floors->fetchAll();
 
             $areas = $this->db->prepare(
-                'SELECT area_id, area_name, description
-                 FROM Construction_Areas WHERE building_id = :building_id
-                 ORDER BY area_name, area_id'
+                'SELECT a.area_id, a.area_name, a.description,
+                        EXISTS (
+                            SELECT 1 FROM project_foundation_archive_records x
+                            WHERE x.entity_type = \'area\' AND x.entity_id = a.area_id
+                              AND x.project_id = :project_id
+                        ) AS is_archived
+                 FROM Construction_Areas a WHERE a.building_id = :building_id'
+                    . ($includeArchived ? '' : ' AND NOT EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records x
+                        WHERE x.entity_type = \'area\' AND x.entity_id = a.area_id
+                          AND x.project_id = :active_project_id
+                    )')
+                    . ' ORDER BY a.area_name, a.area_id'
             );
-            $areas->execute(['building_id' => $buildingId]);
+            $areaParams = ['building_id' => $buildingId, 'project_id' => $projectId];
+            if (!$includeArchived) {
+                $areaParams['active_project_id'] = $projectId;
+            }
+            $areas->execute($areaParams);
             $building['areas'] = $areas->fetchAll();
 
             $rooms = $this->db->prepare(
@@ -47,10 +88,25 @@ final class ProjectSpaceService
                  FROM Rooms r
                  JOIN Building_Floors f
                    ON f.floor_id = r.floor_id AND f.building_id = r.building_id
-                 WHERE r.building_id = :building_id
+                 WHERE r.building_id = :building_id'
+                    . ($includeArchived ? '' : ' AND NOT EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records x
+                        WHERE x.entity_type = \'room\' AND x.entity_id = r.room_id
+                          AND x.project_id = :project_id
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records x
+                        WHERE x.entity_type = \'floor\' AND x.entity_id = r.floor_id
+                          AND x.project_id = :floor_project_id
+                    )')
+                    . '
                  ORDER BY f.floor_number, r.room_number, r.room_id'
             );
-            $rooms->execute(['building_id' => $buildingId]);
+            $roomParams = ['building_id' => $buildingId];
+            if (!$includeArchived) {
+                $roomParams['project_id'] = $projectId;
+                $roomParams['floor_project_id'] = $projectId;
+            }
+            $rooms->execute($roomParams);
             $building['rooms'] = $rooms->fetchAll();
 
             $mappings = $this->db->prepare(
@@ -61,12 +117,32 @@ final class ProjectSpaceService
                    ON a.area_id = ar.area_id AND a.building_id = :area_building_id
                  JOIN Building_Floors f
                    ON f.floor_id = ar.floor_id AND f.building_id = :floor_building_id
-                 ORDER BY a.area_name, f.floor_number, ar.room_number'
+                 WHERE 1 = 1'
+                    . ($includeArchived ? '' : ' AND NOT EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records x
+                        WHERE x.entity_type = \'area\' AND x.entity_id = ar.area_id
+                          AND x.project_id = :project_id
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records x
+                        WHERE x.entity_type = \'floor\' AND x.entity_id = ar.floor_id
+                          AND x.project_id = :floor_project_id
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM project_foundation_archive_records x
+                        WHERE x.entity_type = \'room\' AND x.entity_id = ar.room_id
+                          AND x.project_id = :room_project_id
+                    )')
+                    . ' ORDER BY a.area_name, f.floor_number, ar.room_number'
             );
-            $mappings->execute([
+            $mappingParams = [
                 'area_building_id' => $buildingId,
                 'floor_building_id' => $buildingId,
-            ]);
+            ];
+            if (!$includeArchived) {
+                $mappingParams['project_id'] = $projectId;
+                $mappingParams['floor_project_id'] = $projectId;
+                $mappingParams['room_project_id'] = $projectId;
+            }
+            $mappings->execute($mappingParams);
             $building['area_rooms'] = $mappings->fetchAll();
         }
         unset($building);
@@ -221,6 +297,11 @@ final class ProjectSpaceService
              FROM Construction_Areas a
              JOIN Buildings b ON b.building_id = a.building_id
              WHERE a.area_id = :area_id AND b.project_id = :project_id'
+                . ' AND NOT EXISTS (
+                    SELECT 1 FROM project_foundation_archive_records x
+                    WHERE x.entity_type = \'area\' AND x.entity_id = a.area_id
+                      AND x.project_id = b.project_id
+                )'
         );
         $area->execute(['area_id' => $areaId, 'project_id' => $projectId]);
         $buildingId = $area->fetchColumn();
@@ -254,6 +335,26 @@ final class ProjectSpaceService
              JOIN Construction_Areas a ON a.area_id = ar.area_id
              JOIN Buildings b ON b.building_id = a.building_id
              WHERE ar.area_room_id = :mapping_id AND b.project_id = :project_id'
+                . ' AND NOT EXISTS (
+                    SELECT 1 FROM project_foundation_archive_records x
+                    WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                      AND x.project_id = b.project_id
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM project_foundation_archive_records x
+                    WHERE x.entity_type = \'area\' AND x.entity_id = ar.area_id
+                      AND x.project_id = b.project_id
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM project_foundation_archive_records x
+                    WHERE x.entity_type = \'floor\' AND x.entity_id = ar.floor_id
+                      AND x.project_id = b.project_id
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM project_foundation_archive_records x
+                    WHERE x.entity_type = \'room\' AND x.entity_id = ar.room_id
+                      AND x.project_id = b.project_id
+                )'
         );
         $check->execute(['mapping_id' => $mappingId, 'project_id' => $projectId]);
         if ($check->fetchColumn() === false) {
@@ -266,10 +367,164 @@ final class ProjectSpaceService
         }
     }
 
+    public function deleteOrArchive(int $projectId, string $type, int $entityId, int $userId): string
+    {
+        return $this->transaction(
+            fn (): string => $this->deleteOrArchiveWithinTransaction($projectId, $type, $entityId, $userId)
+        );
+    }
+
+    private function deleteOrArchiveWithinTransaction(int $projectId, string $type, int $entityId, int $userId): string
+    {
+        $entities = [
+            'building' => ['Buildings', 'building_id'],
+            'floor' => ['Building_Floors', 'floor_id'],
+            'area' => ['Construction_Areas', 'area_id'],
+            'room' => ['Rooms', 'room_id'],
+        ];
+        if (!isset($entities[$type])) {
+            throw new HttpException('空间类型无效。', 422);
+        }
+
+        $ownership = match ($type) {
+            'building' => 'SELECT 1 FROM Buildings WHERE building_id = :id AND project_id = :project_id',
+            'floor' =>
+                'SELECT 1 FROM Building_Floors f JOIN Buildings b ON b.building_id = f.building_id
+                 WHERE f.floor_id = :id AND b.project_id = :project_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM project_foundation_archive_records a
+                       WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                         AND a.project_id = b.project_id
+                   )',
+            'area' =>
+                'SELECT 1 FROM Construction_Areas a JOIN Buildings b ON b.building_id = a.building_id
+                 WHERE a.area_id = :id AND b.project_id = :project_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM project_foundation_archive_records x
+                       WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                         AND x.project_id = b.project_id
+                   )',
+            'room' =>
+                'SELECT 1 FROM Rooms r JOIN Buildings b ON b.building_id = r.building_id
+                 WHERE r.room_id = :id AND b.project_id = :project_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM project_foundation_archive_records x
+                       WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                         AND x.project_id = b.project_id
+                   )',
+        };
+        $lockClause = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $check = $this->db->prepare($ownership . $lockClause);
+        $check->execute(['id' => $entityId, 'project_id' => $projectId]);
+        if ($check->fetchColumn() === false) {
+            throw new HttpException('空间记录不存在或不属于当前项目。', 404);
+        }
+        if ($this->archive->isArchived($type, $entityId, $projectId)) {
+            throw new HttpException('空间记录已归档。', 409);
+        }
+
+        [$table, $column] = $entities[$type];
+        if (
+            $this->archive->hasReferences($table, $column, $entityId)
+            || $this->hasSampleLocationReferences($projectId, $type, $entityId)
+        ) {
+            $this->archive->archive($type, $entityId, $projectId, $userId);
+            return 'archived';
+        }
+
+        $delete = $this->db->prepare(
+            'DELETE FROM ' . $table . ' WHERE ' . $column . ' = :id'
+        );
+        $delete->execute(['id' => $entityId]);
+        if ($delete->rowCount() !== 1) {
+            throw new HttpException('空间记录不存在或已被其他操作修改。', 409);
+        }
+
+        return 'deleted';
+    }
+
+    private function hasSampleLocationReferences(int $projectId, string $type, int $entityId): bool
+    {
+        if (!$this->archive->tableExists('Sample_Location_Map')) {
+            return false;
+        }
+        $stmt = $this->db->prepare(
+            'SELECT 1 FROM Sample_Location_Map
+             WHERE project_id = :project_id
+               AND location_type = :location_type
+               AND location_id = :location_id
+             LIMIT 1'
+        );
+        $stmt->execute([
+            'project_id' => $projectId,
+            'location_type' => $type,
+            'location_id' => $entityId,
+        ]);
+
+        return $stmt->fetchColumn() !== false;
+    }
+
+    public function restore(int $projectId, string $type, int $entityId): void
+    {
+        $this->transaction(function () use ($projectId, $type, $entityId): void {
+            $this->restoreWithinTransaction($projectId, $type, $entityId);
+        });
+    }
+
+    private function restoreWithinTransaction(int $projectId, string $type, int $entityId): void
+    {
+        $entities = [
+            'building' => 'Buildings',
+            'floor' => 'Building_Floors',
+            'area' => 'Construction_Areas',
+            'room' => 'Rooms',
+        ];
+        if (!isset($entities[$type])) {
+            throw new HttpException('空间类型无效。', 422);
+        }
+        $ownership = match ($type) {
+            'building' => 'SELECT 1 FROM Buildings WHERE building_id = :id AND project_id = :project_id',
+            'floor' => 'SELECT 1 FROM Building_Floors f JOIN Buildings b ON b.building_id = f.building_id WHERE f.floor_id = :id AND b.project_id = :project_id',
+            'area' => 'SELECT 1 FROM Construction_Areas a JOIN Buildings b ON b.building_id = a.building_id WHERE a.area_id = :id AND b.project_id = :project_id',
+            'room' => 'SELECT 1 FROM Rooms r JOIN Buildings b ON b.building_id = r.building_id WHERE r.room_id = :id AND b.project_id = :project_id',
+        };
+        $check = $this->db->prepare($ownership);
+        $check->execute(['id' => $entityId, 'project_id' => $projectId]);
+        if ($check->fetchColumn() === false) {
+            throw new HttpException('空间记录不存在或不属于当前项目。', 404);
+        }
+
+        $this->archive->restore($type, $entityId, $projectId);
+    }
+
+    private function transaction(callable $operation): mixed
+    {
+        if ($this->db->inTransaction()) {
+            return $operation();
+        }
+
+        $this->db->beginTransaction();
+        try {
+            $result = $operation();
+            $this->db->commit();
+            return $result;
+        } catch (Throwable $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $exception;
+        }
+    }
+
     private function requireBuilding(int $projectId, int $buildingId): void
     {
         $stmt = $this->db->prepare(
-            'SELECT 1 FROM Buildings WHERE building_id = :id AND project_id = :project_id'
+            'SELECT 1 FROM Buildings b WHERE b.building_id = :id AND b.project_id = :project_id
+             AND NOT EXISTS (
+                 SELECT 1 FROM project_foundation_archive_records a
+                 WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                   AND a.project_id = b.project_id
+             )'
         );
         $stmt->execute(['id' => $buildingId, 'project_id' => $projectId]);
         if ($stmt->fetchColumn() === false) {
@@ -299,7 +554,12 @@ final class ProjectSpaceService
         $stmt = $this->db->prepare(
             'SELECT 1 FROM Building_Floors f
              JOIN Buildings b ON b.building_id = f.building_id
-             WHERE f.floor_id = :floor_id AND f.building_id = :building_id AND b.project_id = :project_id'
+             WHERE f.floor_id = :floor_id AND f.building_id = :building_id AND b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                     AND a.project_id = b.project_id
+               )'
         );
         $stmt->execute([
             'floor_id' => $floorId,
@@ -316,7 +576,12 @@ final class ProjectSpaceService
         $stmt = $this->db->prepare(
             'SELECT 1 FROM Construction_Areas a
              JOIN Buildings b ON b.building_id = a.building_id
-             WHERE a.area_id = :area_id AND a.building_id = :building_id AND b.project_id = :project_id'
+             WHERE a.area_id = :area_id AND a.building_id = :building_id AND b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'area\' AND x.entity_id = a.area_id
+                     AND x.project_id = b.project_id
+               )'
         );
         $stmt->execute([
             'area_id' => $areaId,
@@ -334,7 +599,12 @@ final class ProjectSpaceService
             'SELECT 1 FROM Rooms r
              JOIN Buildings b ON b.building_id = r.building_id
              WHERE r.room_id = :room_id AND r.floor_id = :floor_id
-               AND r.building_id = :building_id AND b.project_id = :project_id'
+               AND r.building_id = :building_id AND b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'room\' AND x.entity_id = r.room_id
+                     AND x.project_id = b.project_id
+               )'
         );
         $stmt->execute([
             'room_id' => $roomId,

@@ -44,6 +44,17 @@ $db->exec(
     )"
 );
 $db->exec(
+    "CREATE TABLE project_foundation_archive_records (
+        archive_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        project_id INTEGER NOT NULL REFERENCES Projects (project_id),
+        archived_by INTEGER NOT NULL,
+        archived_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (entity_type, entity_id)
+    )"
+);
+$db->exec(
     "CREATE TABLE Users (
         user_id INTEGER PRIMARY KEY,
         username TEXT NOT NULL,
@@ -101,6 +112,7 @@ $db->exec(
     "CREATE TABLE document_issues (
         issue_id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id INTEGER NOT NULL,
+        issue_number TEXT,
         description TEXT NOT NULL,
         severity TEXT NOT NULL DEFAULT 'medium',
         status TEXT NOT NULL DEFAULT 'open',
@@ -200,9 +212,12 @@ $db->exec(
     )"
 );
 $db->exec(
-    "CREATE TABLE document_rfi_number_sequences (
-        calendar_year INTEGER PRIMARY KEY,
-        last_number INTEGER NOT NULL DEFAULT 0
+    "CREATE TABLE document_number_sequences (
+        project_id INTEGER NOT NULL,
+        document_type TEXT NOT NULL,
+        last_number INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (project_id, document_type),
+        FOREIGN KEY (project_id) REFERENCES Projects (project_id)
     )"
 );
 $db->exec(
@@ -276,8 +291,40 @@ $issueId = $documents->createIssue(1, 1, [
 $secondaryIssueId = $documents->createIssue(1, 1, ['description' => 'Door opening clarification']);
 $otherProjectIssueId = $documents->createIssue(2, 1, ['description' => 'Project two issue']);
 documentTestCheck(
+    (string) $db->query('SELECT issue_number FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn()
+        === 'P1-ISS-001'
+        && (string) $db->query('SELECT issue_number FROM document_issues WHERE issue_id = ' . $secondaryIssueId)->fetchColumn()
+        === 'P1-ISS-002'
+        && (string) $db->query('SELECT issue_number FROM document_issues WHERE issue_id = ' . $otherProjectIssueId)->fetchColumn()
+        === 'P2-ISS-001',
+    'Issue numbers should be unique to their project and sequential within that project.'
+);
+documentTestCheck(
     (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'open',
     'New issues should begin in open status.'
+);
+$documents->updateIssue(1, $issueId, [
+    'description' => 'Updated north facade dimension conflict',
+    'severity' => 'critical',
+    'location' => 'North facade, level 2',
+]);
+$updatedIssue = $db->query(
+    'SELECT description, severity, status, location FROM document_issues WHERE issue_id = ' . $issueId
+)->fetch();
+documentTestCheck(
+    $updatedIssue['description'] === 'Updated north facade dimension conflict'
+        && $updatedIssue['severity'] === 'critical'
+        && $updatedIssue['location'] === 'North facade, level 2'
+        && $updatedIssue['status'] === 'open',
+    'Editing issue details should update ordinary fields without changing status.'
+);
+documentTestExpectStatus(
+    static fn () => $documents->updateIssue(1, $otherProjectIssueId, [
+        'description' => 'Cross-project edit',
+        'severity' => 'low',
+    ]),
+    404,
+    'Issue edits must reject records outside the selected project.'
 );
 
 $issueFollowUpId = $documents->addIssueFollowUp(1, 1, $issueId, 'Verify repair on site');
@@ -382,6 +429,31 @@ $rfiId = $documents->createRfi(1, 1, [
     'description' => 'Please confirm the revised facade dimension.',
     'evidence_required' => '1',
 ]);
+$documents->updateRfi(1, $rfiId, [
+    'primary_issue_id' => $issueId,
+    'related_issue_ids' => [$secondaryIssueId],
+    'assigned_to' => 2,
+    'priority' => 'urgent',
+    'due_date' => '2030-01-16T17:00',
+    'description' => 'Please confirm the updated facade dimension.',
+    'evidence_required' => '1',
+]);
+$updatedRfi = $db->query(
+    'SELECT description, priority, due_date, evidence_required FROM document_rfis WHERE rfi_id = ' . $rfiId
+)->fetch();
+documentTestCheck(
+    $updatedRfi['description'] === 'Please confirm the updated facade dimension.'
+        && $updatedRfi['priority'] === 'urgent'
+        && $updatedRfi['due_date'] === '2030-01-16 17:00:00'
+        && (int) $updatedRfi['evidence_required'] === 1,
+    'Draft RFI details should be editable.'
+);
+documentTestCheck(
+    (int) $db->query(
+        'SELECT COUNT(*) FROM document_rfi_related_issues WHERE rfi_id = ' . $rfiId
+    )->fetchColumn() === 1,
+    'Editing a draft RFI should replace its related issue links.'
+);
 $secondRfiId = $documents->createRfi(1, 1, [
     'primary_issue_id' => $issueId,
     'assigned_to' => 2,
@@ -394,12 +466,20 @@ documentTestCheck(
     )->fetchColumn() === 2,
     'A primary issue should be allowed to have multiple RFIs.'
 );
+$otherProjectRfiId = $documents->createRfi(2, 1, [
+    'primary_issue_id' => $otherProjectIssueId,
+    'assigned_to' => 2,
+    'due_date' => '2030-01-15T17:00',
+    'description' => 'Project two RFI',
+]);
 documentTestCheck(
     (string) $db->query('SELECT rfi_number FROM document_rfis WHERE rfi_id = ' . $rfiId)->fetchColumn()
-        === 'RFI-' . date('Y') . '-001'
+        === 'P1-RFI-001'
         && (string) $db->query('SELECT rfi_number FROM document_rfis WHERE rfi_id = ' . $secondRfiId)->fetchColumn()
-        === 'RFI-' . date('Y') . '-002',
-    'RFI numbers should be allocated sequentially per calendar year.'
+        === 'P1-RFI-002'
+        && (string) $db->query('SELECT rfi_number FROM document_rfis WHERE rfi_id = ' . $otherProjectRfiId)->fetchColumn()
+        === 'P2-RFI-001',
+    'RFI numbers should be unique to their project and sequential within that project.'
 );
 documentTestCheck(
     (int) $db->query(
@@ -429,6 +509,29 @@ documentTestExpectStatus(
 );
 
 $documents->transitionRfi(1, 1, $rfiId, 'submitted', 'Ready to send', [], false);
+documentTestExpectStatus(
+    static fn () => $documents->updateRfi(1, $rfiId, [
+        'primary_issue_id' => $secondaryIssueId,
+        'related_issue_ids' => [],
+        'assigned_to' => 2,
+        'priority' => 'high',
+        'due_date' => '2030-01-16T17:00',
+        'description' => 'Submitted RFI',
+    ]),
+    409,
+    'Submitting an RFI should lock its issue associations.'
+);
+$documents->updateRfi(1, $rfiId, [
+    'assigned_to' => 2,
+    'priority' => 'high',
+    'due_date' => '2030-01-16T17:00',
+    'description' => 'Please confirm the issued facade dimension.',
+    'evidence_required' => '1',
+]);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $rfiId)->fetchColumn() === 'submitted',
+    'Editing non-association RFI fields must preserve its workflow status.'
+);
 $documents->transitionRfi(1, 1, $rfiId, 'under_review', 'Recipient started review', [], false);
 documentTestExpectStatus(
     static fn () => $documents->transitionRfi(
@@ -560,7 +663,9 @@ $renderedRfiPage = ob_get_clean();
 documentTestCheck(
     str_contains($renderedRfiPage, 'RFI 管理')
         && str_contains($renderedRfiPage, 'RFI-')
-        && str_contains($renderedRfiPage, '项目：Project One'),
+        && str_contains($renderedRfiPage, '项目：Project One')
+        && str_contains($renderedRfiPage, 'rfis-table')
+        && str_contains($renderedRfiPage, 'rfi.update'),
     'The RFI route should render project-scoped records through the host application.'
 );
 $_GET = ['page' => 'issues'];
@@ -570,7 +675,9 @@ $renderedIssuesPage = ob_get_clean();
 documentTestCheck(
     str_contains($renderedIssuesPage, '问题管理')
         && str_contains($renderedIssuesPage, '登记问题')
-        && str_contains($renderedIssuesPage, 'Dimension conflict at north facade'),
+        && str_contains($renderedIssuesPage, 'Updated north facade dimension conflict')
+        && str_contains($renderedIssuesPage, 'issues-table')
+        && str_contains($renderedIssuesPage, 'issue.update'),
     'The issues route should render project-scoped records through the host application.'
 );
 $_GET = ['page' => 'documents'];

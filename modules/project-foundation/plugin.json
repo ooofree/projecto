@@ -13,7 +13,11 @@
         "GET spaces": "spaces",
         "POST project.create": "create",
         "POST project.select": "select",
+        "POST project.delete": "project.delete",
+        "POST project.restore": "project.restore",
         "POST space.save": "space.save",
+        "POST space.delete": "space.delete",
+        "POST space.restore": "space.restore",
         "POST space.room.map": "space.room.map",
         "POST space.room.unmap": "space.room.unmap"
     },
@@ -30,6 +34,11 @@
             "name": "create_projects",
             "display_name": "创建项目",
             "description": "允许创建项目"
+        },
+        {
+            "name": "delete_projects",
+            "display_name": "删除与归档项目",
+            "description": "允许删除空项目、归档含有关联记录的项目并恢复已归档项目"
         },
         {
             "name": "view_project_spaces",

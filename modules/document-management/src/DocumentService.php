@@ -36,7 +36,7 @@ final class DocumentService
     public function listIssues(int $projectId): array
     {
         $stmt = $this->db->prepare(
-            'SELECT issue_id, project_id, description, severity, status, location,
+            'SELECT issue_id, project_id, issue_number, description, severity, status, location,
                     reported_by, reported_at, resolution_result, verification_status,
                     verification_note, evidence_reference, closed_at, closed_by,
                     created_at, updated_at
@@ -108,6 +108,7 @@ final class DocumentService
                     r.submitted_by, r.submitted_at, r.response_text, r.response_complete,
                     r.evidence_required, r.evidence_reference, r.closed_at, r.closed_by,
                     r.created_at, r.updated_at, u.username AS assignee_name,
+                    i.issue_number AS primary_issue_number,
                     i.description AS primary_issue_description,
                     i.status AS primary_issue_status
              FROM document_rfis r
@@ -127,7 +128,7 @@ final class DocumentService
         $params = ['project_id' => $projectId] + $idParams;
 
         $related = $this->db->prepare(
-            "SELECT ri.rfi_id, ri.issue_id, i.description, i.status
+            "SELECT ri.rfi_id, ri.issue_id, i.issue_number, i.description, i.status
              FROM document_rfi_related_issues ri
              JOIN document_issues i
                ON i.issue_id = ri.issue_id AND i.project_id = ri.project_id
@@ -209,14 +210,16 @@ final class DocumentService
             $severity,
             $location
         ): int {
+            $issueNumber = $this->nextDocumentNumber($projectId, 'ISS');
             $stmt = $this->db->prepare(
                 "INSERT INTO document_issues
-                    (project_id, description, severity, status, location, reported_by)
+                    (project_id, issue_number, description, severity, status, location, reported_by)
                  VALUES
-                    (:project_id, :description, :severity, 'open', :location, :reported_by)"
+                    (:project_id, :issue_number, :description, :severity, 'open', :location, :reported_by)"
             );
             $stmt->execute([
                 'project_id' => $projectId,
+                'issue_number' => $issueNumber,
                 'description' => $description,
                 'severity' => $severity,
                 'location' => $location,
@@ -237,6 +240,40 @@ final class DocumentService
             Support::audit($this->db, 'document.issue.create', 'Created issue ' . $issueId . '.');
 
             return $issueId;
+        });
+    }
+
+    public function updateIssue(int $projectId, int $issueId, array $data): void
+    {
+        $description = $this->requiredText($data['description'] ?? null, '问题描述', 10000);
+        $severity = $this->enumValue(
+            $data['severity'] ?? null,
+            ['low', 'medium', 'high', 'critical'],
+            '问题严重程度'
+        );
+        $location = $this->optionalText($data['location'] ?? null, '位置', 255);
+
+        $this->transaction(function () use ($projectId, $issueId, $description, $severity, $location): void {
+            $issue = $this->lockIssue($projectId, $issueId);
+            $update = $this->db->prepare(
+                'UPDATE document_issues
+                 SET description = :description, severity = :severity, location = :location,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE issue_id = :issue_id AND project_id = :project_id'
+            );
+            $update->execute([
+                'description' => $description,
+                'severity' => $severity,
+                'location' => $location,
+                'issue_id' => $issueId,
+                'project_id' => $projectId,
+            ]);
+
+            Support::audit(
+                $this->db,
+                'document.issue.update',
+                'Updated ordinary fields for issue ' . $issueId . '.'
+            );
         });
     }
 
@@ -509,7 +546,7 @@ final class DocumentService
             if ($user->fetchColumn() === false) {
                 throw new HttpException('RFI 负责人不存在或已停用。', 422);
             }
-            $rfiNumber = $this->nextRfiNumber();
+            $rfiNumber = $this->nextDocumentNumber($projectId, 'RFI');
 
             $insert = $this->db->prepare(
                 "INSERT INTO document_rfis
@@ -560,6 +597,113 @@ final class DocumentService
             Support::audit($this->db, 'document.rfi.create', 'Created RFI ' . $rfiNumber . '.');
 
             return $rfiId;
+        });
+    }
+
+    public function updateRfi(int $projectId, int $rfiId, array $data): void
+    {
+        $assignedTo = $this->positiveId($data['assigned_to'] ?? null, '负责人');
+        $description = $this->requiredText($data['description'] ?? null, 'RFI 描述', 10000);
+        $priority = $this->enumValue(
+            $data['priority'] ?? null,
+            ['low', 'medium', 'high', 'urgent'],
+            'RFI 优先级'
+        );
+        $dueDate = $this->normalizeDateTime($data['due_date'] ?? null);
+        $evidenceRequired = $this->booleanValue($data['evidence_required'] ?? false, '必要证据选项');
+        $hasIssueLinks = array_key_exists('primary_issue_id', $data)
+            || array_key_exists('related_issue_ids', $data);
+        $primaryIssueId = array_key_exists('primary_issue_id', $data)
+            ? $this->positiveId($data['primary_issue_id'], '主问题')
+            : null;
+        $relatedIssueIds = array_key_exists('related_issue_ids', $data)
+            ? $this->normalizeIds($data['related_issue_ids'])
+            : [];
+
+        $this->transaction(function () use (
+            $projectId,
+            $rfiId,
+            $assignedTo,
+            $description,
+            $priority,
+            $dueDate,
+            $evidenceRequired,
+            $hasIssueLinks,
+            $primaryIssueId,
+            $relatedIssueIds
+        ): void {
+            $rfi = $this->lockRfi($projectId, $rfiId);
+            if ($rfi['status'] === 'closed') {
+                throw new HttpException('已关闭的 RFI 不可编辑。', 409);
+            }
+            if ($hasIssueLinks && $rfi['status'] !== 'draft') {
+                throw new HttpException('RFI 提交后不可修改关联问题。', 409);
+            }
+
+            $assignedUser = $this->db->prepare(
+                'SELECT 1 FROM Users WHERE user_id = :user_id AND is_active = 1'
+            );
+            $assignedUser->execute(['user_id' => $assignedTo]);
+            if ($assignedUser->fetchColumn() === false) {
+                throw new HttpException('RFI 负责人不存在或已停用。', 422);
+            }
+
+            $primaryIssueId = $primaryIssueId ?? (int) $rfi['primary_issue_id'];
+            if ($hasIssueLinks) {
+                $this->assertIssueInProject($projectId, $primaryIssueId);
+                foreach ($relatedIssueIds as $relatedIssueId) {
+                    if ($relatedIssueId !== $primaryIssueId) {
+                        $this->assertIssueInProject($projectId, $relatedIssueId);
+                    }
+                }
+            }
+
+            $update = $this->db->prepare(
+                'UPDATE document_rfis
+                 SET primary_issue_id = :primary_issue_id, assigned_to = :assigned_to,
+                     priority = :priority, due_date = :due_date, description = :description,
+                     evidence_required = :evidence_required, updated_at = CURRENT_TIMESTAMP
+                 WHERE rfi_id = :rfi_id AND project_id = :project_id'
+            );
+            $update->execute([
+                'primary_issue_id' => $primaryIssueId,
+                'assigned_to' => $assignedTo,
+                'priority' => $priority,
+                'due_date' => $dueDate,
+                'description' => $description,
+                'evidence_required' => $evidenceRequired ? 1 : 0,
+                'rfi_id' => $rfiId,
+                'project_id' => $projectId,
+            ]);
+
+            if ($hasIssueLinks) {
+                $deleteRelated = $this->db->prepare(
+                    'DELETE FROM document_rfi_related_issues
+                     WHERE project_id = :project_id AND rfi_id = :rfi_id'
+                );
+                $deleteRelated->execute(['project_id' => $projectId, 'rfi_id' => $rfiId]);
+
+                $insertRelated = $this->db->prepare(
+                    'INSERT INTO document_rfi_related_issues (project_id, rfi_id, issue_id)
+                     VALUES (:project_id, :rfi_id, :issue_id)'
+                );
+                foreach (array_unique($relatedIssueIds) as $relatedIssueId) {
+                    if ($relatedIssueId === $primaryIssueId) {
+                        continue;
+                    }
+                    $insertRelated->execute([
+                        'project_id' => $projectId,
+                        'rfi_id' => $rfiId,
+                        'issue_id' => $relatedIssueId,
+                    ]);
+                }
+            }
+
+            Support::audit(
+                $this->db,
+                'document.rfi.update',
+                'Updated RFI ' . $rfi['rfi_number'] . '.'
+            );
         });
     }
 
@@ -971,44 +1115,47 @@ final class DocumentService
         return $this->db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
     }
 
-    private function nextRfiNumber(): string
+    private function nextDocumentNumber(int $projectId, string $documentType): string
     {
         $driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
-        $year = $driver === 'mysql'
-            ? (int) $this->db->query('SELECT YEAR(CURRENT_TIMESTAMP)')->fetchColumn()
-            : (int) date('Y');
-
         $ensureSequence = $driver === 'mysql'
             ? $this->db->prepare(
-                'INSERT IGNORE INTO document_rfi_number_sequences (calendar_year, last_number)
-                 VALUES (:calendar_year, 0)'
+                'INSERT IGNORE INTO document_number_sequences (project_id, document_type, last_number)
+                 VALUES (:project_id, :document_type, 0)'
             )
             : $this->db->prepare(
-                'INSERT INTO document_rfi_number_sequences (calendar_year, last_number)
-                 VALUES (:calendar_year, 0)
-                 ON CONFLICT(calendar_year) DO NOTHING'
+                'INSERT INTO document_number_sequences (project_id, document_type, last_number)
+                 VALUES (:project_id, :document_type, 0)
+                 ON CONFLICT(project_id, document_type) DO NOTHING'
             );
-        $ensureSequence->execute(['calendar_year' => $year]);
+        $ensureSequence->execute([
+            'project_id' => $projectId,
+            'document_type' => $documentType,
+        ]);
 
         $sequence = $this->db->prepare(
             'SELECT last_number
-             FROM document_rfi_number_sequences
-             WHERE calendar_year = :calendar_year'
+             FROM document_number_sequences
+             WHERE project_id = :project_id AND document_type = :document_type'
             . $this->lockClause()
         );
-        $sequence->execute(['calendar_year' => $year]);
+        $sequence->execute([
+            'project_id' => $projectId,
+            'document_type' => $documentType,
+        ]);
         $nextNumber = (int) $sequence->fetchColumn() + 1;
         $updateSequence = $this->db->prepare(
-            'UPDATE document_rfi_number_sequences
+            'UPDATE document_number_sequences
              SET last_number = :last_number
-             WHERE calendar_year = :calendar_year'
+             WHERE project_id = :project_id AND document_type = :document_type'
         );
         $updateSequence->execute([
             'last_number' => $nextNumber,
-            'calendar_year' => $year,
+            'project_id' => $projectId,
+            'document_type' => $documentType,
         ]);
 
-        return 'RFI-' . $year . '-' . str_pad((string) $nextNumber, 3, '0', STR_PAD_LEFT);
+        return 'P' . $projectId . '-' . $documentType . '-' . str_pad((string) $nextNumber, 3, '0', STR_PAD_LEFT);
     }
 
     private function requiredText(mixed $value, string $field, int $maxLength): string

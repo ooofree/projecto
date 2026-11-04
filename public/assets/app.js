@@ -43,3 +43,33 @@ document.addEventListener('click', event => {
         event.target.closest('dialog')?.close();
     }
 });
+
+document.addEventListener('submit', event => {
+    const form = event.target.closest('form[data-confirm]');
+    if (form && !window.confirm(form.dataset.confirm)) {
+        event.preventDefault();
+    }
+});
+
+for (const search of document.querySelectorAll('[data-list-search]')) {
+    const list = document.getElementById(search.dataset.listSearch);
+    if (!list) continue;
+
+    const panel = search.closest('.panel');
+    const emptyState = panel?.querySelector('[data-list-empty]');
+    const count = panel?.querySelector('[data-list-count]');
+    const items = [...list.querySelectorAll('[data-list-item]')];
+    const filter = () => {
+        const query = search.value.trim().toLocaleLowerCase();
+        let visibleCount = 0;
+        for (const item of items) {
+            const visible = (item.dataset.search ?? '').includes(query);
+            item.hidden = !visible;
+            if (visible) visibleCount++;
+        }
+        if (emptyState) emptyState.hidden = visibleCount !== 0;
+        if (count) count.textContent = `${visibleCount}${count.dataset.unit ?? ' 条'}`;
+    };
+
+    search.addEventListener('input', filter);
+}

@@ -12,6 +12,7 @@ $db = new PDO('sqlite::memory:', options: [
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
 $db->exec('CREATE TABLE Projects (project_id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT, start_date TEXT, end_date TEXT, status TEXT)');
+$db->exec('CREATE TABLE project_foundation_archive_records (archive_id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT, entity_id INTEGER, project_id INTEGER, archived_by INTEGER, archived_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE (entity_type, entity_id))');
 $db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, is_active INTEGER)');
 $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
 $db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY)');
@@ -21,8 +22,8 @@ $db->exec('CREATE TABLE audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_i
 $db->exec('INSERT INTO Users (user_id, is_active) VALUES (1, 1)');
 $db->exec('INSERT INTO Roles (role_id) VALUES (1)');
 $db->exec('INSERT INTO User_Roles (user_id, role_id) VALUES (1, 1)');
-$db->exec("INSERT INTO Permissions (permission_id, permission_name) VALUES (1, 'view_projects'), (2, 'create_projects')");
-$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 1), (1, 2)');
+$db->exec("INSERT INTO Permissions (permission_id, permission_name) VALUES (1, 'view_projects'), (2, 'create_projects'), (3, 'delete_projects')");
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 1), (1, 2), (1, 3)');
 
 $_SESSION = ['user_id' => 1, 'username' => 'admin'];
 $_SERVER = [];
@@ -60,6 +61,14 @@ try {
     if ($exception->statusCode !== 422) {
         throw $exception;
     }
+}
+$deleteResponse = $plugin->dispatch('project.delete', ['project_id' => 1]);
+if (
+    $deleteResponse->type !== 'redirect'
+    || (int) $db->query('SELECT COUNT(*) FROM Projects')->fetchColumn() !== 0
+    || isset($_SESSION['active_project_id'])
+) {
+    throw new RuntimeException('An empty project should be deleted and removed from the current project context.');
 }
 
 echo "Project foundation plugin tests passed.\n";

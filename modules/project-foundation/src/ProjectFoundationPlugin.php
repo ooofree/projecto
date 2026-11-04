@@ -24,26 +24,33 @@ final class ProjectFoundationPlugin implements PluginInterface
     public function dispatch(string $handler, array $input): PluginResponse
     {
         return match ($handler) {
-            'index' => $this->index(),
+            'index' => $this->index($input),
             'create' => $this->create($input),
             'select' => $this->select($input),
-            'spaces' => $this->spacesIndex(),
+            'project.delete' => $this->deleteProject($input),
+            'project.restore' => $this->restoreProject($input),
+            'spaces' => $this->spacesIndex($input),
             'space.save' => $this->saveSpace($input),
+            'space.delete' => $this->deleteSpace($input),
+            'space.restore' => $this->restoreSpace($input),
             'space.room.map' => $this->mapRoom($input),
             'space.room.unmap' => $this->unmapRoom($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
     }
 
-    private function index(): PluginResponse
+    private function index(array $input): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_projects');
+        $archivedView = ($input['archived'] ?? null) === '1';
 
         return $this->context->view('projects.php', [
             'title' => '项目',
-            'projects' => $this->projects->list(),
+            'projects' => $this->projects->list($archivedView),
             'currentProject' => $this->context->currentProject(),
+            'archivedView' => $archivedView,
             'canCreate' => Support::hasPermission($this->context->db, 'create_projects'),
+            'canDeleteProjects' => Support::hasPermission($this->context->db, 'delete_projects'),
             'canViewDocuments' => Support::hasPermission($this->context->db, 'view_issues'),
             'canViewMaterials' => Support::hasPermission($this->context->db, 'view_materials'),
             'canViewQuotations' => Support::hasPermission($this->context->db, 'view_material_quotations'),
@@ -55,17 +62,19 @@ final class ProjectFoundationPlugin implements PluginInterface
         ]);
     }
 
-    private function spacesIndex(): PluginResponse
+    private function spacesIndex(array $input): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_projects');
         Support::requirePermission($this->context->db, 'view_project_spaces');
         $project = $this->context->requireCurrentProject();
         $projectId = (int) $project['project_id'];
+        $archivedView = ($input['archived'] ?? null) === '1';
 
         return $this->context->view('spaces.php', [
             'title' => '项目空间',
             'currentProject' => $project,
-            'buildings' => $this->spaces->list($projectId),
+            'buildings' => $this->spaces->list($projectId, $archivedView),
+            'archivedView' => $archivedView,
             'canManage' => Support::hasPermission($this->context->db, 'manage_project_spaces'),
             'canViewMaterials' => Support::hasPermission($this->context->db, 'view_materials'),
             'canViewSamples' => Support::hasPermission($this->context->db, 'view_projects')
@@ -99,6 +108,56 @@ final class ProjectFoundationPlugin implements PluginInterface
         Support::flash('区域房间关联已保存。');
 
         return PluginResponse::redirect('?page=spaces');
+    }
+
+    private function deleteSpace(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_projects');
+        Support::requirePermission($this->context->db, 'view_project_spaces');
+        Support::requirePermission($this->context->db, 'manage_project_spaces');
+        $project = $this->context->requireCurrentProject();
+        [$type, $entityId, $result] = $this->transaction(function () use ($input, $project): array {
+            $type = $input['type'] ?? null;
+            if (!is_string($type)) {
+                throw new HttpException('空间类型无效。', 422);
+            }
+            $entityId = $this->requiredId($input, 'id', '空间');
+            $result = $this->spaces->deleteOrArchive(
+                (int) $project['project_id'],
+                $type,
+                $entityId,
+                $this->userId()
+            );
+            Support::audit(
+                $this->context->db,
+                'project_space.delete',
+                ucfirst($result) . ' ' . $type . ' ' . $entityId . '.'
+            );
+            return [$type, $entityId, $result];
+        });
+        Support::flash($result === 'deleted' ? '无关联的空间记录已删除。' : '空间记录含有关联数据，已归档并保留记录。');
+
+        return PluginResponse::redirect('?page=spaces');
+    }
+
+    private function restoreSpace(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_projects');
+        Support::requirePermission($this->context->db, 'view_project_spaces');
+        Support::requirePermission($this->context->db, 'manage_project_spaces');
+        $project = $this->context->requireCurrentProject();
+        $this->transaction(function () use ($input, $project): void {
+            $type = $input['type'] ?? null;
+            if (!is_string($type)) {
+                throw new HttpException('空间类型无效。', 422);
+            }
+            $entityId = $this->requiredId($input, 'id', '空间');
+            $this->spaces->restore((int) $project['project_id'], $type, $entityId);
+            Support::audit($this->context->db, 'project_space.restore', 'Restored ' . $type . ' ' . $entityId . '.');
+        });
+        Support::flash('空间记录已恢复。');
+
+        return PluginResponse::redirect('?page=spaces&archived=1');
     }
 
     private function unmapRoom(array $input): PluginResponse
@@ -162,6 +221,70 @@ final class ProjectFoundationPlugin implements PluginInterface
         return PluginResponse::redirect('?page=projects');
     }
 
+    private function deleteProject(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_projects');
+        Support::requirePermission($this->context->db, 'delete_projects');
+        [$projectId, $result] = $this->transaction(function () use ($input): array {
+            $projectId = $this->requiredId($input, 'project_id', '项目');
+            $result = $this->projects->deleteOrArchive($projectId, $this->userId());
+            Support::audit(
+                $this->context->db,
+                'project.delete',
+                ucfirst($result) . ' project ' . $projectId . '.'
+            );
+            return [$projectId, $result];
+        });
+        if ((int) ($_SESSION['active_project_id'] ?? 0) === $projectId) {
+            unset($_SESSION['active_project_id']);
+        }
+        Support::flash($result === 'deleted' ? '无关联数据的项目已删除。' : '项目含有业务数据，已归档并保留记录。');
+
+        return PluginResponse::redirect('?page=projects');
+    }
+
+    private function restoreProject(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_projects');
+        Support::requirePermission($this->context->db, 'delete_projects');
+        $this->transaction(function () use ($input): void {
+            $projectId = $this->requiredId($input, 'project_id', '项目');
+            $this->projects->restore($projectId);
+            Support::audit($this->context->db, 'project.restore', 'Restored project ' . $projectId . '.');
+        });
+        Support::flash('项目已恢复，请在项目列表中重新进入。');
+
+        return PluginResponse::redirect('?page=projects&archived=1');
+    }
+
+    private function userId(): int
+    {
+        $userId = $_SESSION['user_id'] ?? null;
+        if (!is_int($userId) || $userId < 1) {
+            throw new HttpException('当前登录用户无效。', 401);
+        }
+        return $userId;
+    }
+
+    private function transaction(callable $operation): mixed
+    {
+        if ($this->context->db->inTransaction()) {
+            return $operation();
+        }
+
+        $this->context->db->beginTransaction();
+        try {
+            $result = $operation();
+            $this->context->db->commit();
+            return $result;
+        } catch (Throwable $exception) {
+            if ($this->context->db->inTransaction()) {
+                $this->context->db->rollBack();
+            }
+            throw $exception;
+        }
+    }
+
     private function requiredString(array $input, string $key, string $default = ''): string
     {
         $value = $input[$key] ?? $default;
@@ -186,15 +309,15 @@ final class ProjectFoundationPlugin implements PluginInterface
         return $value === '' ? null : $value;
     }
 
-    private function requiredId(array $input, string $key): int
+    private function requiredId(array $input, string $key, string $label = '空间'): int
     {
         $value = $input[$key] ?? null;
         if (!is_int($value) && !is_string($value)) {
-            throw new HttpException('空间编号无效。', 422);
+            throw new HttpException($label . '编号无效。', 422);
         }
         $id = filter_var($value, FILTER_VALIDATE_INT);
         if ($id === false || $id < 1) {
-            throw new HttpException('空间编号无效。', 422);
+            throw new HttpException($label . '编号无效。', 422);
         }
         return $id;
     }

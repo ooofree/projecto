@@ -67,6 +67,17 @@ $db->exec(
         status TEXT
     )'
 );
+$db->exec(
+    'CREATE TABLE project_foundation_archive_records (
+        archive_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        project_id INTEGER NOT NULL REFERENCES Projects (project_id),
+        archived_by INTEGER NOT NULL,
+        archived_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (entity_type, entity_id)
+    )'
+);
 $db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, is_active INTEGER NOT NULL DEFAULT 1)');
 $db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY, role_name TEXT)');
 $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
@@ -441,6 +452,26 @@ $db->exec("UPDATE Material_Samples SET owner_approval_status = '已审批通过'
 $samples = $projectMaterials->listSamples(1);
 materialTestCheck($samples[0]['location_name'] === 'A 1F 首层', 'Samples must show the selected project floor.');
 materialTestCheck($samples[0]['owner_approval_status'] === 'approved', 'The legacy approved label must be normalized for display.');
+$spaceArchiveResult = $spaceService->deleteOrArchive(1, 'floor', $floorId, 1);
+materialTestCheck($spaceArchiveResult === 'archived', 'A floor used by a sample should be archived.');
+materialTestCheck(
+    $projectMaterials->locations(1)['floors'] === []
+        && $projectMaterials->estimateChoices(1)['floors'] === [],
+    'Archived floors must no longer be selectable for new sample or estimate records.'
+);
+materialTestExpectStatus(
+    static fn () => $projectMaterials->saveSample(1, 1, [
+        'quotation_id' => (string) $quoteId,
+        'location_type' => 'floor',
+        'location_id' => (string) $floorId,
+    ]),
+    404,
+    'Sample writes must reject archived locations.'
+);
+materialTestCheck(
+    $projectMaterials->listSamples(1)[0]['location_name'] === 'A 1F 首层',
+    'Archiving a referenced space must retain sample history and its recorded location.'
+);
 $projectMaterials->addImage(1, $sampleId, 1, 'samples/1/' . $sampleId . '/test.png', 'test.png', 'image/png', 123);
 materialTestExpectStatus(
     static fn () => $catalog->deleteQuotation($quoteId),
@@ -514,10 +545,13 @@ $rolePermissionInsert->execute(['permission_id' => $quotationPermissionId]);
 
 $migrationKeys = array_keys($registry->migrations());
 $spaceMigrationPosition = array_search('project.foundation/202611010004_project_spaces.sql', $migrationKeys, true);
+$archiveMigrationPosition = array_search('project.foundation/202611010006_project_archiving.sql', $migrationKeys, true);
 $materialMigrationPosition = array_search('material.management/202611010005_material_management.sql', $migrationKeys, true);
 materialTestCheck(
-    $spaceMigrationPosition !== false && $materialMigrationPosition !== false
-        && $spaceMigrationPosition < $materialMigrationPosition,
+    $spaceMigrationPosition !== false && $archiveMigrationPosition !== false
+        && $materialMigrationPosition !== false
+        && $spaceMigrationPosition < $archiveMigrationPosition
+        && $archiveMigrationPosition < $materialMigrationPosition,
     'Plugin migrations must follow declared dependencies.'
 );
 

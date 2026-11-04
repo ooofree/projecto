@@ -8,7 +8,7 @@
 </head>
 <body class="theme-<?= $escape($theme) ?>">
 <header class="topbar">
-    <a class="brand" href="?page=projects">Project O</a>
+    <a class="brand" href="?page=projects"><span class="brand-mark" aria-hidden="true">O</span><span>Project O</span></a>
     <?php if ($username !== ''): ?>
         <div class="account">
             <?php if ($canManagePlatform): ?>

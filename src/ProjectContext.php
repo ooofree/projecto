@@ -29,6 +29,11 @@ final class ProjectContext
             'SELECT project_id, project_name, start_date, end_date, status
              FROM Projects
              WHERE project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'project\'
+                     AND a.entity_id = Projects.project_id AND a.project_id = Projects.project_id
+               )
              LIMIT 1'
         );
         $stmt->execute(['project_id' => $projectId]);

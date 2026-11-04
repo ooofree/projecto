@@ -39,20 +39,47 @@ final class ProjectMaterialService
     {
         $buildings = $this->db->prepare(
             'SELECT building_id, building_number, building_name
-             FROM Buildings WHERE project_id = :project_id
+             FROM Buildings b WHERE project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                     AND a.project_id = b.project_id
+               )
              ORDER BY building_number'
         );
         $buildings->execute(['project_id' => $projectId]);
         $floors = $this->db->prepare(
             'SELECT f.floor_id, f.floor_number, f.floor_name, b.building_number, b.building_name
              FROM Building_Floors f JOIN Buildings b ON b.building_id = f.building_id
-             WHERE b.project_id = :project_id ORDER BY b.building_number, f.floor_number'
+             WHERE b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                     AND a.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                     AND a.project_id = b.project_id
+               )
+             ORDER BY b.building_number, f.floor_number'
         );
         $floors->execute(['project_id' => $projectId]);
         $areas = $this->db->prepare(
             'SELECT a.area_id, a.area_name, b.building_number, b.building_name
              FROM Construction_Areas a JOIN Buildings b ON b.building_id = a.building_id
-             WHERE b.project_id = :project_id ORDER BY b.building_number, a.area_name'
+             WHERE b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                     AND x.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'area\' AND x.entity_id = a.area_id
+                     AND x.project_id = b.project_id
+               )
+             ORDER BY b.building_number, a.area_name'
         );
         $areas->execute(['project_id' => $projectId]);
         $rooms = $this->db->prepare(
@@ -61,6 +88,21 @@ final class ProjectMaterialService
              JOIN Building_Floors f ON f.floor_id = r.floor_id AND f.building_id = r.building_id
              JOIN Buildings b ON b.building_id = r.building_id
              WHERE b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                     AND x.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'floor\' AND x.entity_id = f.floor_id
+                     AND x.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'room\' AND x.entity_id = r.room_id
+                     AND x.project_id = b.project_id
+               )
              ORDER BY b.building_number, f.floor_number, r.room_number'
         );
         $rooms->execute(['project_id' => $projectId]);
@@ -336,13 +378,30 @@ final class ProjectMaterialService
     {
         $buildings = $this->db->prepare(
             'SELECT building_id, building_number, building_name
-             FROM Buildings WHERE project_id = :project_id ORDER BY building_number'
+             FROM Buildings b WHERE project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                     AND a.project_id = b.project_id
+               )
+             ORDER BY building_number'
         );
         $buildings->execute(['project_id' => $projectId]);
         $floors = $this->db->prepare(
             'SELECT f.floor_id, f.building_id, f.floor_number, f.floor_name
              FROM Building_Floors f JOIN Buildings b ON b.building_id = f.building_id
-             WHERE b.project_id = :project_id ORDER BY b.building_number, f.floor_number'
+             WHERE b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                     AND a.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                     AND a.project_id = b.project_id
+               )
+             ORDER BY b.building_number, f.floor_number'
         );
         $floors->execute(['project_id' => $projectId]);
         $rooms = $this->db->prepare(
@@ -350,7 +409,23 @@ final class ProjectMaterialService
              FROM Rooms r
              JOIN Building_Floors f ON f.floor_id = r.floor_id AND f.building_id = r.building_id
              JOIN Buildings b ON b.building_id = r.building_id
-             WHERE b.project_id = :project_id ORDER BY b.building_number, f.floor_number, r.room_number'
+             WHERE b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                     AND a.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                     AND a.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'room\' AND a.entity_id = r.room_id
+                     AND a.project_id = b.project_id
+               )
+             ORDER BY b.building_number, f.floor_number, r.room_number'
         );
         $rooms->execute(['project_id' => $projectId]);
         return [
@@ -436,16 +511,58 @@ final class ProjectMaterialService
     private function requireProjectLocation(int $projectId, string $type, int $locationId): void
     {
         $queries = [
-            'building' => 'SELECT 1 FROM Buildings WHERE building_id = :id AND project_id = :project_id',
+            'building' => 'SELECT 1 FROM Buildings b
+                           WHERE b.building_id = :id AND b.project_id = :project_id
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM project_foundation_archive_records a
+                                 WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                                   AND a.project_id = b.project_id
+                             )',
             'floor' => 'SELECT 1 FROM Building_Floors f
                         JOIN Buildings b ON b.building_id = f.building_id
-                        WHERE f.floor_id = :id AND b.project_id = :project_id',
+                        WHERE f.floor_id = :id AND b.project_id = :project_id
+                          AND NOT EXISTS (
+                              SELECT 1 FROM project_foundation_archive_records a
+                              WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                                AND a.project_id = b.project_id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM project_foundation_archive_records a
+                              WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                                AND a.project_id = b.project_id
+                          )',
             'area' => 'SELECT 1 FROM Construction_Areas a
                        JOIN Buildings b ON b.building_id = a.building_id
-                       WHERE a.area_id = :id AND b.project_id = :project_id',
+                       WHERE a.area_id = :id AND b.project_id = :project_id
+                         AND NOT EXISTS (
+                             SELECT 1 FROM project_foundation_archive_records x
+                             WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                               AND x.project_id = b.project_id
+                         )
+                         AND NOT EXISTS (
+                             SELECT 1 FROM project_foundation_archive_records x
+                             WHERE x.entity_type = \'area\' AND x.entity_id = a.area_id
+                               AND x.project_id = b.project_id
+                         )',
             'room' => 'SELECT 1 FROM Rooms r
                        JOIN Buildings b ON b.building_id = r.building_id
-                       WHERE r.room_id = :id AND b.project_id = :project_id',
+                       JOIN Building_Floors f ON f.floor_id = r.floor_id AND f.building_id = r.building_id
+                       WHERE r.room_id = :id AND b.project_id = :project_id
+                         AND NOT EXISTS (
+                             SELECT 1 FROM project_foundation_archive_records x
+                             WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                               AND x.project_id = b.project_id
+                         )
+                         AND NOT EXISTS (
+                             SELECT 1 FROM project_foundation_archive_records x
+                             WHERE x.entity_type = \'floor\' AND x.entity_id = f.floor_id
+                               AND x.project_id = b.project_id
+                         )
+                         AND NOT EXISTS (
+                             SELECT 1 FROM project_foundation_archive_records x
+                             WHERE x.entity_type = \'room\' AND x.entity_id = r.room_id
+                               AND x.project_id = b.project_id
+                         )',
         ];
         $sql = $queries[$type];
         $stmt = $this->db->prepare($sql);
@@ -458,7 +575,13 @@ final class ProjectMaterialService
     private function requireProjectBuilding(int $projectId, int $buildingId): void
     {
         $this->requireProjectEntity(
-            'SELECT 1 FROM Buildings WHERE building_id = :id AND project_id = :project_id',
+            'SELECT 1 FROM Buildings b
+             WHERE b.building_id = :id AND b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                     AND a.project_id = b.project_id
+               )',
             $projectId,
             $buildingId,
             '楼栋'
@@ -470,7 +593,17 @@ final class ProjectMaterialService
         $stmt = $this->db->prepare(
             'SELECT 1 FROM Building_Floors f
              JOIN Buildings b ON b.building_id = f.building_id
-             WHERE f.floor_id = :floor_id AND f.building_id = :building_id AND b.project_id = :project_id'
+             WHERE f.floor_id = :floor_id AND f.building_id = :building_id AND b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'building\' AND a.entity_id = b.building_id
+                     AND a.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records a
+                   WHERE a.entity_type = \'floor\' AND a.entity_id = f.floor_id
+                     AND a.project_id = b.project_id
+               )'
         );
         $stmt->execute(['floor_id' => $floorId, 'building_id' => $buildingId, 'project_id' => $projectId]);
         if ($stmt->fetchColumn() === false) {
@@ -482,8 +615,24 @@ final class ProjectMaterialService
     {
         $stmt = $this->db->prepare(
             'SELECT 1 FROM Rooms r JOIN Buildings b ON b.building_id = r.building_id
+             JOIN Building_Floors f ON f.floor_id = r.floor_id AND f.building_id = r.building_id
              WHERE r.room_id = :room_id AND r.building_id = :building_id
-               AND r.floor_id = :floor_id AND b.project_id = :project_id'
+               AND r.floor_id = :floor_id AND b.project_id = :project_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'building\' AND x.entity_id = b.building_id
+                     AND x.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'floor\' AND x.entity_id = f.floor_id
+                     AND x.project_id = b.project_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM project_foundation_archive_records x
+                   WHERE x.entity_type = \'room\' AND x.entity_id = r.room_id
+                     AND x.project_id = b.project_id
+               )'
         );
         $stmt->execute([
             'room_id' => $roomId,

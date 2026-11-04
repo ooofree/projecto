@@ -25,10 +25,12 @@ final class DocumentManagementPlugin implements PluginInterface
             'issues' => $this->issuesIndex(),
             'rfis' => $this->rfisIndex(),
             'issue.create' => $this->createIssue($input),
+            'issue.update' => $this->updateIssue($input),
             'issue.transition' => $this->transitionIssue($input),
             'issue.followup.create' => $this->createIssueFollowUp($input),
             'issue.followup.complete' => $this->completeIssueFollowUp($input),
             'rfi.create' => $this->createRfi($input),
+            'rfi.update' => $this->updateRfi($input),
             'rfi.transition' => $this->transitionRfi($input),
             'rfi.followup.create' => $this->createRfiFollowUp($input),
             'rfi.followup.complete' => $this->completeRfiFollowUp($input),
@@ -153,6 +155,24 @@ final class DocumentManagementPlugin implements PluginInterface
         return PluginResponse::redirect('?page=issues');
     }
 
+    private function updateIssue(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $this->documents->updateIssue(
+            (int) $project['project_id'],
+            $this->requiredId($input, 'issue_id', '问题'),
+            [
+                'description' => $input['description'] ?? null,
+                'severity' => $input['severity'] ?? null,
+                'location' => $input['location'] ?? null,
+            ]
+        );
+
+        Support::flash('问题信息已更新。');
+        return PluginResponse::redirect('?page=issues');
+    }
+
     private function createIssueFollowUp(array $input): PluginResponse
     {
         $this->requireEdit();
@@ -236,6 +256,36 @@ final class DocumentManagementPlugin implements PluginInterface
             ? 'RFI 已答复；请重新评估主问题，系统未自动改变问题状态。'
             : 'RFI 状态已更新。';
         Support::flash($message);
+        return PluginResponse::redirect('?page=rfis');
+    }
+
+    private function updateRfi(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $data = [
+            'assigned_to' => $input['assigned_to'] ?? null,
+            'priority' => $input['priority'] ?? null,
+            'due_date' => $input['due_date'] ?? null,
+            'description' => $input['description'] ?? null,
+            'evidence_required' => $this->checkbox($input, 'evidence_required'),
+        ];
+        if (array_key_exists('primary_issue_id', $input)) {
+            $data['primary_issue_id'] = $input['primary_issue_id'];
+        }
+        if (array_key_exists('related_issue_ids', $input)) {
+            if (!is_array($input['related_issue_ids'])) {
+                throw new HttpException('关联问题格式无效。', 422);
+            }
+            $data['related_issue_ids'] = $input['related_issue_ids'];
+        }
+        $this->documents->updateRfi(
+            (int) $project['project_id'],
+            $this->requiredId($input, 'rfi_id', 'RFI'),
+            $data
+        );
+
+        Support::flash('RFI 信息已更新。');
         return PluginResponse::redirect('?page=rfis');
     }
 

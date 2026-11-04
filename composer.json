@@ -17,6 +17,7 @@
             "php tests/auth_service_test.php",
             "php tests/project_foundation_plugin_test.php",
             "php tests/project_service_test.php",
+            "php tests/project_space_service_test.php",
             "php tests/document_management_test.php",
             "php tests/material_management_test.php",
             "php tests/platform_administration_test.php",

@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS `document_rfi_number_sequences` (
   PRIMARY KEY (`calendar_year`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+
 CREATE TABLE IF NOT EXISTS `document_rfis` (
   `rfi_id` int NOT NULL AUTO_INCREMENT,
   `project_id` int NOT NULL,
