@@ -129,7 +129,7 @@ final class ProjectMaterialService
         ];
     }
 
-    public function listSamples(int $projectId, bool $includeCommercialDetails = true): array
+    public function listSamples(int $projectId, bool $includeCommercialDetails = true, ?int $limit = 200): array
     {
         $commercialColumns = $includeCommercialDetails
             ? 'q.purchase_unit_price, q.quotation_date, q.currency_code'
@@ -138,6 +138,7 @@ final class ProjectMaterialService
             ? 'LEFT JOIN Material_Quotations q
                  ON q.quotation_id = s.quotation_id AND q.project_id = s.project_id'
             : '';
+        $limitClause = $limit === null ? '' : ' LIMIT ' . max(0, $limit);
         $stmt = $this->db->prepare(
             "SELECT s.sample_id, s.project_id, s.material_id, s.supplier_id, s.quotation_id,
                     s.sample_quantity, s.color,
@@ -175,7 +176,7 @@ final class ProjectMaterialService
              LEFT JOIN Buildings br ON br.building_id = r.building_id AND br.project_id = s.project_id
              WHERE s.project_id = :project_id AND s.archived_at IS NULL
              ORDER BY s.updated_at DESC, s.sample_id DESC
-             LIMIT 200"
+             {$limitClause}"
         );
         $stmt->execute(['project_id' => $projectId]);
         $samples = $stmt->fetchAll();

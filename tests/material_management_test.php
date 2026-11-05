@@ -53,6 +53,32 @@ function renderMaterialTestView(PluginResponse $response): string
     return (string) ob_get_clean();
 }
 
+function materialTestXlsxSheet(PluginResponse $response): string
+{
+    $body = $response->data['body'] ?? null;
+    if ($response->type !== 'download' || !is_string($body)) {
+        throw new RuntimeException('Expected an xlsx download response.');
+    }
+    $path = tempnam(sys_get_temp_dir(), 'material-xlsx-');
+    if ($path === false) {
+        throw new RuntimeException('Unable to create a temporary file for the xlsx export.');
+    }
+    file_put_contents($path, $body);
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        @unlink($path);
+        throw new RuntimeException('Export is not a readable xlsx zip package.');
+    }
+    $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    @unlink($path);
+    if (!is_string($xml) || $xml === '') {
+        throw new RuntimeException('Export is missing its worksheet.');
+    }
+
+    return $xml;
+}
+
 $db = new PDO('sqlite::memory:', options: [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -698,6 +724,65 @@ $plugin = new MaterialManagementPlugin(
 $materialPage = $plugin->dispatch('materials', []);
 materialTestCheck($materialPage->type === 'view' && is_file((string) $materialPage->viewPath), 'Global material catalog should not require an active project.');
 $samplePage = $plugin->dispatch('samples', []);
+$sampleTestHtml = renderMaterialTestView($samplePage);
+materialTestCheck(
+    substr_count($sampleTestHtml, '<!doctype html>') === 1
+        && substr_count($sampleTestHtml, '<nav class="module-nav"') === 1
+        && substr_count($sampleTestHtml, '<main class="container">') === 1,
+    'Sample tracking page must render its layout, navigation, and page shell exactly once.'
+);
+
+materialTestCheck(
+    str_contains($sampleTestHtml, 'id="samples-table"')
+        && str_contains($sampleTestHtml, 'value="material.sample.export"')
+        && str_contains($sampleTestHtml, 'data-dialog-open="sample-create"')
+        && str_contains($sampleTestHtml, 'data-dialog-open="sample-edit-' . $linkedSampleId . '"'),
+    'Sample tracking should render its table, Excel export, and create/edit dialogs.'
+);
+
+preg_match_all('/\sid="([^"]+)"/', $sampleTestHtml, $sampleIdMatches);
+materialTestCheck(
+    count($sampleIdMatches[1]) === count(array_unique($sampleIdMatches[1])),
+    'Sample tracking page markup must not repeat element IDs.'
+);
+materialTestCheck(
+    substr_count($sampleTestHtml, '<dialog class="edit-dialog') === count($samplePage->data['samples']) + 1,
+    'Sample tracking should render one edit dialog per sample plus the create dialog.'
+);
+$sampleExport = $plugin->dispatch('sample.export', []);
+materialTestCheck(
+    $sampleExport->type === 'download'
+        && ($sampleExport->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        && preg_match('/^sample_data_\d{8}_\d{6}\.xlsx$/', (string) ($sampleExport->data['filename'] ?? '')) === 1,
+    'Sample export should produce an .xlsx download response.'
+);
+$registryExport = $registry->dispatch('POST', 'material.sample.export', []);
+materialTestCheck(
+    $registryExport instanceof PluginResponse && $registryExport->type === 'download',
+    'Sample export must be registered as a plugin route in its manifest.'
+);
+$sampleSheetXml = materialTestXlsxSheet($sampleExport);
+materialTestCheck(
+    str_contains($sampleSheetXml, '地砖')
+        && str_contains($sampleSheetXml, '供应商甲')
+        && str_contains($sampleSheetXml, '未送')
+        && str_contains($sampleSheetXml, '报价单价')
+        && substr_count($sampleSheetXml, '<row r=') === count($samplePage->data['samples']) + 1,
+    'Exported sample rows should mirror the current project samples with localized labels.'
+);
+
+$previousMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$_SERVER['REQUEST_METHOD'] = 'POST';
+$_POST = ['csrf_token' => Support::csrfToken(), 'action' => 'material.sample.export'];
+ob_start();
+(new \ProjectO\Application($db))->run();
+$downloadResponse = (string) ob_get_clean();
+$_POST = [];
+$_SERVER['REQUEST_METHOD'] = $previousMethod;
+materialTestCheck(
+    str_starts_with($downloadResponse, 'PK'),
+    'Sample export must be reachable through the application POST route.'
+);
 materialTestCheck($samplePage->type === 'view' && is_file((string) $samplePage->viewPath), 'Sample tracking should resolve its plugin view.');
 $estimatePage = $plugin->dispatch('estimates', []);
 materialTestCheck($estimatePage->type === 'view' && is_file((string) $estimatePage->viewPath), 'Material estimates should resolve their plugin view.');
@@ -771,6 +856,14 @@ materialTestCheck(
         && $linkedSampleWithoutCommercialDetails[0]['purchase_unit_price'] === null
         && !str_contains(renderMaterialTestView($sampleWithoutCommercialPermission), '商业报价：'),
     'Sample tracking should remain available without exposing commercial quotation data.'
+);
+
+$privacySheetXml = materialTestXlsxSheet($plugin->dispatch('sample.export', []));
+materialTestCheck(
+    !str_contains($privacySheetXml, '报价单价')
+        && !str_contains($privacySheetXml, '报价日期')
+        && !str_contains($privacySheetXml, 'CNY'),
+    'Sample export must omit commercial quotation columns without quotation permissions.'
 );
 $unquotedPost = $plugin->dispatch('sample.save', [
     'material_id' => (string) $materialId,
@@ -863,6 +956,11 @@ materialTestExpectStatus(
     409,
     'Sample pages must require a current project.'
 );
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('sample.export', []),
+    409,
+    'Sample export must require a current project.'
+);
 $_SESSION['active_project_id'] = 1;
 $db->exec(
     "DELETE FROM Role_Permissions
@@ -872,6 +970,11 @@ materialTestExpectStatus(
     static fn () => $plugin->dispatch('samples', []),
     403,
     'Sample pages must enforce server-side feature permissions.'
+);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('sample.export', []),
+    403,
+    'Sample export must enforce server-side feature permissions.'
 );
 
 echo "Material management tests passed.\n";

@@ -37,6 +37,7 @@
         "POST material.sample.save": "sample.save",
         "POST material.sample.archive": "sample.archive",
         "POST material.sample.image.upload": "sample.image.upload",
+        "POST material.sample.export": "sample.export",
         "POST material.estimate.save": "estimate.save",
         "POST material.estimate.delete": "estimate.delete",
         "POST material.tender.save": "tender.save",

@@ -22,4 +22,13 @@ final class PluginResponse
     {
         return new self('redirect', location: $location);
     }
+
+    public static function download(string $filename, string $contentType, string $body): self
+    {
+        return new self('download', [
+            'filename' => $filename,
+            'content_type' => $contentType,
+            'body' => $body,
+        ]);
+    }
 }

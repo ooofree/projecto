@@ -59,6 +59,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'sample.save' => $this->saveSample($input),
             'sample.archive' => $this->archiveSample($input),
             'sample.image.upload' => $this->uploadSampleImage($input),
+            'sample.export' => $this->exportSamples($input),
             'estimate.save' => $this->saveEstimate($input),
             'estimate.delete' => $this->deleteEstimate($input),
             'tender.save' => $this->saveTenderItem($input),
@@ -477,6 +478,66 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::audit($this->context->db, 'material.sample.image.upload', 'Added image ' . $imageId . ' to sample ' . $sampleId . '.');
         Support::flash('样品图片已上传至私有对象存储。');
         return PluginResponse::redirect('?page=samples');
+    }
+
+    private function exportSamples(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_material_samples');
+        Support::requirePermission($this->context->db, 'view_projects');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $canViewQuotations = Support::hasPermission($this->context->db, 'view_material_quotations');
+        $samples = $this->projectMaterials->listSamples($projectId, $canViewQuotations, null);
+
+        $headers = [
+            '材料编码', '材料名称', '供应商', '项目位置', '送样数量', '单位', '颜色',
+            '资料状态', '送样状态', '送样日期', '业主审批状态', '业主审批日期', '图片数量', '备注',
+        ];
+        if ($canViewQuotations) {
+            $headers[] = '报价单价';
+            $headers[] = '币种';
+            $headers[] = '报价日期';
+        }
+
+        $rows = [];
+        foreach ($samples as $sample) {
+            $row = [
+                (string) ($sample['material_code'] ?? ''),
+                (string) $sample['material_name'],
+                (string) $sample['supplier_name'],
+                (string) ($sample['location_name'] ?? ''),
+                (int) $sample['sample_quantity'],
+                (string) ($sample['unit'] ?? ''),
+                (string) ($sample['color'] ?? ''),
+                SampleStatusLabels::document((string) $sample['document_status']),
+                SampleStatusLabels::sent((string) $sample['sent_status']),
+                (string) ($sample['sent_date'] ?? ''),
+                SampleStatusLabels::approval((string) $sample['owner_approval_status']),
+                (string) ($sample['owner_approval_date'] ?? ''),
+                count($sample['images']),
+                (string) ($sample['remarks'] ?? ''),
+            ];
+            if ($canViewQuotations) {
+                $hasQuotation = $sample['quotation_id'] !== null;
+                $row[] = $hasQuotation ? (string) $sample['purchase_unit_price'] : '';
+                $row[] = $hasQuotation ? (string) $sample['currency_code'] : '';
+                $row[] = $hasQuotation ? (string) $sample['quotation_date'] : '';
+            }
+            $rows[] = $row;
+        }
+
+        $body = XlsxWorkbook::build('样品跟踪', $headers, $rows);
+        Support::audit(
+            $this->context->db,
+            'material.sample.export',
+            'Exported ' . count($rows) . ' sample rows for project ' . $projectId . '.'
+        );
+
+        return PluginResponse::download(
+            'sample_data_' . date('Ymd_His') . '.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            $body
+        );
     }
 
     private function saveEstimate(array $input): PluginResponse

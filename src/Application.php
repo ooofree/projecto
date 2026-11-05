@@ -137,6 +137,11 @@ final class Application
             $this->redirect($response->location);
         }
 
+        if ($response->type === 'download') {
+            $this->sendDownload($response->data);
+            return;
+        }
+
         if ($response->type !== 'view' || $response->viewPath === null) {
             throw new HttpException('插件返回了无效的响应。', 500);
         }
@@ -161,6 +166,29 @@ final class Application
             throw new HttpException('页面模板不存在。', 500);
         }
         require $viewPath;
+    }
+
+    private function sendDownload(array $data): void
+    {
+        $filename = $data['filename'] ?? null;
+        $contentType = $data['content_type'] ?? null;
+        $body = $data['body'] ?? null;
+        if (!is_string($filename) || preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $filename) !== 1) {
+            throw new HttpException('插件返回了无效的下载文件名。', 500);
+        }
+        if (!is_string($contentType) || preg_match('#^[a-z0-9.+-]+/[a-z0-9.+-]+$#i', $contentType) !== 1) {
+            throw new HttpException('插件返回了无效的下载类型。', 500);
+        }
+        if (!is_string($body)) {
+            throw new HttpException('插件返回了无效的下载内容。', 500);
+        }
+
+        header('Content-Type: ' . $contentType);
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen($body));
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, no-store, max-age=0');
+        echo $body;
     }
 
     private function redirect(string $location): never
