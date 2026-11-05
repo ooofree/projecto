@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ProjectO\Modules\MaterialManagement;
 
 use finfo;
+use ProjectO\CurrencyCatalog;
 use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
@@ -126,6 +127,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'suppliers' => $data['suppliers'],
             'brands' => $data['brands'],
             'supplierMaterials' => $data['supplierMaterials'],
+            'currencies' => CurrencyCatalog::options(),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_supplier_materials'),
             'nav' => $this->nav(),
         ]);
@@ -140,6 +142,8 @@ final class MaterialManagementPlugin implements PluginInterface
             'title' => '材料报价',
             'currentProject' => $project,
             'data' => $this->catalog->quotationData((int) $project['project_id']),
+            'currencies' => CurrencyCatalog::options(),
+            'defaultCurrency' => 'CNY',
             'canEdit' => Support::hasPermission($this->context->db, 'edit_material_quotations'),
             'nav' => $this->nav(),
         ]);
@@ -211,6 +215,8 @@ final class MaterialManagementPlugin implements PluginInterface
             'currentProject' => $project,
             'items' => $this->tenderList->items($projectId),
             'materials' => $this->tenderList->materials($projectId),
+            'currencies' => CurrencyCatalog::options(),
+            'defaultCurrency' => 'CNY',
             'canEdit' => Support::hasPermission($this->context->db, 'edit_tender_list'),
             'nav' => $this->nav(),
         ]);

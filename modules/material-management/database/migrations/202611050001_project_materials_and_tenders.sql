@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS `Tender_List` (
   `material_id` int NOT NULL,
   `tender_quantity` decimal(12,2) NOT NULL,
   `tender_unit_price` decimal(16,2) NOT NULL,
-  `currency_code` char(3) NOT NULL DEFAULT 'ETB',
+  `currency_code` char(3) NOT NULL DEFAULT 'CNY',
   `status` enum('pending','approved','completed') NOT NULL DEFAULT 'pending',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

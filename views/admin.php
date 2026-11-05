@@ -40,7 +40,11 @@ ob_start();
         </label>
         <label>
             默认币种代码
-            <input name="default_currency_code" value="<?= $escape($settings['default_currency_code']) ?>" maxlength="3" pattern="[A-Za-z]{3}" required>
+            <select name="default_currency_code" required>
+                <?php foreach ($currencies as $code => $name): ?>
+                    <option value="<?= $escape($code) ?>" <?= $code === $settings['default_currency_code'] ? 'selected' : '' ?>><?= $escape($name) ?></option>
+                <?php endforeach; ?>
+            </select>
         </label>
         <label>
             管理界面语言

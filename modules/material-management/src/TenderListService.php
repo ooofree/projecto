@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ProjectO\Modules\MaterialManagement;
 
 use PDO;
+use ProjectO\CurrencyCatalog;
 use ProjectO\HttpException;
 
 final class TenderListService
@@ -47,11 +48,14 @@ final class TenderListService
         $materialId = $this->requiredId($data['material_id'] ?? null, '材料');
         $quantity = $this->decimal($data['tender_quantity'] ?? null, 10, 2, '招标数量');
         $unitPrice = $this->decimal($data['tender_unit_price'] ?? null, 14, 2, '招标单价');
-        $currency = $data['currency_code'] ?? 'ETB';
-        if (!is_string($currency) || !preg_match('/^[A-Za-z]{3}$/', $currency)) {
-            throw new HttpException('币种代码须为三位字母。', 422);
+        $currency = $data['currency_code'] ?? 'CNY';
+        if (!is_string($currency)) {
+            throw new HttpException('请选择 ISO 4217 标准目录中的币种。', 422);
         }
-        $currency = strtoupper($currency);
+        $currency = strtoupper(trim($currency));
+        if (!CurrencyCatalog::supports($currency)) {
+            throw new HttpException('请选择 ISO 4217 标准目录中的币种。', 422);
+        }
         $this->requireProjectMaterial($projectId, $materialId);
 
         if ($id === null) {

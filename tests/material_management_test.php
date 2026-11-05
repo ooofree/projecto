@@ -177,7 +177,7 @@ $db->exec(
     'CREATE TABLE Tender_List (
         tender_item_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
         material_id INTEGER NOT NULL, tender_quantity NUMERIC NOT NULL,
-        tender_unit_price NUMERIC NOT NULL, currency_code TEXT NOT NULL DEFAULT "ETB",
+        tender_unit_price NUMERIC NOT NULL, currency_code TEXT NOT NULL DEFAULT "CNY",
         status TEXT NOT NULL DEFAULT "pending", updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )'
 );
@@ -279,6 +279,16 @@ $supplierMaterialId = $catalog->saveSupplierMaterial([
     'lead_time_days' => '12',
     'currency_code' => 'cny',
 ]);
+materialTestExpectStatus(
+    static fn () => $catalog->saveSupplierMaterial([
+        'supplier_id' => (string) $supplierId,
+        'supplier_material_code' => 'A-INVALID',
+        'supplier_material_name' => '无效币种材料',
+        'currency_code' => 'ZZZ',
+    ]),
+    422,
+    'Shared supplier material prices must use a code from the ISO 4217 catalog.'
+);
 $quoteId = $catalog->saveQuotation(1, [
     'material_id' => (string) $materialId,
     'supplier_material_id' => (string) $supplierMaterialId,
@@ -291,6 +301,17 @@ $quoteId = $catalog->saveQuotation(1, [
 materialTestCheck((int) $db->query('SELECT version FROM Material_Quotations')->fetchColumn() === 1, 'New quotations must start at version 1.');
 materialTestCheck((string) $db->query('SELECT confirmed_tax_rate FROM Material_Quotations')->fetchColumn() === '0.13', 'Tax percentage must be stored as its confirmed decimal snapshot.');
 materialTestCheck((int) $db->query('SELECT COUNT(*) FROM Material_Mappings')->fetchColumn() === 1, 'Saving a quotation must maintain the material mapping.');
+materialTestExpectStatus(
+    static fn () => $catalog->saveQuotation(1, [
+        'material_id' => (string) $materialId,
+        'supplier_material_id' => (string) $supplierMaterialId,
+        'purchase_unit_price' => '10',
+        'quotation_date' => '2026-03-01',
+        'currency_code' => 'ZZZ',
+    ]),
+    422,
+    'Project quotations must use a code from the ISO 4217 catalog.'
+);
 $catalog->setDefaultQuotation(1, $materialId, $quoteId);
 materialTestCheck((int) $db->query('SELECT default_quotation_id FROM Materials')->fetchColumn() === $quoteId, 'Default quotation selection must persist explicitly.');
 
@@ -413,8 +434,19 @@ $otherTenderId = $tenderService->save(2, [
 ]);
 materialTestCheck(
     count($tenderService->items(2)) === 1
-        && $tenderService->items(2)[0]['tender_item_id'] === $otherTenderId,
+        && $tenderService->items(2)[0]['tender_item_id'] === $otherTenderId
+        && $tenderService->items(2)[0]['currency_code'] === 'CNY',
     'Project two should only see its own tender items.'
+);
+materialTestExpectStatus(
+    static fn () => $tenderService->save(1, [
+        'material_id' => (string) $materialId,
+        'tender_quantity' => '1',
+        'tender_unit_price' => '1',
+        'currency_code' => 'ZZZ',
+    ]),
+    422,
+    'Tender items must reject currency codes outside the ISO 4217 catalog.'
 );
 materialTestExpectStatus(
     static fn () => $tenderService->save(1, [
@@ -683,6 +715,12 @@ foreach ([
         "Material-management page should render its expected heading: {$expectedHeading}."
     );
 }
+$tenderHtml = renderMaterialTestView($tenderPage);
+materialTestCheck(
+    str_contains($tenderHtml, 'CNY - 人民币')
+        && str_contains($tenderHtml, 'value="CNY" selected'),
+    'Tender forms should default to CNY and offer standardized currency choices.'
+);
 
 $_SERVER['REQUEST_METHOD'] = 'GET';
 foreach ([
@@ -776,16 +814,32 @@ $projectMaterialsAndTendersMigrationPosition = array_search(
     $migrationKeys,
     true
 );
+$tenderCurrencyDefaultMigrationPosition = array_search(
+    'material.management/202611050002_tender_currency_default_cny.sql',
+    $migrationKeys,
+    true
+);
 materialTestCheck(
     $spaceMigrationPosition !== false && $archiveMigrationPosition !== false
         && $materialMigrationPosition !== false
         && $sampleDecouplingMigrationPosition !== false
         && $projectMaterialsAndTendersMigrationPosition !== false
+        && $tenderCurrencyDefaultMigrationPosition !== false
         && $projectMaterialsAndTendersMigrationPosition > $sampleDecouplingMigrationPosition
+        && $tenderCurrencyDefaultMigrationPosition > $projectMaterialsAndTendersMigrationPosition
         && $spaceMigrationPosition < $archiveMigrationPosition
         && $archiveMigrationPosition < $materialMigrationPosition
         && $materialMigrationPosition < $sampleDecouplingMigrationPosition,
     'Plugin migrations must follow declared dependencies.'
+);
+
+materialTestCheck(
+    \ProjectO\CurrencyCatalog::supports('cny')
+        && \ProjectO\CurrencyCatalog::supports('ETB')
+        && !\ProjectO\CurrencyCatalog::supports('ZZZ')
+        && count(\ProjectO\CurrencyCatalog::options()) === 181
+        && \ProjectO\CurrencyCatalog::options()['CNY'] === 'CNY - 人民币',
+    'Currency choices must use the ISO 4217 catalog and include the CNY label.'
 );
 
 $previousStorageAdapter = getenv('APP_OBJECT_STORAGE_ADAPTER');

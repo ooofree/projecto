@@ -76,6 +76,7 @@ final class PlatformAdministrationService
         return [
             'title' => '平台管理',
             'settings' => $settings,
+            'currencies' => CurrencyCatalog::options(),
             'plugins' => $this->plugins->catalog(),
             'users' => $users,
             'roles' => $roles,
@@ -124,8 +125,8 @@ final class PlatformAdministrationService
         if (!preg_match('/^[A-Z]{2}$/', $countryCode)) {
             throw new HttpException('默认国家代码必须是两位 ISO 代码。', 422);
         }
-        if (!preg_match('/^[A-Z]{3}$/', $currencyCode)) {
-            throw new HttpException('默认币种代码必须是三位 ISO 代码。', 422);
+        if (!CurrencyCatalog::supports($currencyCode)) {
+            throw new HttpException('默认币种必须来自 ISO 4217 标准目录。', 422);
         }
 
         $this->transaction(function () use ($theme, $countryCode, $currencyCode): void {

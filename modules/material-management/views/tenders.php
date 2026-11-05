@@ -7,7 +7,7 @@ $statusLabels = ['pending' => '待确认', 'approved' => '已确认', 'completed
     <div>
         <p class="eyebrow">项目清单 · 招标数据</p>
         <h1>招标清单</h1>
-        <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。清单按项目维护，不按楼栋拆分；招标单价保留原币种，供后续供应商报价比较参考。</p>
+        <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。项目基准币种为人民币（CNY）；清单币种可从 ISO 4217 标准目录选择，默认 CNY。金额按录入币种保存，不自动换算。</p>
     </div>
 </section>
 
@@ -29,7 +29,7 @@ $statusLabels = ['pending' => '待确认', 'approved' => '已确认', 'completed
             </label>
             <label>招标数量<input type="number" name="tender_quantity" min="0" step="0.01" required></label>
             <label>招标单价<input type="number" name="tender_unit_price" min="0" step="0.01" required></label>
-            <label>币种代码<input name="currency_code" maxlength="3" pattern="[A-Za-z]{3}" value="ETB" required></label>
+            <label>币种<select name="currency_code" required><?php foreach ($currencies as $code => $name): ?><option value="<?= $escape($code) ?>" <?= $code === $defaultCurrency ? 'selected' : '' ?>><?= $escape($name) ?></option><?php endforeach; ?></select></label>
             <div class="field-wide"><button class="button button-primary" type="submit">保存清单项</button></div>
         </form>
     </section>
@@ -59,7 +59,7 @@ $statusLabels = ['pending' => '待确认', 'approved' => '已确认', 'completed
                     </label>
                     <label>招标数量<input type="number" name="tender_quantity" min="0" step="0.01" value="<?= $escape($item['tender_quantity']) ?>" required></label>
                     <label>招标单价<input type="number" name="tender_unit_price" min="0" step="0.01" value="<?= $escape($item['tender_unit_price']) ?>" required></label>
-                    <label>币种代码<input name="currency_code" maxlength="3" pattern="[A-Za-z]{3}" value="<?= $escape($item['currency_code']) ?>" required></label>
+                    <label>币种<select name="currency_code" required><?php foreach ($currencies as $code => $name): ?><option value="<?= $escape($code) ?>" <?= $code === $item['currency_code'] ? 'selected' : '' ?>><?= $escape($name) ?></option><?php endforeach; ?></select></label>
                     <div class="field-wide"><button class="button button-secondary" type="submit">保存更改</button></div>
                 </form>
                 <form method="post" class="inline-form">

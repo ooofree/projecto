@@ -5,6 +5,7 @@ namespace ProjectO\Modules\MaterialManagement;
 
 use DateTimeImmutable;
 use PDO;
+use ProjectO\CurrencyCatalog;
 use ProjectO\HttpException;
 use Throwable;
 
@@ -859,8 +860,8 @@ final class MaterialCatalogService
             throw new HttpException('币种代码格式无效。', 422);
         }
         $value = strtoupper(trim($value));
-        if (!preg_match('/^[A-Z]{3}$/', $value)) {
-            throw new HttpException('币种代码须为三位字母。', 422);
+        if (!CurrencyCatalog::supports($value)) {
+            throw new HttpException('请选择 ISO 4217 标准目录中的币种。', 422);
         }
         return $value;
     }

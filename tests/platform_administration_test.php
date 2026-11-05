@@ -114,6 +114,11 @@ $admin = new PlatformAdministrationService($db, $registry);
 $pageData = $admin->pageData();
 platformAdminCheck(count($pageData['plugins']) === 3, 'The plugin catalog should list all discovered plugins.');
 platformAdminCheck($pageData['settings']['default_currency_code'] === 'CNY', 'The default currency should be loaded.');
+platformAdminCheck(
+    ($pageData['currencies']['CNY'] ?? null) === 'CNY - 人民币'
+        && isset($pageData['currencies']['USD']),
+    'Platform currency choices should come from the standard currency catalog.'
+);
 $samplePermissionId = (int) $db->query(
     "SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_samples'"
 )->fetchColumn();
@@ -144,6 +149,15 @@ platformAdminExpectStatus(
     ]),
     422,
     'Unsupported settings values should be rejected.'
+);
+platformAdminExpectStatus(
+    fn () => $admin->dispatch('admin.settings.save', [
+        'theme' => 'dark',
+        'default_country_code' => 'CN',
+        'default_currency_code' => 'ZZZ',
+    ]),
+    422,
+    'Currencies outside the ISO 4217 catalog must be rejected.'
 );
 platformAdminCheck($admin->theme() === 'dark', 'Rejected settings must not be persisted.');
 
