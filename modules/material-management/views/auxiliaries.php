@@ -1,5 +1,5 @@
 <?php ob_start(); require __DIR__ . '/_nav.php'; ?>
-<section class="page-heading"><div><p class="eyebrow">材料主数据 · 全局目录</p><h1>辅材</h1><p class="muted">本期维护辅材主数据；BOM、用量换算和成本计算不在本范围。</p></div></section>
+<section class="page-heading"><div><p class="eyebrow">项目材料主数据</p><h1>辅材</h1><p class="muted">本项目辅材目录；BOM、用量换算和成本计算不在本范围。</p></div></section>
 <section class="panel">
     <div class="panel-heading"><h2>辅材目录</h2><span class="muted"><?= count($auxiliaries) ?> 项</span></div>
     <?php if ($canEdit): ?>

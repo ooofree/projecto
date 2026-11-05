@@ -17,6 +17,7 @@
         "GET quotations": "quotations",
         "GET samples": "samples",
         "GET estimates": "estimates",
+        "GET tender-list": "tender-list",
         "POST material.category.save": "category.save",
         "POST material.category.delete": "category.delete",
         "POST material.save": "material.save",
@@ -37,7 +38,9 @@
         "POST material.sample.archive": "sample.archive",
         "POST material.sample.image.upload": "sample.image.upload",
         "POST material.estimate.save": "estimate.save",
-        "POST material.estimate.delete": "estimate.delete"
+        "POST material.estimate.delete": "estimate.delete",
+        "POST material.tender.save": "tender.save",
+        "POST material.tender.delete": "tender.delete"
     },
     "migrations": [
         "database/migrations"
@@ -46,17 +49,17 @@
         {
             "name": "view_materials",
             "display_name": "查看材料",
-            "description": "查看全局材料目录和材料估算所用材料"
+            "description": "查看当前项目的材料目录和材料估算所用材料"
         },
         {
             "name": "edit_materials",
             "display_name": "编辑材料",
-            "description": "维护材料和分类"
+            "description": "维护当前项目的材料和分类"
         },
         {
             "name": "delete_materials",
             "display_name": "删除材料",
-            "description": "删除未被业务记录引用的材料或分类"
+            "description": "删除当前项目中未被业务记录引用的材料或分类"
         },
         {
             "name": "view_brands",
@@ -76,7 +79,7 @@
         {
             "name": "edit_auxiliary_materials",
             "display_name": "编辑辅材",
-            "description": "维护全局辅材目录"
+            "description": "维护当前项目辅材目录"
         },
         {
             "name": "view_suppliers",
@@ -101,12 +104,12 @@
         {
             "name": "view_material_quotations",
             "display_name": "查看材料报价",
-            "description": "查看报价记录与默认报价"
+            "description": "查看当前项目的报价记录与默认报价"
         },
         {
             "name": "edit_material_quotations",
             "display_name": "编辑材料报价",
-            "description": "创建、更新、删除报价并人工选择默认报价"
+            "description": "维护当前项目的供应商报价并人工选择默认报价"
         },
         {
             "name": "view_material_samples",
@@ -137,6 +140,16 @@
             "name": "edit_material_estimates",
             "display_name": "编辑材料估算明细",
             "description": "维护当前项目材料估算数量和备注"
+        },
+        {
+            "name": "view_tenders",
+            "display_name": "查看招标清单",
+            "description": "查看当前项目按材料记录的招标数量和单价"
+        },
+        {
+            "name": "edit_tender_list",
+            "display_name": "编辑招标清单",
+            "description": "维护当前项目招标清单的材料、数量、单价和币种"
         }
     ]
 }

@@ -16,12 +16,14 @@ final class MaterialManagementPlugin implements PluginInterface
 {
     private MaterialCatalogService $catalog;
     private ProjectMaterialService $projectMaterials;
+    private TenderListService $tenderList;
     private ?ObjectStorageInterface $imageStorage;
 
     public function __construct(private readonly PluginContext $context)
     {
         $this->catalog = new MaterialCatalogService($context->db);
         $this->projectMaterials = new ProjectMaterialService($context->db);
+        $this->tenderList = new TenderListService($context->db);
         $this->imageStorage = $context->objectStorage();
     }
 
@@ -36,6 +38,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'quotations' => $this->quotationsIndex(),
             'samples' => $this->samplesIndex(),
             'estimates' => $this->estimatesIndex(),
+            'tender-list' => $this->tenderListIndex(),
             'category.save' => $this->saveCategory($input),
             'category.delete' => $this->deleteCategory($input),
             'material.save' => $this->saveMaterial($input),
@@ -57,6 +60,8 @@ final class MaterialManagementPlugin implements PluginInterface
             'sample.image.upload' => $this->uploadSampleImage($input),
             'estimate.save' => $this->saveEstimate($input),
             'estimate.delete' => $this->deleteEstimate($input),
+            'tender.save' => $this->saveTenderItem($input),
+            'tender.delete' => $this->deleteTenderItem($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
     }
@@ -64,9 +69,12 @@ final class MaterialManagementPlugin implements PluginInterface
     private function materialsIndex(): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_materials');
+        Support::requirePermission($this->context->db, 'view_projects');
+        $project = $this->context->requireCurrentProject();
         return $this->context->view('materials.php', [
             'title' => '材料目录',
-            'data' => $this->catalog->materialData(),
+            'currentProject' => $project,
+            'data' => $this->catalog->materialData((int) $project['project_id']),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_materials'),
             'canDelete' => Support::hasPermission($this->context->db, 'delete_materials'),
             'nav' => $this->nav(),
@@ -88,9 +96,10 @@ final class MaterialManagementPlugin implements PluginInterface
     private function auxiliariesIndex(): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_materials');
+        $projectId = $this->currentProjectId();
         return $this->context->view('auxiliaries.php', [
             'title' => '辅材管理',
-            'auxiliaries' => $this->catalog->auxiliaryData(),
+            'auxiliaries' => $this->catalog->auxiliaryData($projectId),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_auxiliary_materials'),
             'nav' => $this->nav(),
         ]);
@@ -125,9 +134,12 @@ final class MaterialManagementPlugin implements PluginInterface
     private function quotationsIndex(): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_material_quotations');
+        Support::requirePermission($this->context->db, 'view_projects');
+        $project = $this->context->requireCurrentProject();
         return $this->context->view('quotations.php', [
             'title' => '材料报价',
-            'data' => $this->catalog->quotationData(),
+            'currentProject' => $project,
+            'data' => $this->catalog->quotationData((int) $project['project_id']),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_material_quotations'),
             'nav' => $this->nav(),
         ]);
@@ -158,7 +170,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'title' => '材料样品跟踪',
             'currentProject' => $project,
             'samples' => $samples,
-            'choices' => $this->projectMaterials->sampleChoices($canViewQuotations),
+            'choices' => $this->projectMaterials->sampleChoices($projectId, $canViewQuotations),
             'locations' => $this->projectMaterials->locations($projectId),
             'canCreate' => Support::hasPermission($this->context->db, 'add_sample'),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_sample'),
@@ -188,26 +200,42 @@ final class MaterialManagementPlugin implements PluginInterface
         ]);
     }
 
+    private function tenderListIndex(): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_tenders');
+        Support::requirePermission($this->context->db, 'view_projects');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        return $this->context->view('tenders.php', [
+            'title' => '招标清单',
+            'currentProject' => $project,
+            'items' => $this->tenderList->items($projectId),
+            'materials' => $this->tenderList->materials($projectId),
+            'canEdit' => Support::hasPermission($this->context->db, 'edit_tender_list'),
+            'nav' => $this->nav(),
+        ]);
+    }
+
     private function saveCategory(array $input): PluginResponse
     {
-        $this->requireMaterialEdit();
-        $id = $this->catalog->saveCategory($input);
+        $projectId = $this->requireMaterialEdit();
+        $id = $this->catalog->saveCategory($projectId, $input);
         return $this->complete('material.category.save', '材料分类已保存。', $id, '?page=materials');
     }
 
     private function deleteCategory(array $input): PluginResponse
     {
-        $this->requireMaterialEdit();
+        $projectId = $this->requireMaterialEdit();
         Support::requirePermission($this->context->db, 'delete_materials');
         $id = $this->requiredId($input, 'category_id');
-        $this->catalog->deleteCategory($id);
+        $this->catalog->deleteCategory($projectId, $id);
         return $this->complete('material.category.delete', '材料分类已删除。', $id, '?page=materials');
     }
 
     private function saveMaterial(array $input): PluginResponse
     {
-        $this->requireMaterialEdit();
-        $id = $this->catalog->saveMaterial($input);
+        $projectId = $this->requireMaterialEdit();
+        $id = $this->catalog->saveMaterial($projectId, $input);
         return $this->complete('material.save', '材料已保存。', $id, '?page=materials');
     }
 
@@ -215,8 +243,9 @@ final class MaterialManagementPlugin implements PluginInterface
     {
         Support::requirePermission($this->context->db, 'view_materials');
         Support::requirePermission($this->context->db, 'delete_materials');
+        $projectId = $this->currentProjectId();
         $id = $this->requiredId($input, 'material_id');
-        $this->catalog->deleteMaterial($id);
+        $this->catalog->deleteMaterial($projectId, $id);
         return $this->complete('material.delete', '材料已删除。', $id, '?page=materials');
     }
 
@@ -241,7 +270,7 @@ final class MaterialManagementPlugin implements PluginInterface
     {
         Support::requirePermission($this->context->db, 'view_materials');
         Support::requirePermission($this->context->db, 'edit_auxiliary_materials');
-        $id = $this->catalog->saveAuxiliary($input);
+        $id = $this->catalog->saveAuxiliary($this->currentProjectId(), $input);
         return $this->complete('material.auxiliary.save', '辅材已保存。', $id, '?page=auxiliary-materials');
     }
 
@@ -250,7 +279,7 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'view_materials');
         Support::requirePermission($this->context->db, 'edit_auxiliary_materials');
         $id = $this->requiredId($input, 'aux_id');
-        $this->catalog->deleteAuxiliary($id);
+        $this->catalog->deleteAuxiliary($this->currentProjectId(), $id);
         return $this->complete('material.auxiliary.delete', '辅材已删除。', $id, '?page=auxiliary-materials');
     }
 
@@ -292,7 +321,7 @@ final class MaterialManagementPlugin implements PluginInterface
     {
         Support::requirePermission($this->context->db, 'view_material_quotations');
         Support::requirePermission($this->context->db, 'edit_material_quotations');
-        $id = $this->catalog->saveQuotation($input);
+        $id = $this->catalog->saveQuotation($this->currentProjectId(), $input);
         return $this->complete('material.quotation.save', '报价已保存，版本已更新。', $id, '?page=quotations');
     }
 
@@ -302,7 +331,7 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'edit_material_quotations');
         $materialId = $this->requiredId($input, 'material_id');
         $quotationId = $this->requiredId($input, 'quotation_id');
-        $this->catalog->setDefaultQuotation($materialId, $quotationId);
+        $this->catalog->setDefaultQuotation($this->currentProjectId(), $materialId, $quotationId);
         return $this->complete('material.quotation.default', '默认报价已设置。', $quotationId, '?page=quotations');
     }
 
@@ -311,7 +340,7 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'view_material_quotations');
         Support::requirePermission($this->context->db, 'edit_material_quotations');
         $materialId = $this->requiredId($input, 'material_id');
-        $this->catalog->clearDefaultQuotation($materialId);
+        $this->catalog->clearDefaultQuotation($this->currentProjectId(), $materialId);
         return $this->complete('material.quotation.clear_default', '默认报价已清除。', $materialId, '?page=quotations');
     }
 
@@ -320,7 +349,7 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'view_material_quotations');
         Support::requirePermission($this->context->db, 'edit_material_quotations');
         $id = $this->requiredId($input, 'quotation_id');
-        $this->catalog->deleteQuotation($id);
+        $this->catalog->deleteQuotation($this->currentProjectId(), $id);
         return $this->complete('material.quotation.delete', '报价已删除。', $id, '?page=quotations');
     }
 
@@ -465,10 +494,34 @@ final class MaterialManagementPlugin implements PluginInterface
         return $this->complete('material.estimate.delete', '材料估算明细已删除。', $id, '?page=estimates');
     }
 
-    private function requireMaterialEdit(): void
+    private function saveTenderItem(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_tenders');
+        Support::requirePermission($this->context->db, 'edit_tender_list');
+        $id = $this->tenderList->save($this->currentProjectId(), $input);
+        return $this->complete('material.tender.save', '招标清单项已保存。', $id, '?page=tender-list');
+    }
+
+    private function deleteTenderItem(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_tenders');
+        Support::requirePermission($this->context->db, 'edit_tender_list');
+        $id = $this->requiredId($input, 'tender_item_id');
+        $this->tenderList->delete($this->currentProjectId(), $id);
+        return $this->complete('material.tender.delete', '招标清单项已删除。', $id, '?page=tender-list');
+    }
+
+    private function requireMaterialEdit(): int
     {
         Support::requirePermission($this->context->db, 'view_materials');
         Support::requirePermission($this->context->db, 'edit_materials');
+        return $this->currentProjectId();
+    }
+
+    private function currentProjectId(): int
+    {
+        Support::requirePermission($this->context->db, 'view_projects');
+        return (int) $this->context->requireCurrentProject()['project_id'];
     }
 
     private function requireSampleCreate(): void
@@ -485,16 +538,21 @@ final class MaterialManagementPlugin implements PluginInterface
     {
         return [
             'projects' => Support::hasPermission($this->context->db, 'view_projects'),
-            'materials' => Support::hasPermission($this->context->db, 'view_materials'),
+            'materials' => Support::hasPermission($this->context->db, 'view_materials')
+                && Support::hasPermission($this->context->db, 'view_projects'),
             'brands' => Support::hasPermission($this->context->db, 'view_brands'),
-            'auxiliaries' => Support::hasPermission($this->context->db, 'view_materials'),
+            'auxiliaries' => Support::hasPermission($this->context->db, 'view_materials')
+                && Support::hasPermission($this->context->db, 'view_projects'),
             'suppliers' => Support::hasPermission($this->context->db, 'view_suppliers'),
             'supplierMaterials' => Support::hasPermission($this->context->db, 'view_supplier_materials'),
-            'quotations' => Support::hasPermission($this->context->db, 'view_material_quotations'),
+            'quotations' => Support::hasPermission($this->context->db, 'view_material_quotations')
+                && Support::hasPermission($this->context->db, 'view_projects'),
             'samples' => Support::hasPermission($this->context->db, 'view_material_samples')
                 && Support::hasPermission($this->context->db, 'view_projects'),
             'estimates' => Support::hasPermission($this->context->db, 'view_material_estimates')
                 && Support::hasPermission($this->context->db, 'view_materials')
+                && Support::hasPermission($this->context->db, 'view_projects'),
+            'tenders' => Support::hasPermission($this->context->db, 'view_tenders')
                 && Support::hasPermission($this->context->db, 'view_projects'),
         ];
     }

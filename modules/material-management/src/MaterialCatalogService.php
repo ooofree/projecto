@@ -14,52 +14,67 @@ final class MaterialCatalogService
     {
     }
 
-    public function catalog(): array
+    public function catalog(int $projectId): array
     {
         return [
-            'categories' => $this->db->query(
+            'categories' => $this->projectQuery(
                 'SELECT c.category_id, c.category_name, c.parent_category_id, c.sort_order,
                         p.category_name AS parent_name
                  FROM Material_Categories c
-                 LEFT JOIN Material_Categories p ON p.category_id = c.parent_category_id
-                 ORDER BY c.sort_order, c.category_name, c.category_id'
-            )->fetchAll(),
-            'materials' => $this->db->query(
+                 LEFT JOIN Material_Categories p
+                   ON p.category_id = c.parent_category_id AND p.project_id = c.project_id
+                 WHERE c.project_id = :project_id
+                 ORDER BY c.sort_order, c.category_name, c.category_id',
+                $projectId
+            ),
+            'materials' => $this->projectQuery(
                 'SELECT m.material_id, m.material_code, m.material_name, m.unit,
                         m.specifications, m.material_description_detailed, m.category_id,
                         m.default_quotation_id, c.category_name
                  FROM Materials m
-                 LEFT JOIN Material_Categories c ON c.category_id = m.category_id
-                 ORDER BY m.material_name, m.material_id'
-            )->fetchAll(),
+                 LEFT JOIN Material_Categories c
+                   ON c.category_id = m.category_id AND c.project_id = m.project_id
+                 WHERE m.project_id = :project_id
+                 ORDER BY m.material_name, m.material_id',
+                $projectId
+            ),
             'brands' => $this->db->query(
                 'SELECT brand_id, brand_name, external_link FROM Brands ORDER BY brand_name, brand_id'
             )->fetchAll(),
-            'auxiliaries' => $this->db->query(
+            'auxiliaries' => $this->projectQuery(
                 'SELECT aux_id, aux_name, unit, description
-                 FROM Auxiliary_Materials ORDER BY aux_name, aux_id'
-            )->fetchAll(),
+                 FROM Auxiliary_Materials WHERE project_id = :project_id
+                 ORDER BY aux_name, aux_id',
+                $projectId
+            ),
         ];
+        $params['project_id'] = $projectId;
     }
 
-    public function materialData(): array
+    public function materialData(int $projectId): array
     {
         return [
-            'categories' => $this->db->query(
+            'categories' => $this->projectQuery(
                 'SELECT c.category_id, c.category_name, c.parent_category_id, c.sort_order,
                         p.category_name AS parent_name
                  FROM Material_Categories c
-                 LEFT JOIN Material_Categories p ON p.category_id = c.parent_category_id
-                 ORDER BY c.sort_order, c.category_name, c.category_id'
-            )->fetchAll(),
-            'materials' => $this->db->query(
+                 LEFT JOIN Material_Categories p
+                   ON p.category_id = c.parent_category_id AND p.project_id = c.project_id
+                 WHERE c.project_id = :project_id
+                 ORDER BY c.sort_order, c.category_name, c.category_id',
+                $projectId
+            ),
+            'materials' => $this->projectQuery(
                 'SELECT m.material_id, m.material_code, m.material_name, m.unit,
                         m.specifications, m.material_description_detailed, m.category_id,
                         m.default_quotation_id, c.category_name
                  FROM Materials m
-                 LEFT JOIN Material_Categories c ON c.category_id = m.category_id
-                 ORDER BY m.material_name, m.material_id'
-            )->fetchAll(),
+                 LEFT JOIN Material_Categories c
+                   ON c.category_id = m.category_id AND c.project_id = m.project_id
+                 WHERE m.project_id = :project_id
+                 ORDER BY m.material_name, m.material_id',
+                $projectId
+            ),
         ];
     }
 
@@ -70,12 +85,14 @@ final class MaterialCatalogService
         )->fetchAll();
     }
 
-    public function auxiliaryData(): array
+    public function auxiliaryData(int $projectId): array
     {
-        return $this->db->query(
+        return $this->projectQuery(
             'SELECT aux_id, aux_name, unit, description
-             FROM Auxiliary_Materials ORDER BY aux_name, aux_id'
-        )->fetchAll();
+             FROM Auxiliary_Materials WHERE project_id = :project_id
+             ORDER BY aux_name, aux_id',
+            $projectId
+        );
     }
 
     public function supplierData(): array
@@ -103,13 +120,15 @@ final class MaterialCatalogService
         ];
     }
 
-    public function quotationData(): array
+    public function quotationData(int $projectId): array
     {
         return [
-            'materials' => $this->db->query(
+            'materials' => $this->projectQuery(
                 'SELECT material_id, material_code, material_name, unit, default_quotation_id
-                 FROM Materials ORDER BY material_name, material_id'
-            )->fetchAll(),
+                 FROM Materials WHERE project_id = :project_id
+                 ORDER BY material_name, material_id',
+                $projectId
+            ),
             'supplierMaterials' => $this->db->query(
                 'SELECT sm.supplier_material_id, sm.supplier_id, sm.supplier_material_code,
                         sm.supplier_material_name, s.supplier_name
@@ -117,7 +136,7 @@ final class MaterialCatalogService
                  JOIN Suppliers s ON s.supplier_id = sm.supplier_id
                  ORDER BY s.supplier_name, sm.supplier_material_name'
             )->fetchAll(),
-            'quotations' => $this->db->query(
+            'quotations' => $this->projectQuery(
                 'SELECT q.quotation_id, q.material_id, q.supplier_material_id,
                         q.purchase_unit_price, q.quotation_date, q.currency_code,
                         q.min_order_quantity, q.confirmed_tax_rate, q.version,
@@ -127,12 +146,14 @@ final class MaterialCatalogService
                  JOIN Materials m ON m.material_id = q.material_id
                  JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
                  JOIN Suppliers s ON s.supplier_id = sm.supplier_id
-                 ORDER BY m.material_name, q.quotation_date DESC, q.quotation_id DESC'
-            )->fetchAll(),
+                 WHERE q.project_id = :project_id AND m.project_id = q.project_id
+                 ORDER BY m.material_name, q.quotation_date DESC, q.quotation_id DESC',
+                $projectId
+            ),
         ];
     }
 
-    public function saveCategory(array $data): int
+    public function saveCategory(int $projectId, array $data): int
     {
         $id = $this->optionalId($data['category_id'] ?? null);
         $name = $this->requiredText($data, 'category_name', 255, '材料分类名称');
@@ -142,13 +163,14 @@ final class MaterialCatalogService
             if ($id === $parentId) {
                 throw new HttpException('分类不能作为自己的上级。', 422);
             }
-            $this->requireExists('Material_Categories', 'category_id', $parentId, '上级分类');
+            $this->requireProjectCategory($projectId, $parentId, '上级分类');
             $cursor = $parentId;
             while ($cursor !== null) {
                 $stmt = $this->db->prepare(
-                    'SELECT parent_category_id FROM Material_Categories WHERE category_id = :id'
+                    'SELECT parent_category_id FROM Material_Categories
+                     WHERE category_id = :id AND project_id = :project_id'
                 );
-                $stmt->execute(['id' => $cursor]);
+                $stmt->execute(['id' => $cursor, 'project_id' => $projectId]);
                 $next = $stmt->fetchColumn();
                 if ($next === false) {
                     break;
@@ -162,43 +184,62 @@ final class MaterialCatalogService
 
         if ($id === null) {
             $stmt = $this->db->prepare(
-                'INSERT INTO Material_Categories (category_name, parent_category_id, sort_order)
-                 VALUES (:name, :parent_id, :sort_order)'
+                'INSERT INTO Material_Categories (project_id, category_name, parent_category_id, sort_order)
+                 VALUES (:project_id, :name, :parent_id, :sort_order)'
             );
-            $stmt->execute(['name' => $name, 'parent_id' => $parentId, 'sort_order' => $sortOrder]);
+            $stmt->execute([
+                'project_id' => $projectId,
+                'name' => $name,
+                'parent_id' => $parentId,
+                'sort_order' => $sortOrder,
+            ]);
             return (int) $this->db->lastInsertId();
         }
-        $this->requireExists('Material_Categories', 'category_id', $id, '材料分类');
+        $this->requireProjectCategory($projectId, $id, '材料分类');
         $stmt = $this->db->prepare(
             'UPDATE Material_Categories
              SET category_name = :name, parent_category_id = :parent_id, sort_order = :sort_order
-             WHERE category_id = :id'
+             WHERE category_id = :id AND project_id = :project_id'
         );
         $stmt->execute([
             'name' => $name,
             'parent_id' => $parentId,
             'sort_order' => $sortOrder,
             'id' => $id,
+            'project_id' => $projectId,
         ]);
         return $id;
     }
 
-    public function deleteCategory(int $categoryId): void
+    public function deleteCategory(int $projectId, int $categoryId): void
     {
-        $this->requireUnused(
-            'SELECT COUNT(*) FROM Material_Categories WHERE parent_category_id = :id',
-            $categoryId,
-            '该分类仍有下级分类，不能删除。'
+        $this->requireProjectCategory($projectId, $categoryId, '材料分类');
+        foreach ([
+            [
+                'sql' => 'SELECT COUNT(*) FROM Material_Categories WHERE project_id = :project_id AND parent_category_id = :id',
+                'message' => '该分类仍有下级分类，不能删除。',
+            ],
+            [
+                'sql' => 'SELECT COUNT(*) FROM Materials WHERE project_id = :project_id AND category_id = :id',
+                'message' => '该分类仍有材料，不能删除。',
+            ],
+        ] as $check) {
+            $stmt = $this->db->prepare($check['sql']);
+            $stmt->execute(['project_id' => $projectId, 'id' => $categoryId]);
+            if ((int) $stmt->fetchColumn() > 0) {
+                throw new HttpException($check['message'], 409);
+            }
+        }
+        $stmt = $this->db->prepare(
+            'DELETE FROM Material_Categories WHERE category_id = :id AND project_id = :project_id'
         );
-        $this->requireUnused(
-            'SELECT COUNT(*) FROM Materials WHERE category_id = :id',
-            $categoryId,
-            '该分类仍有材料，不能删除。'
-        );
-        $this->deleteById('Material_Categories', 'category_id', $categoryId, '材料分类');
+        $stmt->execute(['id' => $categoryId, 'project_id' => $projectId]);
+        if ($stmt->rowCount() !== 1) {
+            throw new HttpException('材料分类不存在或不属于当前项目。', 404);
+        }
     }
 
-    public function saveMaterial(array $data): int
+    public function saveMaterial(int $projectId, array $data): int
     {
         $id = $this->optionalId($data['material_id'] ?? null);
         $code = $this->optionalText($data, 'material_code', 50, '材料编码');
@@ -208,16 +249,17 @@ final class MaterialCatalogService
         $description = $this->optionalText($data, 'material_description_detailed', 20000, '材料说明');
         $categoryId = $this->optionalId($data['category_id'] ?? null);
         if ($categoryId !== null) {
-            $this->requireExists('Material_Categories', 'category_id', $categoryId, '材料分类');
+            $this->requireProjectCategory($projectId, $categoryId, '材料分类');
         }
 
         if ($id === null) {
             $stmt = $this->db->prepare(
                 'INSERT INTO Materials
-                    (material_code, material_name, unit, specifications, material_description_detailed, category_id)
-                 VALUES (:code, :name, :unit, :specifications, :description, :category_id)'
+                    (project_id, material_code, material_name, unit, specifications, material_description_detailed, category_id)
+                 VALUES (:project_id, :code, :name, :unit, :specifications, :description, :category_id)'
             );
             $stmt->execute([
+                'project_id' => $projectId,
                 'code' => $code,
                 'name' => $name,
                 'unit' => $unit,
@@ -228,13 +270,13 @@ final class MaterialCatalogService
             return (int) $this->db->lastInsertId();
         }
 
-        $this->requireExists('Materials', 'material_id', $id, '材料');
+        $this->requireProjectMaterial($projectId, $id, '材料');
         $stmt = $this->db->prepare(
             'UPDATE Materials
              SET material_code = :code, material_name = :name, unit = :unit,
                  specifications = :specifications, material_description_detailed = :description,
                  category_id = :category_id
-             WHERE material_id = :id'
+             WHERE material_id = :id AND project_id = :project_id'
         );
         $stmt->execute([
             'code' => $code,
@@ -244,23 +286,47 @@ final class MaterialCatalogService
             'description' => $description,
             'category_id' => $categoryId,
             'id' => $id,
+            'project_id' => $projectId,
         ]);
         return $id;
     }
 
-    public function deleteMaterial(int $materialId): void
+    public function deleteMaterial(int $projectId, int $materialId): void
     {
+        $this->requireProjectMaterial($projectId, $materialId, '材料');
         foreach ([
-            'Material_Quotations' => '报价',
-            'Initial_Cost_Estimate_Detail' => '材料估算明细',
-        ] as $table => $label) {
-            $this->requireUnused(
-                'SELECT COUNT(*) FROM `' . $table . '` WHERE material_id = :id',
-                $materialId,
-                '该材料已用于' . $label . '，不能删除。'
-            );
+            [
+                'sql' => 'SELECT COUNT(*) FROM Material_Quotations WHERE project_id = :project_id AND material_id = :id',
+                'message' => '该材料已用于报价，不能删除。',
+            ],
+            [
+                'sql' => 'SELECT COUNT(*) FROM Initial_Cost_Estimate_Detail e
+                          JOIN Buildings b ON b.building_id = e.building_id
+                          WHERE b.project_id = :project_id AND e.material_id = :id',
+                'message' => '该材料已用于材料估算明细，不能删除。',
+            ],
+            [
+                'sql' => 'SELECT COUNT(*) FROM Material_Samples WHERE project_id = :project_id AND material_id = :id',
+                'message' => '该材料已用于材料样品，不能删除。',
+            ],
+            [
+                'sql' => 'SELECT COUNT(*) FROM Tender_List WHERE project_id = :project_id AND material_id = :id',
+                'message' => '该材料已用于招标清单，不能删除。',
+            ],
+        ] as $check) {
+            $stmt = $this->db->prepare($check['sql']);
+            $stmt->execute(['project_id' => $projectId, 'id' => $materialId]);
+            if ((int) $stmt->fetchColumn() > 0) {
+                throw new HttpException($check['message'], 409);
+            }
         }
-        $this->deleteById('Materials', 'material_id', $materialId, '材料');
+        $stmt = $this->db->prepare(
+            'DELETE FROM Materials WHERE material_id = :id AND project_id = :project_id'
+        );
+        $stmt->execute(['id' => $materialId, 'project_id' => $projectId]);
+        if ($stmt->rowCount() !== 1) {
+            throw new HttpException('材料不存在或不属于当前项目。', 404);
+        }
     }
 
     public function saveBrand(array $data): int
@@ -418,12 +484,12 @@ final class MaterialCatalogService
         $this->deleteById('Supplier_Materials', 'supplier_material_id', $supplierMaterialId, '供应商材料');
     }
 
-    public function saveQuotation(array $data): int
+    public function saveQuotation(int $projectId, array $data): int
     {
         $id = $this->optionalId($data['quotation_id'] ?? null);
         $materialId = $this->requiredId($data['material_id'] ?? null, '材料');
         $supplierMaterialId = $this->requiredId($data['supplier_material_id'] ?? null, '供应商材料');
-        $this->requireExists('Materials', 'material_id', $materialId, '材料');
+        $this->requireProjectMaterial($projectId, $materialId, '材料');
         $this->requireExists('Supplier_Materials', 'supplier_material_id', $supplierMaterialId, '供应商材料');
         $price = $this->requiredDecimal($data['purchase_unit_price'] ?? null, 14, 4, '采购单价');
         $date = $this->requiredDate($data['quotation_date'] ?? null, '报价日期');
@@ -437,13 +503,14 @@ final class MaterialCatalogService
             if ($id === null) {
                 $stmt = $this->db->prepare(
                     'INSERT INTO Material_Quotations
-                        (supplier_material_id, material_id, purchase_unit_price, quotation_date,
+                        (project_id, supplier_material_id, material_id, purchase_unit_price, quotation_date,
                          currency_code, min_order_quantity, confirmed_tax_rate, version)
                      VALUES
-                        (:supplier_material_id, :material_id, :price, :quotation_date,
+                        (:project_id, :supplier_material_id, :material_id, :price, :quotation_date,
                          :currency, :minimum, :tax_rate, 1)'
                 );
                 $stmt->execute([
+                    'project_id' => $projectId,
                     'supplier_material_id' => $supplierMaterialId,
                     'material_id' => $materialId,
                     'price' => $price,
@@ -456,9 +523,10 @@ final class MaterialCatalogService
             } else {
                 $expectedVersion = $this->requiredId($data['version'] ?? null, '报价版本');
                 $check = $this->db->prepare(
-                    'SELECT version, material_id FROM Material_Quotations WHERE quotation_id = :id'
+                    'SELECT version, material_id FROM Material_Quotations
+                     WHERE quotation_id = :id AND project_id = :project_id'
                 );
-                $check->execute(['id' => $id]);
+                $check->execute(['id' => $id, 'project_id' => $projectId]);
                 $current = $check->fetch();
                 if (!$current) {
                     throw new HttpException('报价不存在。', 404);
@@ -475,9 +543,11 @@ final class MaterialCatalogService
                          purchase_unit_price = :price, quotation_date = :quotation_date,
                          currency_code = :currency, min_order_quantity = :minimum,
                          confirmed_tax_rate = :tax_rate, version = version + 1
-                     WHERE quotation_id = :id AND version = :expected_version'
+                     WHERE quotation_id = :id AND project_id = :project_id
+                       AND version = :expected_version'
                 );
                 $stmt->execute([
+                    'project_id' => $projectId,
                     'supplier_material_id' => $supplierMaterialId,
                     'material_id' => $materialId,
                     'price' => $price,
@@ -494,16 +564,19 @@ final class MaterialCatalogService
             }
 
             $findMapping = $this->db->prepare(
-                'SELECT mapping_id FROM Material_Mappings WHERE quotation_id = :quotation_id'
+                'SELECT mapping_id FROM Material_Mappings
+                 WHERE project_id = :project_id AND quotation_id = :quotation_id'
             );
-            $findMapping->execute(['quotation_id' => $id]);
+            $findMapping->execute(['project_id' => $projectId, 'quotation_id' => $id]);
             $mappingId = $findMapping->fetchColumn();
             if ($mappingId === false) {
                 $mapping = $this->db->prepare(
-                    'INSERT INTO Material_Mappings (material_id, quotation_id, supplier_material_id)
-                     VALUES (:material_id, :quotation_id, :supplier_material_id)'
+                    'INSERT INTO Material_Mappings
+                        (project_id, material_id, quotation_id, supplier_material_id)
+                     VALUES (:project_id, :material_id, :quotation_id, :supplier_material_id)'
                 );
                 $mapping->execute([
+                    'project_id' => $projectId,
                     'material_id' => $materialId,
                     'quotation_id' => $id,
                     'supplier_material_id' => $supplierMaterialId,
@@ -530,47 +603,71 @@ final class MaterialCatalogService
         }
     }
 
-    public function setDefaultQuotation(int $materialId, int $quotationId): void
+    public function setDefaultQuotation(int $projectId, int $materialId, int $quotationId): void
     {
-        $this->requireExists('Materials', 'material_id', $materialId, '材料');
+        $this->requireProjectMaterial($projectId, $materialId, '材料');
         $stmt = $this->db->prepare(
-            'SELECT 1 FROM Material_Quotations WHERE quotation_id = :quotation_id AND material_id = :material_id'
+            'SELECT 1 FROM Material_Quotations
+             WHERE project_id = :project_id AND quotation_id = :quotation_id AND material_id = :material_id'
         );
-        $stmt->execute(['quotation_id' => $quotationId, 'material_id' => $materialId]);
+        $stmt->execute([
+            'project_id' => $projectId,
+            'quotation_id' => $quotationId,
+            'material_id' => $materialId,
+        ]);
         if ($stmt->fetchColumn() === false) {
             throw new HttpException('只能将该材料自己的报价设为默认报价。', 422);
         }
         $update = $this->db->prepare(
-            'UPDATE Materials SET default_quotation_id = :quotation_id WHERE material_id = :material_id'
+            'UPDATE Materials
+             SET default_quotation_id = :quotation_id
+             WHERE project_id = :project_id AND material_id = :material_id'
         );
-        $update->execute(['quotation_id' => $quotationId, 'material_id' => $materialId]);
+        $update->execute([
+            'quotation_id' => $quotationId,
+            'project_id' => $projectId,
+            'material_id' => $materialId,
+        ]);
     }
 
-    public function clearDefaultQuotation(int $materialId): void
+    public function clearDefaultQuotation(int $projectId, int $materialId): void
     {
-        $this->requireExists('Materials', 'material_id', $materialId, '材料');
+        $this->requireProjectMaterial($projectId, $materialId, '材料');
         $stmt = $this->db->prepare(
-            'UPDATE Materials SET default_quotation_id = NULL WHERE material_id = :material_id'
+            'UPDATE Materials SET default_quotation_id = NULL
+             WHERE project_id = :project_id AND material_id = :material_id'
         );
-        $stmt->execute(['material_id' => $materialId]);
+        $stmt->execute(['project_id' => $projectId, 'material_id' => $materialId]);
     }
 
-    public function deleteQuotation(int $quotationId): void
+    public function deleteQuotation(int $projectId, int $quotationId): void
     {
-        $this->requireUnused(
-            'SELECT COUNT(*) FROM Material_Samples WHERE quotation_id = :id',
-            $quotationId,
-            '该报价已关联材料样品，不能删除。'
+        $this->requireProjectQuotation($projectId, $quotationId);
+        $sampleCheck = $this->db->prepare(
+            'SELECT COUNT(*) FROM Material_Samples WHERE project_id = :project_id AND quotation_id = :id'
         );
+        $sampleCheck->execute(['project_id' => $projectId, 'id' => $quotationId]);
+        if ((int) $sampleCheck->fetchColumn() > 0) {
+            throw new HttpException('该报价已关联材料样品，不能删除。', 409);
+        }
         $this->db->beginTransaction();
         try {
             $clearDefault = $this->db->prepare(
-                'UPDATE Materials SET default_quotation_id = NULL WHERE default_quotation_id = :id'
+                'UPDATE Materials SET default_quotation_id = NULL
+                 WHERE project_id = :project_id AND default_quotation_id = :id'
             );
-            $clearDefault->execute(['id' => $quotationId]);
-            $mapping = $this->db->prepare('DELETE FROM Material_Mappings WHERE quotation_id = :id');
-            $mapping->execute(['id' => $quotationId]);
-            $this->deleteById('Material_Quotations', 'quotation_id', $quotationId, '报价');
+            $clearDefault->execute(['project_id' => $projectId, 'id' => $quotationId]);
+            $mapping = $this->db->prepare(
+                'DELETE FROM Material_Mappings WHERE project_id = :project_id AND quotation_id = :id'
+            );
+            $mapping->execute(['project_id' => $projectId, 'id' => $quotationId]);
+            $delete = $this->db->prepare(
+                'DELETE FROM Material_Quotations WHERE project_id = :project_id AND quotation_id = :id'
+            );
+            $delete->execute(['project_id' => $projectId, 'id' => $quotationId]);
+            if ($delete->rowCount() !== 1) {
+                throw new HttpException('报价不存在或不属于当前项目。', 404);
+            }
             $this->db->commit();
         } catch (Throwable $exception) {
             if ($this->db->inTransaction()) {
@@ -580,7 +677,7 @@ final class MaterialCatalogService
         }
     }
 
-    public function saveAuxiliary(array $data): int
+    public function saveAuxiliary(int $projectId, array $data): int
     {
         $id = $this->optionalId($data['aux_id'] ?? null);
         $name = $this->requiredText($data, 'aux_name', 255, '辅材名称');
@@ -588,24 +685,47 @@ final class MaterialCatalogService
         $description = $this->optionalText($data, 'description', 20000, '说明');
         if ($id === null) {
             $stmt = $this->db->prepare(
-                'INSERT INTO Auxiliary_Materials (aux_name, unit, description)
-                 VALUES (:name, :unit, :description)'
+                'INSERT INTO Auxiliary_Materials (project_id, aux_name, unit, description)
+                 VALUES (:project_id, :name, :unit, :description)'
             );
-            $stmt->execute(['name' => $name, 'unit' => $unit, 'description' => $description]);
+            $stmt->execute([
+                'project_id' => $projectId,
+                'name' => $name,
+                'unit' => $unit,
+                'description' => $description,
+            ]);
             return (int) $this->db->lastInsertId();
         }
-        $this->requireExists('Auxiliary_Materials', 'aux_id', $id, '辅材');
+        $exists = $this->db->prepare(
+            'SELECT 1 FROM Auxiliary_Materials WHERE aux_id = :id AND project_id = :project_id'
+        );
+        $exists->execute(['id' => $id, 'project_id' => $projectId]);
+        if ($exists->fetchColumn() === false) {
+            throw new HttpException('辅材不存在或不属于当前项目。', 404);
+        }
         $stmt = $this->db->prepare(
             'UPDATE Auxiliary_Materials SET aux_name = :name, unit = :unit, description = :description
-             WHERE aux_id = :id'
+             WHERE aux_id = :id AND project_id = :project_id'
         );
-        $stmt->execute(['name' => $name, 'unit' => $unit, 'description' => $description, 'id' => $id]);
+        $stmt->execute([
+            'name' => $name,
+            'unit' => $unit,
+            'description' => $description,
+            'id' => $id,
+            'project_id' => $projectId,
+        ]);
         return $id;
     }
 
-    public function deleteAuxiliary(int $auxId): void
+    public function deleteAuxiliary(int $projectId, int $auxId): void
     {
-        $this->deleteById('Auxiliary_Materials', 'aux_id', $auxId, '辅材');
+        $stmt = $this->db->prepare(
+            'DELETE FROM Auxiliary_Materials WHERE aux_id = :id AND project_id = :project_id'
+        );
+        $stmt->execute(['id' => $auxId, 'project_id' => $projectId]);
+        if ($stmt->rowCount() !== 1) {
+            throw new HttpException('辅材不存在或不属于当前项目。', 404);
+        }
     }
 
     private function requiredText(array $data, string $key, int $maxLength, string $label): string
@@ -764,6 +884,46 @@ final class MaterialCatalogService
             throw new HttpException($label . '须为有效日期。', 422);
         }
         return $value;
+    }
+
+    private function projectQuery(string $sql, int $projectId): array
+    {
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute(['project_id' => $projectId]);
+        return $stmt->fetchAll();
+    }
+
+    private function requireProjectCategory(int $projectId, int $categoryId, string $label): void
+    {
+        $stmt = $this->db->prepare(
+            'SELECT 1 FROM Material_Categories WHERE project_id = :project_id AND category_id = :id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'id' => $categoryId]);
+        if ($stmt->fetchColumn() === false) {
+            throw new HttpException($label . '不存在或不属于当前项目。', 404);
+        }
+    }
+
+    private function requireProjectMaterial(int $projectId, int $materialId, string $label): void
+    {
+        $stmt = $this->db->prepare(
+            'SELECT 1 FROM Materials WHERE project_id = :project_id AND material_id = :id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'id' => $materialId]);
+        if ($stmt->fetchColumn() === false) {
+            throw new HttpException($label . '不存在或不属于当前项目。', 404);
+        }
+    }
+
+    private function requireProjectQuotation(int $projectId, int $quotationId): void
+    {
+        $stmt = $this->db->prepare(
+            'SELECT 1 FROM Material_Quotations WHERE project_id = :project_id AND quotation_id = :id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'id' => $quotationId]);
+        if ($stmt->fetchColumn() === false) {
+            throw new HttpException('报价不存在或不属于当前项目。', 404);
+        }
     }
 
     private function requireExists(string $table, string $column, int $id, string $label): void

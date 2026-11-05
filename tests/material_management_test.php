@@ -131,15 +131,16 @@ foreach ($registry->permissions() as $permission) {
 
 $db->exec(
     'CREATE TABLE Material_Categories (
-        category_id INTEGER PRIMARY KEY AUTOINCREMENT, category_name TEXT NOT NULL,
+        category_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, category_name TEXT NOT NULL,
         parent_category_id INTEGER, sort_order INTEGER NOT NULL DEFAULT 0
     )'
 );
 $db->exec(
     'CREATE TABLE Materials (
-        material_id INTEGER PRIMARY KEY AUTOINCREMENT, material_code TEXT UNIQUE,
-        material_name TEXT NOT NULL, unit TEXT NOT NULL, specifications TEXT,
-        material_description_detailed TEXT, category_id INTEGER, default_quotation_id INTEGER
+        material_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER,
+        material_code TEXT, material_name TEXT NOT NULL, unit TEXT NOT NULL, specifications TEXT,
+        material_description_detailed TEXT, category_id INTEGER, default_quotation_id INTEGER,
+        UNIQUE (project_id, material_code)
     )'
 );
 $db->exec('CREATE TABLE Brands (brand_id INTEGER PRIMARY KEY AUTOINCREMENT, brand_name TEXT UNIQUE, external_link TEXT)');
@@ -160,7 +161,7 @@ $db->exec(
 );
 $db->exec(
     'CREATE TABLE Material_Quotations (
-        quotation_id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_material_id INTEGER NOT NULL,
+        quotation_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, supplier_material_id INTEGER NOT NULL,
         material_id INTEGER NOT NULL, purchase_unit_price NUMERIC NOT NULL, quotation_date TEXT NOT NULL,
         currency_code TEXT NOT NULL, min_order_quantity NUMERIC, confirmed_tax_rate NUMERIC NOT NULL DEFAULT 0,
         version INTEGER NOT NULL DEFAULT 1
@@ -168,13 +169,22 @@ $db->exec(
 );
 $db->exec(
     'CREATE TABLE Material_Mappings (
-        mapping_id INTEGER PRIMARY KEY AUTOINCREMENT, material_id INTEGER NOT NULL,
+        mapping_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, material_id INTEGER NOT NULL,
         quotation_id INTEGER NOT NULL UNIQUE, supplier_material_id INTEGER NOT NULL
     )'
 );
 $db->exec(
+    'CREATE TABLE Tender_List (
+        tender_item_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
+        material_id INTEGER NOT NULL, tender_quantity NUMERIC NOT NULL,
+        tender_unit_price NUMERIC NOT NULL, currency_code TEXT NOT NULL DEFAULT "ETB",
+        status TEXT NOT NULL DEFAULT "pending", updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )'
+);
+$db->exec(
     'CREATE TABLE Auxiliary_Materials (
-        aux_id INTEGER PRIMARY KEY AUTOINCREMENT, aux_name TEXT NOT NULL, unit TEXT NOT NULL, description TEXT
+        aux_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER,
+        aux_name TEXT NOT NULL, unit TEXT NOT NULL, description TEXT
     )'
 );
 $db->exec(
@@ -243,12 +253,12 @@ $db->exec(
 );
 
 $catalog = new MaterialCatalogService($db);
-$rootCategoryId = $catalog->saveCategory(['category_name' => '装修材料', 'sort_order' => '10']);
-$childCategoryId = $catalog->saveCategory([
+$rootCategoryId = $catalog->saveCategory(1, ['category_name' => '装修材料', 'sort_order' => '10']);
+$childCategoryId = $catalog->saveCategory(1, [
     'category_name' => '地面材料',
     'parent_category_id' => (string) $rootCategoryId,
 ]);
-$materialId = $catalog->saveMaterial([
+$materialId = $catalog->saveMaterial(1, [
     'material_code' => 'FL-001',
     'material_name' => '地砖',
     'unit' => 'm2',
@@ -269,7 +279,7 @@ $supplierMaterialId = $catalog->saveSupplierMaterial([
     'lead_time_days' => '12',
     'currency_code' => 'cny',
 ]);
-$quoteId = $catalog->saveQuotation([
+$quoteId = $catalog->saveQuotation(1, [
     'material_id' => (string) $materialId,
     'supplier_material_id' => (string) $supplierMaterialId,
     'purchase_unit_price' => '123.4500',
@@ -281,10 +291,10 @@ $quoteId = $catalog->saveQuotation([
 materialTestCheck((int) $db->query('SELECT version FROM Material_Quotations')->fetchColumn() === 1, 'New quotations must start at version 1.');
 materialTestCheck((string) $db->query('SELECT confirmed_tax_rate FROM Material_Quotations')->fetchColumn() === '0.13', 'Tax percentage must be stored as its confirmed decimal snapshot.');
 materialTestCheck((int) $db->query('SELECT COUNT(*) FROM Material_Mappings')->fetchColumn() === 1, 'Saving a quotation must maintain the material mapping.');
-$catalog->setDefaultQuotation($materialId, $quoteId);
+$catalog->setDefaultQuotation(1, $materialId, $quoteId);
 materialTestCheck((int) $db->query('SELECT default_quotation_id FROM Materials')->fetchColumn() === $quoteId, 'Default quotation selection must persist explicitly.');
 
-$catalog->saveQuotation([
+$catalog->saveQuotation(1, [
     'quotation_id' => (string) $quoteId,
     'version' => '1',
     'material_id' => (string) $materialId,
@@ -297,7 +307,7 @@ $catalog->saveQuotation([
 ]);
 materialTestCheck((int) $db->query('SELECT version FROM Material_Quotations')->fetchColumn() === 2, 'Quotation edits must increment the version.');
 materialTestExpectStatus(
-    static fn () => $catalog->saveQuotation([
+    static fn () => $catalog->saveQuotation(1, [
         'quotation_id' => (string) $quoteId,
         'version' => '1',
         'material_id' => (string) $materialId,
@@ -310,7 +320,7 @@ materialTestExpectStatus(
     'Stale quotation versions must be rejected.'
 );
 materialTestExpectStatus(
-    static fn () => $catalog->saveCategory([
+    static fn () => $catalog->saveCategory(1, [
         'category_id' => (string) $rootCategoryId,
         'category_name' => '装修材料',
         'parent_category_id' => (string) $childCategoryId,
@@ -319,7 +329,7 @@ materialTestExpectStatus(
     'Category cycles must be rejected.'
 );
 materialTestExpectStatus(
-    static fn () => $catalog->deleteCategory($childCategoryId),
+    static fn () => $catalog->deleteCategory(1, $childCategoryId),
     409,
     'Categories used by materials must not be deleted.'
 );
@@ -338,8 +348,102 @@ materialTestExpectStatus(
     422,
     'Non-HTTP external links must be rejected.'
 );
-$auxId = $catalog->saveAuxiliary(['aux_name' => '填缝剂', 'unit' => 'kg']);
+$auxId = $catalog->saveAuxiliary(1, ['aux_name' => '填缝剂', 'unit' => 'kg']);
 materialTestCheck((int) $db->query('SELECT COUNT(*) FROM Auxiliary_Materials WHERE aux_id = ' . $auxId)->fetchColumn() === 1, 'Auxiliary materials must be manageable.');
+$projectTwoAuxId = $catalog->saveAuxiliary(2, ['aux_name' => '填缝剂', 'unit' => 'kg']);
+materialTestCheck(
+    count($catalog->auxiliaryData(1)) === 1
+        && count($catalog->auxiliaryData(2)) === 1
+        && $projectTwoAuxId !== $auxId,
+    'Auxiliary material catalogs must be independent by project.'
+);
+
+$otherProjectCategoryId = $catalog->saveCategory(2, ['category_name' => '装修材料']);
+$otherProjectMaterialId = $catalog->saveMaterial(2, [
+    'material_code' => 'FL-001',
+    'material_name' => '项目二地砖',
+    'unit' => 'm2',
+    'category_id' => (string) $otherProjectCategoryId,
+]);
+materialTestCheck(
+    count($catalog->materialData(1)['materials']) === 1
+        && count($catalog->materialData(2)['materials']) === 1
+        && $catalog->materialData(1)['materials'][0]['material_name'] === '地砖'
+        && $catalog->materialData(2)['materials'][0]['material_name'] === '项目二地砖',
+    'Material catalogs and duplicate material codes must remain independent by project.'
+);
+materialTestExpectStatus(
+    static fn () => $catalog->saveMaterial(1, [
+        'material_name' => '跨项目分类材料',
+        'unit' => 'm2',
+        'category_id' => (string) $otherProjectCategoryId,
+    ]),
+    404,
+    'Materials must not reference another project’s category.'
+);
+materialTestExpectStatus(
+    static fn () => $catalog->saveMaterial(1, [
+        'material_id' => (string) $otherProjectMaterialId,
+        'material_name' => '越权编辑',
+        'unit' => 'm2',
+    ]),
+    404,
+    'Material updates must reject IDs from another project.'
+);
+
+$tenderService = new \ProjectO\Modules\MaterialManagement\TenderListService($db);
+$tenderId = $tenderService->save(1, [
+    'project_id' => '2',
+    'material_id' => (string) $materialId,
+    'tender_quantity' => '12.50',
+    'tender_unit_price' => '25.75',
+    'currency_code' => 'etb',
+]);
+materialTestCheck(
+    count($tenderService->items(1)) === 1
+        && $tenderService->items(1)[0]['project_id'] === 1
+        && $tenderService->items(1)[0]['currency_code'] === 'ETB'
+        && $tenderService->items(2) === [],
+    'Tender records must use server project context, preserve currency and remain isolated.'
+);
+$otherTenderId = $tenderService->save(2, [
+    'material_id' => (string) $otherProjectMaterialId,
+    'tender_quantity' => '3',
+    'tender_unit_price' => '8.25',
+]);
+materialTestCheck(
+    count($tenderService->items(2)) === 1
+        && $tenderService->items(2)[0]['tender_item_id'] === $otherTenderId,
+    'Project two should only see its own tender items.'
+);
+materialTestExpectStatus(
+    static fn () => $tenderService->save(1, [
+        'material_id' => (string) $otherProjectMaterialId,
+        'tender_quantity' => '1',
+        'tender_unit_price' => '1',
+    ]),
+    404,
+    'Tender items must reject materials owned by another project.'
+);
+materialTestExpectStatus(
+    static fn () => $tenderService->save(2, [
+        'tender_item_id' => (string) $tenderId,
+        'material_id' => (string) $otherProjectMaterialId,
+        'tender_quantity' => '1',
+        'tender_unit_price' => '1',
+    ]),
+    404,
+    'Tender item updates must reject item IDs owned by another project.'
+);
+materialTestExpectStatus(
+    static fn () => $tenderService->save(1, [
+        'material_id' => (string) $materialId,
+        'tender_quantity' => '1.234',
+        'tender_unit_price' => '1',
+    ]),
+    422,
+    'Tender quantities must enforce the legacy two-decimal precision.'
+);
 
 $spaceService = new ProjectSpaceService($db);
 $buildingId = $spaceService->save(1, [
@@ -402,6 +506,13 @@ materialTestCheck(
 );
 
 $projectMaterials = new ProjectMaterialService($db);
+materialTestExpectStatus(
+    static fn () => $tenderService->delete(2, $tenderId),
+    404,
+    'Tender item deletion must be scoped to its owning project.'
+);
+$tenderService->delete(1, $tenderId);
+$tenderService->delete(2, $otherTenderId);
 $estimateId = $projectMaterials->saveEstimate(1, [
     'building_id' => (string) $buildingId,
     'floor_id' => (string) $floorId,
@@ -500,7 +611,7 @@ materialTestCheck(
 );
 $projectMaterials->addImage(1, $sampleId, 1, 'samples/1/' . $sampleId . '/test.png', 'test.png', 'image/png', 123);
 materialTestExpectStatus(
-    static fn () => $catalog->deleteQuotation($quoteId),
+    static fn () => $catalog->deleteQuotation(1, $quoteId),
     409,
     'Quotations referenced by samples must not be deleted.'
 );
@@ -523,7 +634,7 @@ materialTestCheck(
         && $unquotedSamples[0]['supplier_name'] === '供应商甲',
     'A sample should be trackable by material and supplier before a quotation exists.'
 );
-$otherMaterialId = $catalog->saveMaterial([
+$otherMaterialId = $catalog->saveMaterial(1, [
     'material_name' => '墙砖',
     'unit' => 'm2',
 ]);
@@ -558,11 +669,14 @@ $samplePage = $plugin->dispatch('samples', []);
 materialTestCheck($samplePage->type === 'view' && is_file((string) $samplePage->viewPath), 'Sample tracking should resolve its plugin view.');
 $estimatePage = $plugin->dispatch('estimates', []);
 materialTestCheck($estimatePage->type === 'view' && is_file((string) $estimatePage->viewPath), 'Material estimates should resolve their plugin view.');
+$tenderPage = $plugin->dispatch('tender-list', []);
+materialTestCheck($tenderPage->type === 'view' && is_file((string) $tenderPage->viewPath), 'Tender lists should resolve their plugin view.');
 foreach ([
     [$materialPage, '材料目录'],
     [$plugin->dispatch('quotations', []), '材料报价'],
     [$samplePage, '样品跟踪'],
     [$estimatePage, '材料估算明细'],
+    [$tenderPage, '招标清单'],
 ] as [$pageResponse, $expectedHeading]) {
     materialTestCheck(
         str_contains(renderMaterialTestView($pageResponse), $expectedHeading),
@@ -574,6 +688,7 @@ $_SERVER['REQUEST_METHOD'] = 'GET';
 foreach ([
     'materials' => '材料目录',
     'quotations' => '材料报价',
+    'tender-list' => '招标清单',
 ] as $page => $heading) {
     $_GET = ['page' => $page];
     http_response_code(200);
@@ -656,10 +771,17 @@ $sampleDecouplingMigrationPosition = array_search(
     $migrationKeys,
     true
 );
+$projectMaterialsAndTendersMigrationPosition = array_search(
+    'material.management/202611050001_project_materials_and_tenders.sql',
+    $migrationKeys,
+    true
+);
 materialTestCheck(
     $spaceMigrationPosition !== false && $archiveMigrationPosition !== false
         && $materialMigrationPosition !== false
         && $sampleDecouplingMigrationPosition !== false
+        && $projectMaterialsAndTendersMigrationPosition !== false
+        && $projectMaterialsAndTendersMigrationPosition > $sampleDecouplingMigrationPosition
         && $spaceMigrationPosition < $archiveMigrationPosition
         && $archiveMigrationPosition < $materialMigrationPosition
         && $materialMigrationPosition < $sampleDecouplingMigrationPosition,

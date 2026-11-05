@@ -4,7 +4,7 @@ require __DIR__ . '/_nav.php';
 $today = date('Y-m-d');
 ?>
 <section class="page-heading">
-    <div><p class="eyebrow">供应链主数据 · 全局报价</p><h1>材料报价</h1><p class="muted">报价按币种分别比较，不做汇率、税费或成本计算；默认报价由用户手动指定。</p></div>
+    <div><p class="eyebrow">项目供应商报价</p><h1>材料报价</h1><p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。报价按币种分别比较，不做汇率、税费或成本计算；默认报价由用户手动指定。</p></div>
 </section>
 <section class="panel">
     <div class="panel-heading"><h2>报价录入</h2></div>

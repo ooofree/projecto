@@ -19,27 +19,33 @@ final class ProjectMaterialService
     {
     }
 
-    public function sampleChoices(bool $includeQuotations): array
+    public function sampleChoices(int $projectId, bool $includeQuotations): array
     {
+        $materials = $this->db->prepare(
+            'SELECT material_id, material_code, material_name
+             FROM Materials WHERE project_id = :project_id
+             ORDER BY material_name, material_id'
+        );
+        $materials->execute(['project_id' => $projectId]);
+        $quotations = $this->db->prepare(
+            'SELECT q.quotation_id, q.material_id, q.currency_code, q.purchase_unit_price,
+                    q.quotation_date, sm.supplier_id, m.material_name, m.material_code,
+                    sm.supplier_material_name, s.supplier_name
+             FROM Material_Quotations q
+             JOIN Materials m ON m.material_id = q.material_id AND m.project_id = q.project_id
+             JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
+             JOIN Suppliers s ON s.supplier_id = sm.supplier_id
+             WHERE q.project_id = :project_id
+             ORDER BY m.material_name, q.quotation_date DESC'
+        );
+        $quotations->execute(['project_id' => $projectId]);
         return [
-            'materials' => $this->db->query(
-                'SELECT material_id, material_code, material_name
-                 FROM Materials ORDER BY material_name, material_id'
-            )->fetchAll(),
+            'materials' => $materials->fetchAll(),
             'suppliers' => $this->db->query(
                 'SELECT supplier_id, supplier_name
                  FROM Suppliers ORDER BY supplier_name, supplier_id'
             )->fetchAll(),
-            'quotations' => $includeQuotations ? $this->db->query(
-                'SELECT q.quotation_id, q.material_id, q.currency_code, q.purchase_unit_price,
-                        q.quotation_date, sm.supplier_id, m.material_name, m.material_code,
-                        sm.supplier_material_name, s.supplier_name
-                 FROM Material_Quotations q
-                 JOIN Materials m ON m.material_id = q.material_id
-                 JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
-                 JOIN Suppliers s ON s.supplier_id = sm.supplier_id
-                 ORDER BY m.material_name, q.quotation_date DESC'
-            )->fetchAll() : [],
+            'quotations' => $includeQuotations ? $quotations->fetchAll() : [],
         ];
     }
 
@@ -129,7 +135,8 @@ final class ProjectMaterialService
             ? 'q.purchase_unit_price, q.quotation_date, q.currency_code'
             : 'NULL AS purchase_unit_price, NULL AS quotation_date, NULL AS currency_code';
         $quotationJoin = $includeCommercialDetails
-            ? 'LEFT JOIN Material_Quotations q ON q.quotation_id = s.quotation_id'
+            ? 'LEFT JOIN Material_Quotations q
+                 ON q.quotation_id = s.quotation_id AND q.project_id = s.project_id'
             : '';
         $stmt = $this->db->prepare(
             "SELECT s.sample_id, s.project_id, s.material_id, s.supplier_id, s.quotation_id,
@@ -152,7 +159,7 @@ final class ProjectMaterialService
              FROM Material_Samples s
              JOIN Sample_Location_Map lm
                ON lm.sample_id = s.sample_id AND lm.project_id = s.project_id
-             JOIN Materials m ON m.material_id = s.material_id
+             JOIN Materials m ON m.material_id = s.material_id AND m.project_id = s.project_id
              JOIN Suppliers sup ON sup.supplier_id = s.supplier_id
              {$quotationJoin}
              LEFT JOIN Buildings b
@@ -216,7 +223,7 @@ final class ProjectMaterialService
         $sampleId = $this->optionalId($data['sample_id'] ?? null, '样品');
         $materialId = $this->requiredId($data['material_id'] ?? null, '材料');
         $supplierId = $this->requiredId($data['supplier_id'] ?? null, '供应商');
-        $this->requireExists('Materials', 'material_id', $materialId, '材料');
+        $this->requireProjectMaterial($projectId, $materialId, '材料');
         $this->requireExists('Suppliers', 'supplier_id', $supplierId, '供应商');
         $quotationProvided = array_key_exists('quotation_id', $data);
         $quotationId = $quotationProvided ? $this->optionalId($data['quotation_id'], '报价') : null;
@@ -238,7 +245,7 @@ final class ProjectMaterialService
         try {
             if ($sampleId === null) {
                 if ($quotationId !== null) {
-                    $this->requireSampleQuotation($quotationId, $materialId, $supplierId);
+                    $this->requireSampleQuotation($projectId, $quotationId, $materialId, $supplierId);
                 }
                 $insert = $this->db->prepare(
                     'INSERT INTO Material_Samples
@@ -292,7 +299,7 @@ final class ProjectMaterialService
                         : (int) $quotationId;
                 }
                 if ($quotationId !== null) {
-                    $this->requireSampleQuotation($quotationId, $materialId, $supplierId);
+                    $this->requireSampleQuotation($projectId, $quotationId, $materialId, $supplierId);
                 }
                 $update = $this->db->prepare(
                     'UPDATE Material_Samples
@@ -403,7 +410,7 @@ final class ProjectMaterialService
                     r.room_number, m.material_code, m.material_name, m.unit
              FROM Initial_Cost_Estimate_Detail e
              JOIN Buildings b ON b.building_id = e.building_id
-             JOIN Materials m ON m.material_id = e.material_id
+             JOIN Materials m ON m.material_id = e.material_id AND m.project_id = b.project_id
              LEFT JOIN Building_Floors f ON f.floor_id = e.floor_id AND f.building_id = e.building_id
              LEFT JOIN Rooms r
                ON r.room_id = e.room_id AND r.floor_id = e.floor_id AND r.building_id = e.building_id
@@ -469,14 +476,17 @@ final class ProjectMaterialService
              ORDER BY b.building_number, f.floor_number, r.room_number'
         );
         $rooms->execute(['project_id' => $projectId]);
+        $materials = $this->db->prepare(
+            'SELECT material_id, material_code, material_name, unit
+             FROM Materials WHERE project_id = :project_id
+             ORDER BY material_name, material_id'
+        );
+        $materials->execute(['project_id' => $projectId]);
         return [
             'buildings' => $buildings->fetchAll(),
             'floors' => $floors->fetchAll(),
             'rooms' => $rooms->fetchAll(),
-            'materials' => $this->db->query(
-                'SELECT material_id, material_code, material_name, unit
-                 FROM Materials ORDER BY material_name, material_id'
-            )->fetchAll(),
+            'materials' => $materials->fetchAll(),
         ];
     }
 
@@ -499,7 +509,7 @@ final class ProjectMaterialService
             }
             $this->requireProjectRoom($projectId, $buildingId, $floorId, $roomId);
         }
-        $this->requireExists('Materials', 'material_id', $materialId, '材料');
+        $this->requireProjectMaterial($projectId, $materialId, '材料');
 
         if ($id === null) {
             $stmt = $this->db->prepare(
@@ -717,23 +727,41 @@ final class ProjectMaterialService
         }
     }
 
-    private function requireSampleQuotation(int $quotationId, int $materialId, int $supplierId): void
+    private function requireSampleQuotation(
+        int $projectId,
+        int $quotationId,
+        int $materialId,
+        int $supplierId
+    ): void
     {
         $stmt = $this->db->prepare(
             'SELECT 1
              FROM Material_Quotations q
              JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
-             WHERE q.quotation_id = :quotation_id
+             WHERE q.project_id = :project_id
+               AND q.quotation_id = :quotation_id
                AND q.material_id = :material_id
                AND sm.supplier_id = :supplier_id'
         );
         $stmt->execute([
+            'project_id' => $projectId,
             'quotation_id' => $quotationId,
             'material_id' => $materialId,
             'supplier_id' => $supplierId,
         ]);
         if ($stmt->fetchColumn() === false) {
             throw new HttpException('所选报价与材料或供应商不匹配。', 422);
+        }
+    }
+
+    private function requireProjectMaterial(int $projectId, int $materialId, string $label): void
+    {
+        $stmt = $this->db->prepare(
+            'SELECT 1 FROM Materials WHERE project_id = :project_id AND material_id = :id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'id' => $materialId]);
+        if ($stmt->fetchColumn() === false) {
+            throw new HttpException($label . '不存在或不属于当前项目。', 404);
         }
     }
 
