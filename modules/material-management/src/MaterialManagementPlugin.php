@@ -136,11 +136,11 @@ final class MaterialManagementPlugin implements PluginInterface
     private function samplesIndex(): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_material_samples');
-        Support::requirePermission($this->context->db, 'view_material_quotations');
         Support::requirePermission($this->context->db, 'view_projects');
         $project = $this->context->requireCurrentProject();
         $projectId = (int) $project['project_id'];
-        $samples = $this->projectMaterials->listSamples($projectId);
+        $canViewQuotations = Support::hasPermission($this->context->db, 'view_material_quotations');
+        $samples = $this->projectMaterials->listSamples($projectId, $canViewQuotations);
         if ($this->imageStorage?->isConfigured()) {
             foreach ($samples as &$sample) {
                 foreach ($sample['images'] as &$image) {
@@ -158,10 +158,13 @@ final class MaterialManagementPlugin implements PluginInterface
             'title' => '材料样品跟踪',
             'currentProject' => $project,
             'samples' => $samples,
-            'quotations' => $this->projectMaterials->sampleChoices()['quotations'],
+            'choices' => $this->projectMaterials->sampleChoices($canViewQuotations),
             'locations' => $this->projectMaterials->locations($projectId),
             'canCreate' => Support::hasPermission($this->context->db, 'add_sample'),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_sample'),
+            'canViewQuotations' => $canViewQuotations,
+            'canEditSampleQuotation' => $canViewQuotations
+                && Support::hasPermission($this->context->db, 'edit_material_quotations'),
             'canArchive' => Support::hasPermission($this->context->db, 'delete_sample'),
             'imageStorageReady' => $this->imageStorage?->isConfigured() ?? false,
             'nav' => $this->nav(),
@@ -324,9 +327,16 @@ final class MaterialManagementPlugin implements PluginInterface
     private function saveSample(array $input): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_material_samples');
-        Support::requirePermission($this->context->db, 'view_material_quotations');
         Support::requirePermission($this->context->db, 'view_projects');
-        if (isset($input['sample_id']) && $input['sample_id'] !== '') {
+        $isEdit = isset($input['sample_id']) && $input['sample_id'] !== '';
+        if (
+            (isset($input['quotation_id']) && $input['quotation_id'] !== '')
+            || ($isEdit && array_key_exists('quotation_id', $input))
+        ) {
+            Support::requirePermission($this->context->db, 'view_material_quotations');
+            Support::requirePermission($this->context->db, 'edit_material_quotations');
+        }
+        if ($isEdit) {
             $this->requireSampleEdit();
         } else {
             $this->requireSampleCreate();
@@ -482,7 +492,6 @@ final class MaterialManagementPlugin implements PluginInterface
             'supplierMaterials' => Support::hasPermission($this->context->db, 'view_supplier_materials'),
             'quotations' => Support::hasPermission($this->context->db, 'view_material_quotations'),
             'samples' => Support::hasPermission($this->context->db, 'view_material_samples')
-                && Support::hasPermission($this->context->db, 'view_material_quotations')
                 && Support::hasPermission($this->context->db, 'view_projects'),
             'estimates' => Support::hasPermission($this->context->db, 'view_material_estimates')
                 && Support::hasPermission($this->context->db, 'view_materials')

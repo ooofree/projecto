@@ -56,8 +56,7 @@ final class ProjectFoundationPlugin implements PluginInterface
             'canViewQuotations' => Support::hasPermission($this->context->db, 'view_material_quotations'),
             'canViewSpaces' => Support::hasPermission($this->context->db, 'view_project_spaces'),
             'canViewSamples' => Support::hasPermission($this->context->db, 'view_projects')
-                && Support::hasPermission($this->context->db, 'view_material_samples')
-                && Support::hasPermission($this->context->db, 'view_material_quotations'),
+                && Support::hasPermission($this->context->db, 'view_material_samples'),
             'canViewEstimates' => Support::hasPermission($this->context->db, 'view_material_estimates'),
         ]);
     }

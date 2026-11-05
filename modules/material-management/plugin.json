@@ -116,7 +116,7 @@
         {
             "name": "add_sample",
             "display_name": "登记材料样品",
-            "description": "在当前项目登记样品及其项目位置"
+            "description": "在当前项目登记材料、供样供应商和位置；报价为可选信息"
         },
         {
             "name": "edit_sample",

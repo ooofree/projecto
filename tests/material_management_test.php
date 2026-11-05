@@ -219,7 +219,8 @@ $db->exec(
 );
 $db->exec(
     'CREATE TABLE Material_Samples (
-        sample_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, quotation_id INTEGER NOT NULL,
+        sample_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
+        material_id INTEGER NOT NULL, supplier_id INTEGER NOT NULL, quotation_id INTEGER,
         sample_quantity INTEGER NOT NULL DEFAULT 0, color TEXT, document_status TEXT NOT NULL,
         sent_status TEXT NOT NULL, sent_date TEXT, owner_approval_status TEXT NOT NULL,
         owner_approval_date TEXT, remarks TEXT, created_by INTEGER NOT NULL,
@@ -427,6 +428,8 @@ materialTestExpectStatus(
 );
 
 $sampleId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $materialId,
+    'supplier_id' => (string) $supplierId,
     'quotation_id' => (string) $quoteId,
     'sample_quantity' => '2',
     'color' => '暖灰',
@@ -439,8 +442,29 @@ $sampleId = $projectMaterials->saveSample(1, 1, [
     'location_id' => (string) $floorId,
     'remarks' => '一层样板',
 ]);
+$projectMaterials->saveSample(1, 1, [
+    'sample_id' => (string) $sampleId,
+    'material_id' => (string) $materialId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '2',
+    'color' => '暖灰',
+    'document_status' => 'submitted',
+    'sent_status' => 'partially_sent',
+    'sent_date' => '2026-03-03',
+    'owner_approval_status' => 'approved',
+    'owner_approval_date' => '2026-03-04',
+    'location_type' => 'floor',
+    'location_id' => (string) $floorId,
+    'remarks' => '技术更新不应清除商业关联',
+]);
+materialTestCheck(
+    (int) $db->query("SELECT quotation_id FROM Material_Samples WHERE sample_id = {$sampleId}")->fetchColumn() === $quoteId,
+    'Technical sample updates without quotation fields must preserve existing commercial associations.'
+);
 materialTestExpectStatus(
     static fn () => $projectMaterials->saveSample(2, 1, [
+        'material_id' => (string) $materialId,
+        'supplier_id' => (string) $supplierId,
         'quotation_id' => (string) $quoteId,
         'location_type' => 'floor',
         'location_id' => (string) $floorId,
@@ -461,6 +485,8 @@ materialTestCheck(
 );
 materialTestExpectStatus(
     static fn () => $projectMaterials->saveSample(1, 1, [
+        'material_id' => (string) $materialId,
+        'supplier_id' => (string) $supplierId,
         'quotation_id' => (string) $quoteId,
         'location_type' => 'floor',
         'location_id' => (string) $floorId,
@@ -481,6 +507,45 @@ materialTestExpectStatus(
 $projectMaterials->archiveSample(1, $sampleId, 1);
 materialTestCheck($projectMaterials->listSamples(1) === [], 'Archived samples must be excluded from active tracking.');
 materialTestCheck((int) $db->query('SELECT COUNT(*) FROM Material_Sample_Images')->fetchColumn() === 1, 'Archiving a sample must retain its images.');
+$unquotedSampleId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $materialId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+]);
+$unquotedSamples = $projectMaterials->listSamples(1);
+materialTestCheck(
+    count($unquotedSamples) === 1
+        && (int) $unquotedSamples[0]['sample_id'] === $unquotedSampleId
+        && $unquotedSamples[0]['quotation_id'] === null
+        && $unquotedSamples[0]['material_name'] === '地砖'
+        && $unquotedSamples[0]['supplier_name'] === '供应商甲',
+    'A sample should be trackable by material and supplier before a quotation exists.'
+);
+$otherMaterialId = $catalog->saveMaterial([
+    'material_name' => '墙砖',
+    'unit' => 'm2',
+]);
+materialTestExpectStatus(
+    static fn () => $projectMaterials->saveSample(1, 1, [
+        'material_id' => (string) $otherMaterialId,
+        'supplier_id' => (string) $supplierId,
+        'quotation_id' => (string) $quoteId,
+        'location_type' => 'building',
+        'location_id' => (string) $buildingId,
+    ]),
+    422,
+    'A quotation must match the sample material.'
+);
+$linkedSampleId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $materialId,
+    'supplier_id' => (string) $supplierId,
+    'quotation_id' => (string) $quoteId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+]);
 
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 $_SERVER = [];
@@ -540,11 +605,43 @@ $db->exec(
     "DELETE FROM Role_Permissions
      WHERE permission_id = (SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_quotations')"
 );
-materialTestExpectStatus(
-    static fn () => $plugin->dispatch('samples', []),
-    403,
-    'Sample tracking must not expose quotation data without quotation-view permission.'
+$sampleWithoutCommercialPermission = $plugin->dispatch('samples', []);
+$linkedSampleWithoutCommercialDetails = array_values(array_filter(
+    $sampleWithoutCommercialPermission->data['samples'],
+    static fn (array $sample): bool => (int) $sample['sample_id'] === $linkedSampleId
+));
+materialTestCheck(
+    $sampleWithoutCommercialPermission->type === 'view'
+        && $sampleWithoutCommercialPermission->data['choices']['quotations'] === []
+        && $sampleWithoutCommercialPermission->data['canViewQuotations'] === false
+        && count($linkedSampleWithoutCommercialDetails) === 1
+        && $linkedSampleWithoutCommercialDetails[0]['purchase_unit_price'] === null
+        && !str_contains(renderMaterialTestView($sampleWithoutCommercialPermission), '商业报价：'),
+    'Sample tracking should remain available without exposing commercial quotation data.'
 );
+$unquotedPost = $plugin->dispatch('sample.save', [
+    'material_id' => (string) $materialId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location' => 'building:' . $buildingId,
+]);
+materialTestCheck(
+    $unquotedPost->type === 'redirect',
+    'A user without quotation access should be able to register an unquoted sample.'
+);
+$quotationWriteDenied = false;
+try {
+    $plugin->dispatch('sample.save', [
+        'material_id' => (string) $materialId,
+        'supplier_id' => (string) $supplierId,
+        'quotation_id' => (string) $quoteId,
+        'sample_quantity' => '1',
+        'location' => 'building:' . $buildingId,
+    ]);
+} catch (HttpException $exception) {
+    $quotationWriteDenied = $exception->statusCode === 403;
+}
+materialTestCheck($quotationWriteDenied, 'Quotation association must require commercial quotation permissions.');
 $quotationPermissionId = (int) $db->query(
     "SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_quotations'"
 )->fetchColumn();
@@ -554,11 +651,18 @@ $migrationKeys = array_keys($registry->migrations());
 $spaceMigrationPosition = array_search('project.foundation/202611010004_project_spaces.sql', $migrationKeys, true);
 $archiveMigrationPosition = array_search('project.foundation/202611010006_project_archiving.sql', $migrationKeys, true);
 $materialMigrationPosition = array_search('material.management/202611010005_material_management.sql', $migrationKeys, true);
+$sampleDecouplingMigrationPosition = array_search(
+    'material.management/202611040001_decouple_samples_from_quotations.sql',
+    $migrationKeys,
+    true
+);
 materialTestCheck(
     $spaceMigrationPosition !== false && $archiveMigrationPosition !== false
         && $materialMigrationPosition !== false
+        && $sampleDecouplingMigrationPosition !== false
         && $spaceMigrationPosition < $archiveMigrationPosition
-        && $archiveMigrationPosition < $materialMigrationPosition,
+        && $archiveMigrationPosition < $materialMigrationPosition
+        && $materialMigrationPosition < $sampleDecouplingMigrationPosition,
     'Plugin migrations must follow declared dependencies.'
 );
 

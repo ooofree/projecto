@@ -18,17 +18,21 @@ foreach ($locations['rooms'] as $location) {
 ob_start();
 require __DIR__ . '/_nav.php';
 ?>
-<section class="page-heading"><div><p class="eyebrow">项目跟踪 · 材料样品</p><h1>样品跟踪</h1><p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。样品只关联当前项目空间，不关联材料估算明细。</p></div></section>
+<section class="page-heading"><div><p class="eyebrow">项目跟踪 · 材料样品</p><h1>样品跟踪</h1><p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。技术样品审批独立于商业报价；报价可后续补充。</p></div></section>
 <?php if (!$imageStorageReady): ?><div class="notice notice-info">R2 图片存储尚未配置；样品资料可维护，但图片上传和查看暂不可用。</div><?php endif; ?>
 
-<?php if ($canCreate && $quotations !== [] && $locationOptions !== []): ?>
+<?php if ($canCreate && $choices['materials'] !== [] && $choices['suppliers'] !== [] && $locationOptions !== []): ?>
     <section class="panel">
         <div class="panel-heading"><div><h2>样品台账</h2><p class="muted">项目：<?= $escape($currentProject['project_name']) ?></p></div><span class="muted"><?= count($samples) ?> 条</span></div>
         <details class="entry-disclosure">
             <summary>登记样品</summary>
             <form method="post" class="form-grid">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.sample.save">
-                <label>材料报价<select name="quotation_id" required><?php foreach ($quotations as $quote): ?><option value="<?= (int) $quote['quotation_id'] ?>"><?= $escape(($quote['material_code'] ? $quote['material_code'] . ' · ' : '') . $quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code']) ?></option><?php endforeach; ?></select></label>
+                <label>材料<select name="material_id" required><option value="">请选择材料</option><?php foreach ($choices['materials'] as $material): ?><option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name']) ?></option><?php endforeach; ?></select></label>
+                <label>供样供应商<select name="supplier_id" required><option value="">请选择供应商</option><?php foreach ($choices['suppliers'] as $supplier): ?><option value="<?= (int) $supplier['supplier_id'] ?>"><?= $escape($supplier['supplier_name']) ?></option><?php endforeach; ?></select></label>
+                <?php if ($canEditSampleQuotation): ?>
+                    <label>关联报价（可选）<select name="quotation_id"><option value="">暂未报价</option><?php foreach ($choices['quotations'] as $quote): ?><option value="<?= (int) $quote['quotation_id'] ?>"><?= $escape(($quote['material_code'] ? $quote['material_code'] . ' · ' : '') . $quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code'] . ' · ' . $quote['quotation_date']) ?></option><?php endforeach; ?></select></label>
+                <?php endif; ?>
                 <label>项目位置<select name="location" required><option value="">请选择当前项目位置</option><?php foreach ($locationOptions as $location): ?><option value="<?= $escape($location['value']) ?>"><?= $escape($location['label']) ?></option><?php endforeach; ?></select></label>
                 <label>送样数量<input type="number" name="sample_quantity" min="0" step="1" value="0" required></label><label>颜色<input name="color" maxlength="50"></label>
                 <label>资料状态<select name="document_status"><option value="pending_submission">待提交</option><option value="submitted">已提交</option><option value="reviewed">已审核</option></select></label>
@@ -40,7 +44,7 @@ require __DIR__ . '/_nav.php';
         </details>
     </section>
 <?php elseif ($canCreate): ?>
-    <div class="notice notice-info">登记样品前，需先建立至少一个项目空间位置和一个材料报价。</div>
+    <div class="notice notice-info">登记样品前，需先建立材料、供应商和项目空间位置；商业报价不是技术送样的前置条件。</div>
 <?php endif; ?>
 
 <section class="panel">
@@ -50,6 +54,7 @@ require __DIR__ . '/_nav.php';
         <details class="record-card" open>
             <summary><strong><?= $escape($sample['material_name']) ?></strong> <span class="muted"><?= $escape($sample['supplier_name']) ?> · <?= $escape($sample['location_name']) ?> · <?= $escape($approvalLabels[$sample['owner_approval_status']] ?? $sample['owner_approval_status']) ?></span></summary>
             <p class="record-meta">资料：<?= $escape($documentLabels[$sample['document_status']] ?? $sample['document_status']) ?> · 送样：<?= $escape($sentLabels[$sample['sent_status']] ?? $sample['sent_status']) ?> · 数量：<?= (int) $sample['sample_quantity'] ?> · <?= $escape($sample['color'] ?? '未指定颜色') ?></p>
+            <?php if ($canViewQuotations): ?><p class="record-meta">商业报价：<?= $sample['quotation_id'] === null ? '未关联报价' : $escape($sample['purchase_unit_price'] . ' ' . $sample['currency_code'] . ' · ' . $sample['quotation_date']) ?></p><?php endif; ?>
             <?php if ($sample['remarks']): ?><p><?= nl2br($escape($sample['remarks'])) ?></p><?php endif; ?>
             <?php if ($sample['images'] !== []): ?>
                 <div class="record-meta">图片：
@@ -62,7 +67,11 @@ require __DIR__ . '/_nav.php';
             <?php if ($canEdit): ?>
                 <form method="post" class="form-grid record-form">
                     <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>"><input type="hidden" name="action" value="material.sample.save"><input type="hidden" name="sample_id" value="<?= (int) $sample['sample_id'] ?>">
-                    <label>材料报价<select name="quotation_id" required><?php foreach ($quotations as $quote): ?><option value="<?= (int) $quote['quotation_id'] ?>" <?= (int) $quote['quotation_id'] === (int) $sample['quotation_id'] ? 'selected' : '' ?>><?= $escape($quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code']) ?></option><?php endforeach; ?></select></label>
+                    <label>材料<select name="material_id" required><option value="">请选择材料</option><?php foreach ($choices['materials'] as $material): ?><option value="<?= (int) $material['material_id'] ?>" <?= (int) $material['material_id'] === (int) $sample['material_id'] ? 'selected' : '' ?>><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name']) ?></option><?php endforeach; ?></select></label>
+                    <label>供样供应商<select name="supplier_id" required><option value="">请选择供应商</option><?php foreach ($choices['suppliers'] as $supplier): ?><option value="<?= (int) $supplier['supplier_id'] ?>" <?= (int) $supplier['supplier_id'] === (int) $sample['supplier_id'] ? 'selected' : '' ?>><?= $escape($supplier['supplier_name']) ?></option><?php endforeach; ?></select></label>
+                    <?php if ($canEditSampleQuotation): ?>
+                        <label>关联报价（可选）<select name="quotation_id"><option value="">暂未报价</option><?php foreach ($choices['quotations'] as $quote): ?><option value="<?= (int) $quote['quotation_id'] ?>" <?= (int) $quote['quotation_id'] === (int) $sample['quotation_id'] ? 'selected' : '' ?>><?= $escape($quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code'] . ' · ' . $quote['quotation_date']) ?></option><?php endforeach; ?></select></label>
+                    <?php endif; ?>
                     <label>项目位置<select name="location" required><?php foreach ($locationOptions as $location): ?><option value="<?= $escape($location['value']) ?>" <?= $location['value'] === $sample['location_type'] . ':' . $sample['location_id'] ? 'selected' : '' ?>><?= $escape($location['label']) ?></option><?php endforeach; ?></select></label>
                     <label>送样数量<input type="number" name="sample_quantity" min="0" step="1" value="<?= (int) $sample['sample_quantity'] ?>" required></label><label>颜色<input name="color" maxlength="50" value="<?= $escape($sample['color'] ?? '') ?>"></label>
                     <label>资料状态<select name="document_status"><?php foreach ($documentLabels as $value => $label): ?><option value="<?= $escape($value) ?>" <?= $sample['document_status'] === $value ? 'selected' : '' ?>><?= $escape($label) ?></option><?php endforeach; ?></select></label>

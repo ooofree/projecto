@@ -19,19 +19,27 @@ final class ProjectMaterialService
     {
     }
 
-    public function sampleChoices(): array
+    public function sampleChoices(bool $includeQuotations): array
     {
         return [
-            'quotations' => $this->db->query(
+            'materials' => $this->db->query(
+                'SELECT material_id, material_code, material_name
+                 FROM Materials ORDER BY material_name, material_id'
+            )->fetchAll(),
+            'suppliers' => $this->db->query(
+                'SELECT supplier_id, supplier_name
+                 FROM Suppliers ORDER BY supplier_name, supplier_id'
+            )->fetchAll(),
+            'quotations' => $includeQuotations ? $this->db->query(
                 'SELECT q.quotation_id, q.material_id, q.currency_code, q.purchase_unit_price,
-                        q.quotation_date, m.material_name, m.material_code,
+                        q.quotation_date, sm.supplier_id, m.material_name, m.material_code,
                         sm.supplier_material_name, s.supplier_name
                  FROM Material_Quotations q
                  JOIN Materials m ON m.material_id = q.material_id
                  JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
                  JOIN Suppliers s ON s.supplier_id = sm.supplier_id
                  ORDER BY m.material_name, q.quotation_date DESC'
-            )->fetchAll(),
+            )->fetchAll() : [],
         ];
     }
 
@@ -115,14 +123,22 @@ final class ProjectMaterialService
         ];
     }
 
-    public function listSamples(int $projectId): array
+    public function listSamples(int $projectId, bool $includeCommercialDetails = true): array
     {
+        $commercialColumns = $includeCommercialDetails
+            ? 'q.purchase_unit_price, q.quotation_date, q.currency_code'
+            : 'NULL AS purchase_unit_price, NULL AS quotation_date, NULL AS currency_code';
+        $quotationJoin = $includeCommercialDetails
+            ? 'LEFT JOIN Material_Quotations q ON q.quotation_id = s.quotation_id'
+            : '';
         $stmt = $this->db->prepare(
-            "SELECT s.sample_id, s.project_id, s.quotation_id, s.sample_quantity, s.color,
+            "SELECT s.sample_id, s.project_id, s.material_id, s.supplier_id, s.quotation_id,
+                    s.sample_quantity, s.color,
                     s.document_status, s.sent_status, s.sent_date, s.owner_approval_status,
                     s.owner_approval_date, s.remarks, s.created_at, s.updated_at,
-                    q.material_id, m.material_name, m.material_code, m.unit,
-                    sm.supplier_material_name, sm.supplier_material_code, sup.supplier_name,
+                    {$commercialColumns},
+                    m.material_name, m.material_code, m.unit,
+                    sup.supplier_name,
                     lm.location_type, lm.location_id,
                     b.building_number AS location_building_number,
                     bf.building_number AS floor_building_number,
@@ -136,10 +152,9 @@ final class ProjectMaterialService
              FROM Material_Samples s
              JOIN Sample_Location_Map lm
                ON lm.sample_id = s.sample_id AND lm.project_id = s.project_id
-             JOIN Material_Quotations q ON q.quotation_id = s.quotation_id
-             JOIN Materials m ON m.material_id = q.material_id
-             JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
-             JOIN Suppliers sup ON sup.supplier_id = sm.supplier_id
+             JOIN Materials m ON m.material_id = s.material_id
+             JOIN Suppliers sup ON sup.supplier_id = s.supplier_id
+             {$quotationJoin}
              LEFT JOIN Buildings b
                ON lm.location_type = 'building' AND b.building_id = lm.location_id AND b.project_id = s.project_id
              LEFT JOIN Building_Floors f
@@ -199,8 +214,12 @@ final class ProjectMaterialService
     public function saveSample(int $projectId, int $userId, array $data): int
     {
         $sampleId = $this->optionalId($data['sample_id'] ?? null, '样品');
-        $quotationId = $this->requiredId($data['quotation_id'] ?? null, '报价');
-        $this->requireExists('Material_Quotations', 'quotation_id', $quotationId, '报价');
+        $materialId = $this->requiredId($data['material_id'] ?? null, '材料');
+        $supplierId = $this->requiredId($data['supplier_id'] ?? null, '供应商');
+        $this->requireExists('Materials', 'material_id', $materialId, '材料');
+        $this->requireExists('Suppliers', 'supplier_id', $supplierId, '供应商');
+        $quotationProvided = array_key_exists('quotation_id', $data);
+        $quotationId = $quotationProvided ? $this->optionalId($data['quotation_id'], '报价') : null;
         $quantity = $this->integer($data['sample_quantity'] ?? '0', 0, 100000000, '送样数量');
         $color = $this->optionalText($data['color'] ?? null, 50, '颜色');
         $documentStatus = $this->enum($data['document_status'] ?? 'pending_submission', self::DOCUMENT_STATUSES, '资料状态');
@@ -218,18 +237,23 @@ final class ProjectMaterialService
         $this->db->beginTransaction();
         try {
             if ($sampleId === null) {
+                if ($quotationId !== null) {
+                    $this->requireSampleQuotation($quotationId, $materialId, $supplierId);
+                }
                 $insert = $this->db->prepare(
                     'INSERT INTO Material_Samples
-                        (project_id, quotation_id, sample_quantity, color, document_status,
-                         sent_status, sent_date, owner_approval_status, owner_approval_date,
-                         remarks, created_by)
+                        (project_id, material_id, supplier_id, quotation_id, sample_quantity,
+                         color, document_status, sent_status, sent_date, owner_approval_status,
+                         owner_approval_date, remarks, created_by)
                      VALUES
-                        (:project_id, :quotation_id, :quantity, :color, :document_status,
-                         :sent_status, :sent_date, :approval_status, :approval_date,
-                         :remarks, :created_by)'
+                        (:project_id, :material_id, :supplier_id, :quotation_id, :quantity,
+                         :color, :document_status, :sent_status, :sent_date, :approval_status,
+                         :approval_date, :remarks, :created_by)'
                 );
                 $insert->execute([
                     'project_id' => $projectId,
+                    'material_id' => $materialId,
+                    'supplier_id' => $supplierId,
                     'quotation_id' => $quotationId,
                     'quantity' => $quantity,
                     'color' => $color,
@@ -256,15 +280,32 @@ final class ProjectMaterialService
                 ]);
             } else {
                 $this->requireActiveSample($projectId, $sampleId);
+                if (!$quotationProvided) {
+                    $currentQuotation = $this->db->prepare(
+                        'SELECT quotation_id FROM Material_Samples
+                         WHERE sample_id = :sample_id AND project_id = :project_id'
+                    );
+                    $currentQuotation->execute(['sample_id' => $sampleId, 'project_id' => $projectId]);
+                    $quotationId = $currentQuotation->fetchColumn();
+                    $quotationId = $quotationId === false || $quotationId === null
+                        ? null
+                        : (int) $quotationId;
+                }
+                if ($quotationId !== null) {
+                    $this->requireSampleQuotation($quotationId, $materialId, $supplierId);
+                }
                 $update = $this->db->prepare(
                     'UPDATE Material_Samples
-                     SET quotation_id = :quotation_id, sample_quantity = :quantity, color = :color,
+                     SET material_id = :material_id, supplier_id = :supplier_id,
+                         quotation_id = :quotation_id, sample_quantity = :quantity, color = :color,
                          document_status = :document_status, sent_status = :sent_status,
                          sent_date = :sent_date, owner_approval_status = :approval_status,
                          owner_approval_date = :approval_date, remarks = :remarks
                      WHERE sample_id = :sample_id AND project_id = :project_id AND archived_at IS NULL'
                 );
                 $update->execute([
+                    'material_id' => $materialId,
+                    'supplier_id' => $supplierId,
                     'quotation_id' => $quotationId,
                     'quantity' => $quantity,
                     'color' => $color,
@@ -673,6 +714,26 @@ final class ProjectMaterialService
         $stmt->execute(['id' => $id]);
         if ($stmt->fetchColumn() === false) {
             throw new HttpException($label . '不存在。', 404);
+        }
+    }
+
+    private function requireSampleQuotation(int $quotationId, int $materialId, int $supplierId): void
+    {
+        $stmt = $this->db->prepare(
+            'SELECT 1
+             FROM Material_Quotations q
+             JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
+             WHERE q.quotation_id = :quotation_id
+               AND q.material_id = :material_id
+               AND sm.supplier_id = :supplier_id'
+        );
+        $stmt->execute([
+            'quotation_id' => $quotationId,
+            'material_id' => $materialId,
+            'supplier_id' => $supplierId,
+        ]);
+        if ($stmt->fetchColumn() === false) {
+            throw new HttpException('所选报价与材料或供应商不匹配。', 422);
         }
     }
 
