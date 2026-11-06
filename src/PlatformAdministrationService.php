@@ -11,6 +11,9 @@ use Throwable;
 
 final class PlatformAdministrationService
 {
+    private const DEFAULT_PLATFORM_NAME = 'Project O';
+    private const MAX_PLATFORM_NAME_LENGTH = 80;
+
     private const SECTIONS = [
         'settings' => '系统配置',
         'people' => '人员管理',
@@ -105,9 +108,25 @@ final class PlatformAdministrationService
         ];
     }
 
+    /** @return array{theme: string, platform_name: string} */
+    public function appearance(): array
+    {
+        $settings = $this->settings();
+
+        return [
+            'theme' => $settings['theme'],
+            'platform_name' => $settings['platform_name'],
+        ];
+    }
+
     public function theme(): string
     {
-        return $this->settings()['theme'];
+        return $this->appearance()['theme'];
+    }
+
+    public function platformName(): string
+    {
+        return $this->appearance()['platform_name'];
     }
 
     public function dispatch(string $action, array $input): PluginResponse
@@ -137,10 +156,17 @@ final class PlatformAdministrationService
 
     private function saveSettings(array $input): void
     {
+        $platformName = $this->requiredString($input, 'platform_name');
         $theme = $this->requiredString($input, 'theme');
         $countryCode = strtoupper($this->requiredString($input, 'default_country_code'));
         $currencyCode = strtoupper($this->requiredString($input, 'default_currency_code'));
         $timezone = $this->requiredString($input, 'timezone');
+        if ($platformName === '' || mb_strlen($platformName, 'UTF-8') > self::MAX_PLATFORM_NAME_LENGTH) {
+            throw new HttpException('平台名称不能为空，且最多为 80 个字符。', 422);
+        }
+        if (preg_match('/[\x00-\x1F\x7F]/', $platformName) === 1) {
+            throw new HttpException('平台名称不能包含控制字符。', 422);
+        }
         if (!in_array($theme, ['light', 'dark'], true)) {
             throw new HttpException('主题选项无效。', 422);
         }
@@ -154,8 +180,15 @@ final class PlatformAdministrationService
             throw new HttpException('默认时区必须是有效的 IANA 时区标识。', 422);
         }
 
-        $this->transaction(function () use ($theme, $countryCode, $currencyCode, $timezone): void {
+        $this->transaction(function () use (
+            $platformName,
+            $theme,
+            $countryCode,
+            $currencyCode,
+            $timezone
+        ): void {
             $this->lockAdminGuard();
+            $this->writeSetting('platform_name', $platformName);
             $this->writeSetting('theme', $theme);
             $this->writeSetting('default_country_code', $countryCode);
             $this->writeSetting('default_currency_code', $currencyCode);
@@ -350,11 +383,21 @@ final class PlatformAdministrationService
         $rows = $this->db->query(
             "SELECT setting_key, setting_value
              FROM System_Settings
-             WHERE setting_key IN ('theme', 'language', 'default_country_code', 'default_currency_code', 'timezone')"
+             WHERE setting_key IN ('platform_name', 'theme', 'language', 'default_country_code', 'default_currency_code', 'timezone')"
         )->fetchAll();
         $settings = [];
         foreach ($rows as $row) {
             $settings[(string) $row['setting_key']] = (string) $row['setting_value'];
+        }
+
+        if (!array_key_exists('platform_name', $settings)) {
+            $settings['platform_name'] = self::DEFAULT_PLATFORM_NAME;
+        }
+        if (
+            $settings['platform_name'] === ''
+            || mb_strlen($settings['platform_name'], 'UTF-8') > self::MAX_PLATFORM_NAME_LENGTH
+        ) {
+            throw new RuntimeException('Stored platform name is invalid.');
         }
 
         foreach (['theme', 'language', 'default_country_code', 'default_currency_code', 'timezone'] as $key) {

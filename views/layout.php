@@ -1,14 +1,18 @@
+<?php
+$platformName = (string) ($platformName ?? 'Project O');
+$brandMark = (string) ($brandMark ?? mb_strtoupper(mb_substr($platformName, 0, 1, 'UTF-8'), 'UTF-8'));
+?>
 <!doctype html>
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= $escape($title ?? 'Project O') ?> · Project O</title>
+    <title><?= $escape($title ?? $platformName) ?> · <?= $escape($platformName) ?></title>
     <link rel="stylesheet" href="assets/app.css">
 </head>
 <body class="theme-<?= $escape($theme) ?>">
 <header class="topbar">
-    <a class="brand" href="?page=projects"><span class="brand-mark" aria-hidden="true">O</span><span>Project O</span></a>
+    <a class="brand" href="?page=projects"><span class="brand-mark" aria-hidden="true"><?= $escape($brandMark) ?></span><span><?= $escape($platformName) ?></span></a>
     <?php if ($username !== ''): ?>
         <div class="account">
             <?php if ($canManagePlatform): ?>

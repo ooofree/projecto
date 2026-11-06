@@ -28,12 +28,16 @@ $isSection = static fn (string $key): bool => $activeSection === $key;
                 <div class="panel-heading">
                     <div>
                         <h2>系统配置</h2>
-                        <p class="muted">默认国家/币种初始为 CN / CNY，使用 ISO 代码；这不会转换已有金额或汇率。</p>
+                        <p class="muted">平台名称用于顶栏、登录页和浏览器标题。默认国家/币种初始为 CN / CNY，使用 ISO 代码；这不会转换已有金额或汇率。</p>
                     </div>
                 </div>
                 <form method="post" action="" class="form-grid">
                     <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                     <input type="hidden" name="action" value="admin.settings.save">
+                    <label>
+                        平台名称
+                        <input name="platform_name" value="<?= $escape($settings['platform_name']) ?>" maxlength="80" required>
+                    </label>
                     <label>
                         系统主题
                         <select name="theme">

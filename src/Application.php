@@ -186,7 +186,10 @@ final class Application
         $username = (string) ($_SESSION['username'] ?? '');
         $canManagePlatform = isset($_SESSION['user_id'])
             && Support::hasPermission($this->db, 'manage_platform');
-        $theme = $this->platformAdministration->theme();
+        $appearance = $this->platformAdministration->appearance();
+        $theme = $appearance['theme'];
+        $platformName = $appearance['platform_name'];
+        $brandMark = self::brandMark($platformName);
         extract($viewData, EXTR_SKIP);
         $viewPath = $isAbsolutePath ? $view : dirname(__DIR__) . '/views/' . $view . '.php';
         if (!is_file($viewPath)) {
@@ -322,6 +325,16 @@ final class Application
             'timezones' => Support::timezoneOptions(),
             'currentLocalTime' => Support::nowLocal('Y-m-d H:i:s'),
         ];
+    }
+
+    private static function brandMark(string $platformName): string
+    {
+        $mark = mb_substr(trim($platformName), 0, 1, 'UTF-8');
+        if ($mark === '') {
+            return 'O';
+        }
+
+        return mb_strtoupper($mark, 'UTF-8');
     }
 
     private function redirect(string $location): never

@@ -101,7 +101,7 @@ try {
     $db->beginTransaction();
     $db->exec(
         "INSERT INTO `Roles` (`role_name`, `description`)
-         VALUES ('administrator', 'Project O platform administrator')
+         VALUES ('administrator', 'Platform administrator')
          ON DUPLICATE KEY UPDATE `description` = VALUES(`description`)"
     );
     $roleId = (int) $db->query(

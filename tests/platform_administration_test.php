@@ -42,6 +42,7 @@ $db->exec(
 );
 $db->exec(
     "INSERT INTO System_Settings (setting_key, setting_value) VALUES
+        ('platform_name', 'Project O'),
         ('theme', 'light'),
         ('language', 'zh-CN'),
         ('default_country_code', 'CN'),
@@ -115,6 +116,10 @@ $admin = new PlatformAdministrationService($db, $registry);
 
 $pageData = $admin->pageData();
 platformAdminCheck(count($pageData['plugins']) === 3, 'The plugin catalog should list all discovered plugins.');
+platformAdminCheck(
+    $pageData['settings']['platform_name'] === 'Project O',
+    'The default platform name should be loaded.'
+);
 platformAdminCheck($pageData['settings']['default_currency_code'] === 'CNY', 'The default currency should be loaded.');
 platformAdminCheck(
     $pageData['settings']['timezone'] === 'Asia/Shanghai'
@@ -140,11 +145,17 @@ platformAdminCheck(
 );
 
 $admin->dispatch('admin.settings.save', [
+    'platform_name' => '  Alpha Works  ',
     'theme' => 'dark',
     'default_country_code' => 'us',
     'default_currency_code' => 'usd',
     'timezone' => 'America/New_York',
 ]);
+platformAdminCheck(
+    $db->query("SELECT setting_value FROM System_Settings WHERE setting_key = 'platform_name'")->fetchColumn() === 'Alpha Works',
+    'The platform name should be trimmed and saved.'
+);
+platformAdminCheck($admin->platformName() === 'Alpha Works', 'The saved platform name should be applied to subsequent renders.');
 platformAdminCheck($db->query("SELECT setting_value FROM System_Settings WHERE setting_key = 'theme'")->fetchColumn() === 'dark', 'The theme should be saved.');
 platformAdminCheck($db->query("SELECT setting_value FROM System_Settings WHERE setting_key = 'default_country_code'")->fetchColumn() === 'US', 'Country codes should be normalized.');
 platformAdminCheck($db->query("SELECT setting_value FROM System_Settings WHERE setting_key = 'timezone'")->fetchColumn() === 'America/New_York', 'The default timezone should be saved.');
@@ -152,6 +163,7 @@ platformAdminCheck($admin->theme() === 'dark', 'The saved theme should be applie
 
 platformAdminExpectStatus(
     fn () => $admin->dispatch('admin.settings.save', [
+        'platform_name' => 'Alpha Works',
         'theme' => 'solarized',
         'default_country_code' => 'USA',
         'default_currency_code' => 'US',
@@ -162,6 +174,7 @@ platformAdminExpectStatus(
 );
 platformAdminExpectStatus(
     fn () => $admin->dispatch('admin.settings.save', [
+        'platform_name' => 'Alpha Works',
         'theme' => 'dark',
         'default_country_code' => 'CN',
         'default_currency_code' => 'ZZZ',
@@ -170,7 +183,41 @@ platformAdminExpectStatus(
     422,
     'Currencies outside the ISO 4217 catalog must be rejected.'
 );
+platformAdminExpectStatus(
+    fn () => $admin->dispatch('admin.settings.save', [
+        'platform_name' => '   ',
+        'theme' => 'dark',
+        'default_country_code' => 'US',
+        'default_currency_code' => 'USD',
+        'timezone' => 'America/New_York',
+    ]),
+    422,
+    'An empty platform name must be rejected.'
+);
+platformAdminExpectStatus(
+    fn () => $admin->dispatch('admin.settings.save', [
+        'platform_name' => str_repeat('A', 81),
+        'theme' => 'dark',
+        'default_country_code' => 'US',
+        'default_currency_code' => 'USD',
+        'timezone' => 'America/New_York',
+    ]),
+    422,
+    'A platform name longer than 80 characters must be rejected.'
+);
+platformAdminExpectStatus(
+    fn () => $admin->dispatch('admin.settings.save', [
+        'platform_name' => "Alpha\nWorks",
+        'theme' => 'dark',
+        'default_country_code' => 'US',
+        'default_currency_code' => 'USD',
+        'timezone' => 'America/New_York',
+    ]),
+    422,
+    'A platform name containing control characters must be rejected.'
+);
 platformAdminCheck($admin->theme() === 'dark', 'Rejected settings must not be persisted.');
+platformAdminCheck($admin->platformName() === 'Alpha Works', 'Rejected platform names must not overwrite the saved name.');
 
 platformAdminExpectStatus(
     fn () => $admin->dispatch('admin.role.update', [
@@ -271,6 +318,13 @@ platformAdminCheck(
         && str_contains($adminHtml, '>人员管理</a>')
         && str_contains($adminHtml, 'value="admin.settings.save"'),
     'The default settings section must show configuration and list personnel management.'
+);
+platformAdminCheck(
+    str_contains($adminHtml, '<title>系统设置 · Alpha Works</title>')
+        && str_contains($adminHtml, '<span>Alpha Works</span>')
+        && str_contains($adminHtml, 'value="Alpha Works"')
+        && str_contains($adminHtml, 'aria-hidden="true">A</span>'),
+    'The configured platform name must drive the document title, brand and settings field.'
 );
 platformAdminCheck(
     !str_contains($adminHtml, 'PHP 版本') && !str_contains($adminHtml, '查看材料样品'),
