@@ -55,7 +55,7 @@ function renderMaterialTestView(PluginResponse $response): string
     return (string) ob_get_clean();
 }
 
-function materialTestXlsxSheet(PluginResponse $response): string
+function materialTestXlsxPart(PluginResponse $response, string $part): string
 {
     $body = $response->data['body'] ?? null;
     if ($response->type !== 'download' || !is_string($body)) {
@@ -71,14 +71,19 @@ function materialTestXlsxSheet(PluginResponse $response): string
         @unlink($path);
         throw new RuntimeException('Export is not a readable xlsx zip package.');
     }
-    $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $xml = $zip->getFromName($part);
     $zip->close();
     @unlink($path);
     if (!is_string($xml) || $xml === '') {
-        throw new RuntimeException('Export is missing its worksheet.');
+        throw new RuntimeException('Export is missing its ' . $part . ' part.');
     }
 
     return $xml;
+}
+
+function materialTestXlsxSheet(PluginResponse $response): string
+{
+    return materialTestXlsxPart($response, 'xl/worksheets/sheet1.xml');
 }
 
 final class MaterialTestImageStorage implements ObjectStorageInterface
@@ -798,11 +803,11 @@ $sampleExport = $plugin->dispatch('sample.export', []);
 materialTestCheck(
     $sampleExport->type === 'download'
         && ($sampleExport->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        && preg_match('/^材料样品信息表_\d{8}_\d{6}_\d+\.xlsx$/u', (string) ($sampleExport->data['filename'] ?? '')) === 1,
+        && preg_match('/^材料样品信息表_\d{8}_\d+\.xlsx$/u', (string) ($sampleExport->data['filename'] ?? '')) === 1,
     'Sample export should produce an .xlsx download response with a daily sequence number.'
 );
 $sampleExportSequence = (int) preg_replace(
-    '/^材料样品信息表_\d{8}_\d{6}_(\d+)\.xlsx$/u',
+    '/^材料样品信息表_\d{8}_(\d+)\.xlsx$/u',
     '$1',
     (string) $sampleExport->data['filename']
 );
@@ -812,7 +817,7 @@ materialTestCheck(
     'Sample export must be registered as a plugin route in its manifest.'
 );
 $registryExportSequence = (int) preg_replace(
-    '/^材料样品信息表_\d{8}_\d{6}_(\d+)\.xlsx$/u',
+    '/^材料样品信息表_\d{8}_(\d+)\.xlsx$/u',
     '$1',
     (string) ($registryExport->data['filename'] ?? '')
 );
@@ -821,6 +826,16 @@ materialTestCheck(
     'Export file names must use a daily sequence number.'
 );
 $sampleSheetXml = materialTestXlsxSheet($sampleExport);
+$sampleStylesXml = materialTestXlsxPart($sampleExport, 'xl/styles.xml');
+materialTestCheck(
+    substr_count($sampleStylesXml, 'wrapText="1"') >= 2,
+    'Exported cells must wrap long text inside the fixed column widths.'
+);
+materialTestCheck(
+    str_contains($sampleStylesXml, 'horizontal="center"')
+        && str_contains($sampleSheetXml, 'ht="30"'),
+    'The report title row must be taller and horizontally centered.'
+);
 materialTestCheck(
     str_contains($sampleSheetXml, 'Project One材料样品信息追踪表')
         && str_contains($sampleSheetXml, '导出时间: ')

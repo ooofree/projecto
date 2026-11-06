@@ -524,8 +524,8 @@ final class MaterialManagementPlugin implements PluginInterface
             $rows[] = $row;
         }
 
-        $exportTime = date('Ymd_His');
-        $exportSequence = $this->nextDailyExportSequence(substr($exportTime, 0, 8));
+        $exportDay = date('Ymd');
+        $exportSequence = $this->nextDailyExportSequence($exportDay);
         $body = XlsxWorkbook::build('样品信息追踪表', $headers, $rows, [
             'title' => '📦 ' . $project['project_name'] . '材料样品信息追踪表',
             'meta' => [
@@ -545,7 +545,7 @@ final class MaterialManagementPlugin implements PluginInterface
         );
 
         return PluginResponse::download(
-            '材料样品信息表_' . $exportTime . '_' . $exportSequence . '.xlsx',
+            '材料样品信息表_' . $exportDay . '_' . $exportSequence . '.xlsx',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             $body
         );
