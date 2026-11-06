@@ -16,6 +16,7 @@
         "GET supplier-materials": "supplier-materials",
         "GET quotations": "quotations",
         "GET samples": "samples",
+        "GET sample-image": "sample.image.view",
         "GET estimates": "estimates",
         "GET tender-list": "tender-list",
         "POST material.category.save": "category.save",

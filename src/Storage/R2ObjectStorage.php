@@ -86,6 +86,16 @@ final class R2ObjectStorage implements ObjectStorageInterface
         return (string) $this->client()->createPresignedRequest($command, '+5 minutes')->getUri();
     }
 
+    public function read(string $objectKey): string
+    {
+        $result = $this->client()->getObject([
+            'Bucket' => $this->configuration()['bucket'],
+            'Key' => $objectKey,
+        ]);
+
+        return (string) $result['Body'];
+    }
+
     public function delete(string $objectKey): void
     {
         $this->client()->deleteObject([

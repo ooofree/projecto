@@ -71,6 +71,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'sample.save' => $this->saveSample($input),
             'sample.archive' => $this->archiveSample($input),
             'sample.image.upload' => $this->uploadSampleImage($input),
+            'sample.image.view' => $this->viewSampleImage($input),
             'sample.export' => $this->exportSamples($input),
             'estimate.save' => $this->saveEstimate($input),
             'estimate.delete' => $this->deleteEstimate($input),
@@ -170,7 +171,7 @@ final class MaterialManagementPlugin implements PluginInterface
         $projectId = (int) $project['project_id'];
         $canViewQuotations = Support::hasPermission($this->context->db, 'view_material_quotations');
         $samples = $this->projectMaterials->listSamples($projectId, $canViewQuotations);
-        $this->attachImageUrls($samples);
+        $this->attachImageProxyUrls($samples);
 
         $canManageSettings = Support::hasPermission($this->context->db, 'manage_document_settings')
             || Support::hasPermission($this->context->db, 'manage_platform');
@@ -411,7 +412,7 @@ final class MaterialManagementPlugin implements PluginInterface
             $sampleId,
             $this->userId()
         );
-        return $this->complete('material.sample.archive', '样品已归档，图片和跟踪记录保留。', $sampleId, '?page=samples');
+        return $this->complete('material.sample.archive', '样品已删除，跟踪记录与图片保留（软删除）。', $sampleId, '?page=samples');
     }
 
     private function uploadSampleImage(array $input): PluginResponse
@@ -523,6 +524,8 @@ final class MaterialManagementPlugin implements PluginInterface
             $rows[] = $row;
         }
 
+        $exportTime = date('Ymd_His');
+        $exportSequence = $this->nextDailyExportSequence(substr($exportTime, 0, 8));
         $body = XlsxWorkbook::build('样品信息追踪表', $headers, $rows, [
             'title' => '📦 ' . $project['project_name'] . '材料样品信息追踪表',
             'meta' => [
@@ -542,7 +545,7 @@ final class MaterialManagementPlugin implements PluginInterface
         );
 
         return PluginResponse::download(
-            '材料样品信息表_' . date('Ymd_His') . '.xlsx',
+            '材料样品信息表_' . $exportTime . '_' . $exportSequence . '.xlsx',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             $body
         );
@@ -555,6 +558,110 @@ final class MaterialManagementPlugin implements PluginInterface
      *
      * @param list<array<string, mixed>> $samples
      */
+    private function viewSampleImage(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_material_samples');
+        Support::requirePermission($this->context->db, 'view_projects');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $sampleId = $this->requiredId($input, 'sample_id');
+        $imageId = $this->requiredId($input, 'image_id');
+        if (!$this->imageStorage->isConfigured()) {
+            throw new HttpException(
+                '尚未配置图片存储：请在文件模块“系统设置”完成设置，或核对部署环境变量与 AWS SDK 安装。',
+                503
+            );
+        }
+        $image = $this->projectMaterials->requireImage($projectId, $sampleId, $imageId);
+        $contentType = (string) $image['content_type'];
+        $extension = ImageUpload::EXTENSIONS[$contentType] ?? 'img';
+        try {
+            $body = $this->imageStorage->read((string) $image['object_key']);
+        } catch (Throwable $exception) {
+            error_log('Unable to read sample image ' . $imageId . ': ' . get_class($exception));
+            throw new HttpException('图片读取失败，请稍后重试。', 502);
+        }
+
+        return PluginResponse::inline(
+            '样品图片-' . $sampleId . '-' . $imageId . '.' . $extension,
+            $contentType,
+            $body
+        );
+    }
+
+    /**
+     * The browser loads images through the application so it never needs
+     * direct access to the private object-storage bucket.
+     *
+     * @param list<array<string, mixed>> $samples
+     */
+    private function attachImageProxyUrls(array &$samples): void
+    {
+        if (!$this->imageStorage->isConfigured()) {
+            return;
+        }
+        foreach ($samples as &$sample) {
+            foreach ($sample['images'] as &$image) {
+                $image['url'] = '?page=sample-image&sample_id=' . (int) $sample['sample_id']
+                    . '&image_id=' . (int) $image['image_id'];
+            }
+            unset($image);
+        }
+        unset($sample);
+    }
+
+    private function imageProxyUrl(int $sampleId, int $imageId): string
+    {
+        $query = '?page=sample-image&sample_id=' . $sampleId . '&image_id=' . $imageId;
+        $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+        if ($host === '') {
+            return $query;
+        }
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php');
+        $base = rtrim(str_replace('\\', '/', dirname($script)), '/');
+
+        return $scheme . '://' . $host . $base . '/' . $query;
+    }
+
+    private function nextDailyExportSequence(string $day): int
+    {
+        $key = 'material.sample.export_sequence.' . $day;
+        $this->context->db->beginTransaction();
+        try {
+            $select = $this->context->db->prepare(
+                'SELECT setting_value FROM System_Settings WHERE setting_key = :setting_key'
+            );
+            $select->execute(['setting_key' => $key]);
+            $current = (int) $select->fetchColumn();
+            $next = $current + 1;
+            if ($current === 0) {
+                $write = $this->context->db->prepare(
+                    'INSERT INTO System_Settings (setting_key, setting_value, updated_by)
+                     VALUES (:setting_key, :setting_value, :updated_by)'
+                );
+            } else {
+                $write = $this->context->db->prepare(
+                    'UPDATE System_Settings SET setting_value = :setting_value, updated_by = :updated_by
+                     WHERE setting_key = :setting_key'
+                );
+            }
+            $write->execute([
+                'setting_key' => $key,
+                'setting_value' => (string) $next,
+                'updated_by' => (int) ($_SESSION['user_id'] ?? 0),
+            ]);
+            $this->context->db->commit();
+        } catch (Throwable $exception) {
+            if ($this->context->db->inTransaction()) {
+                $this->context->db->rollBack();
+            }
+            throw $exception;
+        }
+
+        return $next;
+    }
+
     private function attachImageUrls(array &$samples): void
     {
         if (!$this->imageStorage->isConfigured()) {
@@ -605,7 +712,7 @@ final class MaterialManagementPlugin implements PluginInterface
                 'column' => $imageColumn,
                 'bytes' => $payload['bytes'],
                 'extension' => $payload['extension'],
-                'hyperlink' => $image['url'],
+                'hyperlink' => $this->imageProxyUrl((int) $sample['sample_id'], (int) $image['image_id']),
             ];
 
             return ''; // the drawing overlays the cell

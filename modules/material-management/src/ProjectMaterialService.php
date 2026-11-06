@@ -404,6 +404,31 @@ final class ProjectMaterialService
         return (int) $this->db->lastInsertId();
     }
 
+    /**
+     * Loads an image of the given sample scoped to the current project.
+     *
+     * @return array<string, mixed>
+     */
+    public function requireImage(int $projectId, int $sampleId, int $imageId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT image_id, object_key, original_name, content_type
+             FROM Material_Sample_Images
+             WHERE image_id = :image_id AND sample_id = :sample_id AND project_id = :project_id'
+        );
+        $stmt->execute([
+            'image_id' => $imageId,
+            'sample_id' => $sampleId,
+            'project_id' => $projectId,
+        ]);
+        $image = $stmt->fetch();
+        if ($image === false) {
+            throw new HttpException('图片记录不存在。', 404);
+        }
+
+        return $image;
+    }
+
     public function estimateData(int $projectId): array
     {
         $stmt = $this->db->prepare(

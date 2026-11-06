@@ -83,7 +83,9 @@ function materialTestXlsxSheet(PluginResponse $response): string
 
 final class MaterialTestImageStorage implements ObjectStorageInterface
 {
-    public function __construct(private readonly string $fileUrl)
+    public static string $fileUrl = '';
+
+    public function __construct(?PDO $db = null)
     {
     }
 
@@ -98,7 +100,14 @@ final class MaterialTestImageStorage implements ObjectStorageInterface
 
     public function signedReadUrl(string $objectKey, string $contentType): string
     {
-        return $this->fileUrl;
+        return self::$fileUrl;
+    }
+
+    public function read(string $objectKey): string
+    {
+        $contents = @file_get_contents(self::$fileUrl);
+
+        return is_string($contents) ? $contents : '';
     }
 
     public function delete(string $objectKey): void
@@ -775,20 +784,41 @@ materialTestCheck(
     'Sample tracking page markup must not repeat element IDs.'
 );
 materialTestCheck(
-    substr_count($sampleTestHtml, '<dialog class="edit-dialog') === count($samplePage->data['samples']) + 1,
-    'Sample tracking should render one edit dialog per sample plus the create dialog.'
+    substr_count($sampleTestHtml, '<dialog class="edit-dialog') === count($samplePage->data['samples']) * 2 + 1,
+    'Sample tracking should render create, edit and delete dialogs for each sample.'
+);
+materialTestCheck(
+    str_contains($sampleTestHtml, '<th scope="col">使用位置</th>')
+        && str_contains($sampleTestHtml, 'data-dialog-open="sample-delete-' . $linkedSampleId . '"')
+        && substr_count($sampleTestHtml, '确认删除') === count($samplePage->data['samples'])
+        && !str_contains($sampleTestHtml, '>归档</button>'),
+    'Samples must use the 使用位置 column and a 删除 action with a confirmation dialog.'
 );
 $sampleExport = $plugin->dispatch('sample.export', []);
 materialTestCheck(
     $sampleExport->type === 'download'
         && ($sampleExport->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        && preg_match('/^材料样品信息表_\d{8}_\d{6}\.xlsx$/u', (string) ($sampleExport->data['filename'] ?? '')) === 1,
-    'Sample export should produce an .xlsx download response.'
+        && preg_match('/^材料样品信息表_\d{8}_\d{6}_\d+\.xlsx$/u', (string) ($sampleExport->data['filename'] ?? '')) === 1,
+    'Sample export should produce an .xlsx download response with a daily sequence number.'
+);
+$sampleExportSequence = (int) preg_replace(
+    '/^材料样品信息表_\d{8}_\d{6}_(\d+)\.xlsx$/u',
+    '$1',
+    (string) $sampleExport->data['filename']
 );
 $registryExport = $registry->dispatch('POST', 'material.sample.export', []);
 materialTestCheck(
     $registryExport instanceof PluginResponse && $registryExport->type === 'download',
     'Sample export must be registered as a plugin route in its manifest.'
+);
+$registryExportSequence = (int) preg_replace(
+    '/^材料样品信息表_\d{8}_\d{6}_(\d+)\.xlsx$/u',
+    '$1',
+    (string) ($registryExport->data['filename'] ?? '')
+);
+materialTestCheck(
+    $sampleExportSequence > 0 && $registryExportSequence === $sampleExportSequence + 1,
+    'Export file names must use a daily sequence number.'
 );
 $sampleSheetXml = materialTestXlsxSheet($sampleExport);
 materialTestCheck(
@@ -1077,8 +1107,10 @@ $storagePlugin = new MaterialManagementPlugin(
 $storageHtml = renderMaterialTestView($storagePlugin->dispatch('samples', []));
 if (class_exists(\Aws\S3\S3Client::class)) {
     materialTestCheck(
-        str_contains($storageHtml, 'X-Amz-Signature=') && str_contains($storageHtml, 'r2.cloudflarestorage.com'),
-        'Sample images should render five-minute signed URLs from the shared storage configuration.'
+        str_contains($storageHtml, 'class="thumb"')
+            && str_contains($storageHtml, 'page=sample-image')
+            && !str_contains($storageHtml, 'r2.cloudflarestorage.com'),
+        'Sample thumbnails must be served through the application instead of direct bucket URLs.'
     );
 }
 $db->exec("DELETE FROM System_Settings WHERE setting_key LIKE 'cloud_storage.%'");
@@ -1091,11 +1123,12 @@ $thumbPng = base64_decode(
 $thumbFile = tempnam(sys_get_temp_dir(), 'sample-thumb-');
 materialTestCheck($thumbFile !== false && is_string($thumbPng), 'The thumbnail fixture should be created.');
 file_put_contents((string) $thumbFile, (string) $thumbPng);
-$fakeImageStorage = new MaterialTestImageStorage('file://' . $thumbFile);
+MaterialTestImageStorage::$fileUrl = 'file://' . $thumbFile;
+$fakeImageStorage = new MaterialTestImageStorage();
 $imagePlugin = new MaterialManagementPlugin(
     new PluginContext($db, dirname(__DIR__) . '/modules/material-management', $fakeImageStorage)
 );
-$projectMaterials->addImage(
+$thumbImageId = $projectMaterials->addImage(
     1,
     $linkedSampleId,
     1,
@@ -1107,9 +1140,90 @@ $projectMaterials->addImage(
 $thumbHtml = renderMaterialTestView($imagePlugin->dispatch('samples', []));
 materialTestCheck(
     str_contains($thumbHtml, 'class="thumb"')
-        && str_contains($thumbHtml, 'src="file://' . $thumbFile . '"'),
-    'The sample list must render image thumbnails from signed URLs.'
+        && str_contains($thumbHtml, 'page=sample-image&amp;sample_id=' . $linkedSampleId . '&amp;image_id=' . $thumbImageId),
+    'The sample list must render image thumbnails served by the application.'
 );
+$imageResponse = $imagePlugin->dispatch('sample.image.view', [
+    'sample_id' => (string) $linkedSampleId,
+    'image_id' => (string) $thumbImageId,
+]);
+materialTestCheck(
+    $imageResponse->type === 'inline'
+        && ($imageResponse->data['content_type'] ?? '') === 'image/png'
+        && ($imageResponse->data['body'] ?? '') === $thumbPng
+        && str_contains(
+            (string) ($imageResponse->data['filename'] ?? ''),
+            '样品图片-' . $linkedSampleId . '-' . $thumbImageId . '.png'
+        ),
+    'Sample images must be streamed inline with a sequential file name.'
+);
+$db->exec(
+    "DELETE FROM Role_Permissions
+     WHERE permission_id = (SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_samples')"
+);
+materialTestExpectStatus(
+    static fn () => $imagePlugin->dispatch('sample.image.view', [
+        'sample_id' => (string) $linkedSampleId,
+        'image_id' => (string) $thumbImageId,
+    ]),
+    403,
+    'Sample image delivery must enforce the sample view permission.'
+);
+$rolePermissionInsert->execute([
+    'permission_id' => (int) $db->query(
+        "SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_samples'"
+    )->fetchColumn(),
+]);
+$_SESSION['active_project_id'] = 2;
+materialTestExpectStatus(
+    static fn () => $imagePlugin->dispatch('sample.image.view', [
+        'sample_id' => (string) $linkedSampleId,
+        'image_id' => (string) $thumbImageId,
+    ]),
+    404,
+    'Sample images must not cross project boundaries.'
+);
+$_SESSION['active_project_id'] = 1;
+materialTestExpectStatus(
+    static fn () => $imagePlugin->dispatch('sample.image.view', [
+        'sample_id' => (string) $linkedSampleId,
+        'image_id' => '999999',
+    ]),
+    404,
+    'Unknown sample image ids must be rejected.'
+);
+$unconfiguredImagePlugin = new MaterialManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/material-management')
+);
+materialTestExpectStatus(
+    static fn () => $unconfiguredImagePlugin->dispatch('sample.image.view', [
+        'sample_id' => (string) $linkedSampleId,
+        'image_id' => (string) $thumbImageId,
+    ]),
+    503,
+    'Sample image delivery must fail clearly when storage is unconfigured.'
+);
+$previousViewAdapter = getenv('APP_OBJECT_STORAGE_ADAPTER');
+putenv('APP_OBJECT_STORAGE_ADAPTER=MaterialTestImageStorage');
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_GET = [
+    'page' => 'sample-image',
+    'sample_id' => (string) $linkedSampleId,
+    'image_id' => (string) $thumbImageId,
+];
+ob_start();
+(new \ProjectO\Application($db))->run();
+$inlineBody = (string) ob_get_clean();
+materialTestCheck(
+    http_response_code() === 200 && $inlineBody === $thumbPng,
+    'The application must stream sample images inline through its image route.'
+);
+if ($previousViewAdapter === false) {
+    putenv('APP_OBJECT_STORAGE_ADAPTER');
+} else {
+    putenv('APP_OBJECT_STORAGE_ADAPTER=' . $previousViewAdapter);
+}
+$_GET = [];
 $thumbExport = $imagePlugin->dispatch('sample.export', []);
 $thumbExportBody = $thumbExport->data['body'] ?? null;
 materialTestCheck(
@@ -1134,8 +1248,8 @@ materialTestCheck(
     $thumbMedia
         && str_contains($thumbDrawing, 'cy="714375"')
         && str_contains($thumbSheet, 'ht="85"')
-        && str_contains($thumbRels, 'file://' . $thumbFile),
-    'Exported sample images must embed at the legacy fixed height and link to the source.'
+        && str_contains($thumbRels, 'page=sample-image'),
+    'Exported sample images must embed at the legacy fixed height and link to the image route.'
 );
 @unlink((string) $thumbFile);
 

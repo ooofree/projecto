@@ -31,4 +31,16 @@ final class PluginResponse
             'body' => $body,
         ]);
     }
+
+    /**
+     * Inline binary response for private images served through the application.
+     */
+    public static function inline(string $filename, string $contentType, string $body): self
+    {
+        return new self('inline', [
+            'filename' => $filename,
+            'content_type' => $contentType,
+            'body' => $body,
+        ]);
+    }
 }

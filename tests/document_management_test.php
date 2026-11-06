@@ -35,10 +35,15 @@ function documentTestExpectStatus(callable $operation, int $status, string $mess
 
 final class DocumentTestImageStorage implements ObjectStorageInterface
 {
+    public static string $body = '';
     /** @var array<string, array{path: string, content_type: string}> */
     public array $uploaded = [];
     /** @var list<string> */
     public array $deleted = [];
+
+    public function __construct(?PDO $db = null)
+    {
+    }
 
     public function isConfigured(): bool
     {
@@ -53,6 +58,11 @@ final class DocumentTestImageStorage implements ObjectStorageInterface
     public function signedReadUrl(string $objectKey, string $contentType): string
     {
         return 'https://r2.example.test/' . $objectKey . '?signature=test';
+    }
+
+    public function read(string $objectKey): string
+    {
+        return self::$body;
     }
 
     public function delete(string $objectKey): void
@@ -1132,10 +1142,12 @@ $db->exec(
     "INSERT INTO document_issue_images (issue_id, project_id, object_key, original_name, content_type, file_size, uploaded_by)
      VALUES ({$issueId}, 1, 'issues/1/{$issueId}/signed.png', 'signed.png', 'image/png', 68, 1)"
 );
+$signedIssueImageId = (int) $db->lastInsertId();
 $db->exec(
     "INSERT INTO document_rfi_images (rfi_id, project_id, object_key, original_name, content_type, file_size, uploaded_by)
      VALUES ({$rfiId}, 1, 'rfis/1/{$rfiId}/signed.png', 'signed-rfi.png', 'image/png', 68, 1)"
 );
+$signedRfiImageId = (int) $db->lastInsertId();
 $realStoragePlugin = new DocumentManagementPlugin(
     new PluginContext($db, dirname(__DIR__) . '/modules/document-management')
 );
@@ -1152,11 +1164,11 @@ ob_start();
 $renderedRfisWithImages = ob_get_clean();
 if ($sdkAvailable) {
     documentTestCheck(
-        str_contains($renderedIssuesWithImages, 'X-Amz-Signature=')
-            && str_contains($renderedIssuesWithImages, 'signed.png')
-            && str_contains($renderedRfisWithImages, 'X-Amz-Signature=')
-            && str_contains($renderedRfisWithImages, 'signed-rfi.png'),
-        'Issue and RFI images must render short-lived signed URLs from the shared storage configuration.'
+        str_contains($renderedIssuesWithImages, 'page=document-image')
+            && str_contains($renderedIssuesWithImages, 'type=issue')
+            && str_contains($renderedRfisWithImages, 'page=document-image')
+            && str_contains($renderedRfisWithImages, 'type=rfi'),
+        'Issue and RFI images must be served through the application image route.'
     );
 } else {
     documentTestCheck(
@@ -1170,6 +1182,87 @@ documentTestCheck(
         || !$sdkAvailable,
     'Issue dialogs must expose the image upload form when storage is configured.'
 );
+
+DocumentTestImageStorage::$body = $faviconPng;
+$fakeImagePlugin = new DocumentManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/document-management', new DocumentTestImageStorage())
+);
+$issueImageResponse = $fakeImagePlugin->dispatch('document.image.view', [
+    'type' => 'issue',
+    'issue_id' => (string) $issueId,
+    'image_id' => (string) $signedIssueImageId,
+]);
+documentTestCheck(
+    $issueImageResponse->type === 'inline'
+        && ($issueImageResponse->data['content_type'] ?? '') === 'image/png'
+        && ($issueImageResponse->data['body'] ?? '') === $faviconPng
+        && str_contains((string) ($issueImageResponse->data['filename'] ?? ''), '问题图片-'),
+    'Issue images must be streamed inline with a sequential file name.'
+);
+$rfiImageResponse = $fakeImagePlugin->dispatch('document.image.view', [
+    'type' => 'rfi',
+    'rfi_id' => (string) $rfiId,
+    'image_id' => (string) $signedRfiImageId,
+]);
+documentTestCheck(
+    $rfiImageResponse->type === 'inline'
+        && str_contains((string) ($rfiImageResponse->data['filename'] ?? ''), 'RFI图片-'),
+    'RFI images must be streamed inline with a sequential file name.'
+);
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id = 1');
+documentTestExpectStatus(
+    static fn () => $fakeImagePlugin->dispatch('document.image.view', [
+        'type' => 'issue',
+        'issue_id' => (string) $issueId,
+        'image_id' => (string) $signedIssueImageId,
+    ]),
+    403,
+    'Document image delivery must enforce the issue view permission.'
+);
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 1)');
+documentTestExpectStatus(
+    static fn () => $fakeImagePlugin->dispatch('document.image.view', [
+        'type' => 'issue',
+        'issue_id' => (string) $issueId,
+        'image_id' => '999999',
+    ]),
+    404,
+    'Unknown document image ids must be rejected.'
+);
+$_SESSION['active_project_id'] = 2;
+documentTestExpectStatus(
+    static fn () => $fakeImagePlugin->dispatch('document.image.view', [
+        'type' => 'issue',
+        'issue_id' => (string) $issueId,
+        'image_id' => (string) $signedIssueImageId,
+    ]),
+    404,
+    'Document images must not cross project boundaries.'
+);
+$_SESSION['active_project_id'] = 1;
+$previousDocViewAdapter = getenv('APP_OBJECT_STORAGE_ADAPTER');
+putenv('APP_OBJECT_STORAGE_ADAPTER=DocumentTestImageStorage');
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_GET = [
+    'page' => 'document-image',
+    'type' => 'issue',
+    'issue_id' => (string) $issueId,
+    'image_id' => (string) $signedIssueImageId,
+];
+http_response_code(200);
+ob_start();
+(new Application($db))->run();
+$inlineDocumentBody = (string) ob_get_clean();
+documentTestCheck(
+    http_response_code() === 200 && $inlineDocumentBody === $faviconPng,
+    'The application must stream document images inline through its image route.'
+);
+if ($previousDocViewAdapter === false) {
+    putenv('APP_OBJECT_STORAGE_ADAPTER');
+} else {
+    putenv('APP_OBJECT_STORAGE_ADAPTER=' . $previousDocViewAdapter);
+}
+$_GET = [];
 documentTestCheck(
     !str_contains($renderedIssuesWithImages, 'r2-secret-access-key-example')
         && !str_contains($renderedRfisWithImages, 'r2-secret-access-key-example'),

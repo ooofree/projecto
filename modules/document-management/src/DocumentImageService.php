@@ -123,6 +123,33 @@ final class DocumentImageService
         }
     }
 
+    /**
+     * Loads one image of an issue or RFI scoped to the current project.
+     *
+     * @return array<string, mixed>
+     */
+    public function requireImage(string $type, int $projectId, int $ownerId, int $imageId): array
+    {
+        [$table, $ownerColumn] = $type === 'issue'
+            ? ['document_issue_images', 'issue_id']
+            : ['document_rfi_images', 'rfi_id'];
+        $statement = $this->db->prepare(
+            'SELECT image_id, object_key, original_name, content_type FROM ' . $table . '
+             WHERE image_id = :image_id AND project_id = :project_id AND ' . $ownerColumn . ' = :owner_id'
+        );
+        $statement->execute([
+            'image_id' => $imageId,
+            'project_id' => $projectId,
+            'owner_id' => $ownerId,
+        ]);
+        $image = $statement->fetch();
+        if ($image === false) {
+            throw new HttpException('图片记录不存在。', 404);
+        }
+
+        return $image;
+    }
+
     public function requireRfi(int $projectId, int $rfiId): void
     {
         $check = $this->db->prepare(

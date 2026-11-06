@@ -41,7 +41,7 @@ require __DIR__ . '/_nav.php';
     <div class="panel-heading">
         <div>
             <h2>样品列表</h2>
-            <p class="muted">列出当前项目未归档的样品；点击“编辑”在弹窗中维护资料、送样和审批状态。</p>
+            <p class="muted">列出当前项目未删除的样品；点击“编辑”在弹窗中维护资料、送样和审批状态。</p>
         </div>
         <span class="muted"><?= count($samples) ?> 条<?= count($samples) >= 200 ? '（最多显示最近 200 条；导出包含全部）' : '' ?></span>
     </div>
@@ -54,7 +54,7 @@ require __DIR__ . '/_nav.php';
     </div>
 
     <?php if ($samples === []): ?>
-        <p class="report-empty">当前项目尚无未归档样品。<?= $canCreateSample ? '点击右上角“新增样品”开始登记。' : '' ?></p>
+        <p class="report-empty">当前项目尚无样品。<?= $canCreateSample ? '点击右上角“新增样品”开始登记。' : '' ?></p>
     <?php else: ?>
         <div class="table-wrap">
             <table class="report-table" id="samples-table">
@@ -62,7 +62,7 @@ require __DIR__ . '/_nav.php';
                 <tr>
                     <th scope="col">材料</th>
                     <th scope="col">供应商</th>
-                    <th scope="col">项目位置</th>
+                    <th scope="col">使用位置</th>
                     <th scope="col">送样数量</th>
                     <th scope="col">颜色</th>
                     <th scope="col">资料状态</th>
@@ -118,12 +118,7 @@ require __DIR__ . '/_nav.php';
                                     <button class="button button-secondary" type="button" data-dialog-open="sample-edit-<?= (int) $sample['sample_id'] ?>">编辑</button>
                                 <?php endif; ?>
                                 <?php if ($canArchive): ?>
-                                    <form method="post" action="" data-confirm="归档后样品将从列表移除，记录和图片保留。">
-                                        <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                                        <input type="hidden" name="action" value="material.sample.archive">
-                                        <input type="hidden" name="sample_id" value="<?= (int) $sample['sample_id'] ?>">
-                                        <button class="button button-quiet" type="submit">归档</button>
-                                    </form>
+                                    <button class="button button-quiet" type="button" data-dialog-open="sample-delete-<?= (int) $sample['sample_id'] ?>">删除</button>
                                 <?php endif; ?>
                             </div>
                         </td>
@@ -177,7 +172,7 @@ require __DIR__ . '/_nav.php';
                     </select>
                 </label>
             <?php endif; ?>
-            <label>项目位置
+            <label>使用位置
                 <select name="location" required>
                     <option value="">请选择当前项目位置</option>
                     <?php foreach ($locationOptions as $location): ?>
@@ -256,7 +251,7 @@ require __DIR__ . '/_nav.php';
                         </select>
                     </label>
                 <?php endif; ?>
-                <label>项目位置
+                <label>使用位置
                     <select name="location" required>
                         <?php
                         $currentLocationValue = $sample['location_type'] . ':' . $sample['location_id'];
@@ -328,6 +323,31 @@ require __DIR__ . '/_nav.php';
                     <p class="muted">R2 图片存储未配置，暂不可上传。</p>
                 <?php endif; ?>
             </div>
+        </dialog>
+    <?php endforeach; ?>
+<?php endif; ?>
+
+<?php if ($canArchive): ?>
+    <?php foreach ($samples as $sample): ?>
+        <dialog class="edit-dialog" id="sample-delete-<?= (int) $sample['sample_id'] ?>" aria-labelledby="sample-delete-title-<?= (int) $sample['sample_id'] ?>">
+            <div class="dialog-heading">
+                <div>
+                    <p class="eyebrow">材料样品</p>
+                    <h2 id="sample-delete-title-<?= (int) $sample['sample_id'] ?>">删除样品</h2>
+                </div>
+                <button class="button button-quiet" type="button" data-dialog-close aria-label="关闭">关闭</button>
+            </div>
+            <p>确定删除样品「<?= $escape($sample['material_name']) ?>」（供应商：<?= $escape($sample['supplier_name']) ?>）？</p>
+            <p class="muted">删除为软删除：样品会从列表移除，跟踪记录与已上传图片保留在数据库中。</p>
+            <form method="post" action="" data-confirm="删除后样品将从列表移除，记录和图片保留。确定删除？">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                <input type="hidden" name="action" value="material.sample.archive">
+                <input type="hidden" name="sample_id" value="<?= (int) $sample['sample_id'] ?>">
+                <div class="dialog-actions">
+                    <button class="button button-secondary" type="button" data-dialog-close>取消</button>
+                    <button class="button button-danger" type="submit">确认删除</button>
+                </div>
+            </form>
         </dialog>
     <?php endforeach; ?>
 <?php endif; ?>

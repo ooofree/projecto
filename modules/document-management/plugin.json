@@ -13,6 +13,7 @@
         "GET issues": "issues",
         "GET rfis": "rfis",
         "GET document-settings": "settings",
+        "GET document-image": "document.image.view",
         "POST issue.create": "issue.create",
         "POST issue.update": "issue.update",
         "POST issue.transition": "issue.transition",

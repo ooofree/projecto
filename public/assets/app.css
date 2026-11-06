@@ -508,3 +508,8 @@ body.theme-dark .auth-card { background: var(--surface); border-color: var(--bor
 .thumb-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .thumb { width: 64px; height: 48px; display: block; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-muted); }
 .dialog-images .thumb { width: 44px; height: 33px; }
+
+.button-danger { color: #fff; background: #a8514a; }
+.button-danger:hover { color: #fff; background: #944640; box-shadow: 0 5px 14px rgb(120 60 50 / 18%); transform: translateY(-1px); }
+body.theme-dark .button-danger { color: #f3e7e5; background: #7d4a44; }
+body.theme-dark .button-danger:hover { background: #8c544d; }

@@ -8,6 +8,7 @@ use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
 use ProjectO\Storage\CloudStorageSettings;
+use ProjectO\Storage\ImageUpload;
 use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
 use ProjectO\Support;
@@ -47,6 +48,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'issue.image.delete' => $this->deleteIssueImage($input),
             'rfi.image.upload' => $this->uploadRfiImage($input),
             'rfi.image.delete' => $this->deleteRfiImage($input),
+            'document.image.view' => $this->viewDocumentImage($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
     }
@@ -94,10 +96,8 @@ final class DocumentManagementPlugin implements PluginInterface
             $issue['images'] = $images[(int) $issue['issue_id']] ?? [];
             if ($imageStorageReady) {
                 foreach ($issue['images'] as &$image) {
-                    $image['url'] = $this->imageStorage->signedReadUrl(
-                        (string) $image['object_key'],
-                        (string) $image['content_type']
-                    );
+                    $image['url'] = '?page=document-image&type=issue&issue_id='
+                        . (int) $issue['issue_id'] . '&image_id=' . (int) $image['image_id'];
                 }
                 unset($image);
             }
@@ -136,10 +136,8 @@ final class DocumentManagementPlugin implements PluginInterface
             $rfi['images'] = $images[(int) $rfi['rfi_id']] ?? [];
             if ($imageStorageReady) {
                 foreach ($rfi['images'] as &$image) {
-                    $image['url'] = $this->imageStorage->signedReadUrl(
-                        (string) $image['object_key'],
-                        (string) $image['content_type']
-                    );
+                    $image['url'] = '?page=document-image&type=rfi&rfi_id='
+                        . (int) $rfi['rfi_id'] . '&image_id=' . (int) $image['image_id'];
                 }
                 unset($image);
             }
@@ -544,6 +542,43 @@ final class DocumentManagementPlugin implements PluginInterface
         }
 
         return ['path' => $temporaryPath, 'name' => $originalName];
+    }
+
+    private function viewDocumentImage(array $input): PluginResponse
+    {
+        $this->requireDocumentAccess();
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $type = $input['type'] ?? '';
+        if (!is_string($type) || !in_array($type, ['issue', 'rfi'], true)) {
+            throw new HttpException('图片类型无效。', 422);
+        }
+        $imageId = $this->requiredId($input, 'image_id', '图片');
+        if ($type === 'issue') {
+            $ownerId = $this->requiredId($input, 'issue_id', '问题');
+            $this->images->requireIssue($projectId, $ownerId);
+            $label = '问题图片';
+        } else {
+            $ownerId = $this->requiredId($input, 'rfi_id', 'RFI');
+            $this->images->requireRfi($projectId, $ownerId);
+            $label = 'RFI图片';
+        }
+        $this->requireImageStorage();
+        $image = $this->images->requireImage($type, $projectId, $ownerId, $imageId);
+        $contentType = (string) $image['content_type'];
+        $extension = ImageUpload::EXTENSIONS[$contentType] ?? 'img';
+        try {
+            $body = $this->imageStorage->read((string) $image['object_key']);
+        } catch (Throwable $exception) {
+            error_log('Unable to read document image ' . $imageId . ': ' . get_class($exception));
+            throw new HttpException('图片读取失败，请稍后重试。', 502);
+        }
+
+        return PluginResponse::inline(
+            $label . '-' . $ownerId . '-' . $imageId . '.' . $extension,
+            $contentType,
+            $body
+        );
     }
 
     private function requireEdit(): void

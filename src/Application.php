@@ -142,6 +142,11 @@ final class Application
             return;
         }
 
+        if ($response->type === 'inline') {
+            $this->sendInline($response->data);
+            return;
+        }
+
         if ($response->type !== 'view' || $response->viewPath === null) {
             throw new HttpException('插件返回了无效的响应。', 500);
         }
@@ -200,6 +205,41 @@ final class Application
         header('Content-Length: ' . strlen($body));
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: private, no-store, max-age=0');
+        echo $body;
+    }
+
+    private function sendInline(array $data): void
+    {
+        $filename = $data['filename'] ?? null;
+        $contentType = $data['content_type'] ?? null;
+        $body = $data['body'] ?? null;
+        if (
+            !is_string($filename)
+            || $filename === ''
+            || mb_strlen($filename, 'UTF-8') > 150
+            || preg_match('/["\\;\x00-\x1F\x7F]/', $filename) === 1
+        ) {
+            throw new HttpException('插件返回了无效的图片文件名。', 500);
+        }
+        if (!is_string($contentType) || preg_match('#^[a-z0-9.+-]+/[a-z0-9.+-]+$#i', $contentType) !== 1) {
+            throw new HttpException('插件返回了无效的图片类型。', 500);
+        }
+        if (!is_string($body)) {
+            throw new HttpException('插件返回了无效的图片内容。', 500);
+        }
+
+        header('Content-Type: ' . $contentType);
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $filename) === 1) {
+            header('Content-Disposition: inline; filename="' . $filename . '"');
+        } else {
+            $fallback = preg_match('/\.[A-Za-z0-9]{1,10}$/', $filename) === 1
+                ? 'image.' . substr($filename, (int) strrpos($filename, '.') + 1)
+                : 'image';
+            header("Content-Disposition: inline; filename=\"{$fallback}\"; filename*=UTF-8''" . rawurlencode($filename));
+        }
+        header('Content-Length: ' . strlen($body));
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, max-age=300');
         echo $body;
     }
 
