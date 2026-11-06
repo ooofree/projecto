@@ -132,11 +132,13 @@ final class ProjectMaterialService
     public function listSamples(int $projectId, bool $includeCommercialDetails = true, ?int $limit = 200): array
     {
         $commercialColumns = $includeCommercialDetails
-            ? 'q.purchase_unit_price, q.quotation_date, q.currency_code'
-            : 'NULL AS purchase_unit_price, NULL AS quotation_date, NULL AS currency_code';
+            ? 'q.purchase_unit_price, q.quotation_date, q.currency_code, qbr.brand_name AS quotation_brand_name'
+            : 'NULL AS purchase_unit_price, NULL AS quotation_date, NULL AS currency_code, NULL AS quotation_brand_name';
         $quotationJoin = $includeCommercialDetails
             ? 'LEFT JOIN Material_Quotations q
-                 ON q.quotation_id = s.quotation_id AND q.project_id = s.project_id'
+                 ON q.quotation_id = s.quotation_id AND q.project_id = s.project_id
+               LEFT JOIN Supplier_Materials sm ON sm.supplier_material_id = q.supplier_material_id
+               LEFT JOIN Brands qbr ON qbr.brand_id = sm.brand_id'
             : '';
         $limitClause = $limit === null ? '' : ' LIMIT ' . max(0, $limit);
         $stmt = $this->db->prepare(

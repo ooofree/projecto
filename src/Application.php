@@ -173,7 +173,12 @@ final class Application
         $filename = $data['filename'] ?? null;
         $contentType = $data['content_type'] ?? null;
         $body = $data['body'] ?? null;
-        if (!is_string($filename) || preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $filename) !== 1) {
+        if (
+            !is_string($filename)
+            || $filename === ''
+            || mb_strlen($filename, 'UTF-8') > 150
+            || preg_match('/["\\;\x00-\x1F\x7F]/', $filename) === 1
+        ) {
             throw new HttpException('插件返回了无效的下载文件名。', 500);
         }
         if (!is_string($contentType) || preg_match('#^[a-z0-9.+-]+/[a-z0-9.+-]+$#i', $contentType) !== 1) {
@@ -184,7 +189,14 @@ final class Application
         }
 
         header('Content-Type: ' . $contentType);
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $filename) === 1) {
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+        } else {
+            $fallback = preg_match('/\.[A-Za-z0-9]{1,10}$/', $filename) === 1
+                ? 'download.' . substr($filename, (int) strrpos($filename, '.') + 1)
+                : 'download';
+            header("Content-Disposition: attachment; filename=\"{$fallback}\"; filename*=UTF-8''" . rawurlencode($filename));
+        }
         header('Content-Length: ' . strlen($body));
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: private, no-store, max-age=0');

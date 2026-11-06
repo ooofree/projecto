@@ -5,6 +5,7 @@ use ProjectO\HttpException;
 use ProjectO\Modules\MaterialManagement\MaterialCatalogService;
 use ProjectO\Modules\MaterialManagement\MaterialManagementPlugin;
 use ProjectO\Modules\MaterialManagement\ProjectMaterialService;
+use ProjectO\Modules\MaterialManagement\XlsxWorkbook;
 use ProjectO\Modules\ProjectFoundation\ProjectSpaceService;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginRegistry;
@@ -711,10 +712,12 @@ $linkedSampleId = $projectMaterials->saveSample(1, 1, [
     'material_id' => (string) $materialId,
     'supplier_id' => (string) $supplierId,
     'quotation_id' => (string) $quoteId,
+    'color' => '暖灰',
     'sample_quantity' => '1',
     'location_type' => 'building',
     'location_id' => (string) $buildingId,
 ]);
+$db->exec("UPDATE Material_Samples SET sent_status = 'sent', owner_approval_status = 'approved' WHERE sample_id = {$linkedSampleId}");
 
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 $_SERVER = [];
@@ -753,7 +756,7 @@ $sampleExport = $plugin->dispatch('sample.export', []);
 materialTestCheck(
     $sampleExport->type === 'download'
         && ($sampleExport->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        && preg_match('/^sample_data_\d{8}_\d{6}\.xlsx$/', (string) ($sampleExport->data['filename'] ?? '')) === 1,
+        && preg_match('/^材料样品信息表_\d{8}_\d{6}\.xlsx$/u', (string) ($sampleExport->data['filename'] ?? '')) === 1,
     'Sample export should produce an .xlsx download response.'
 );
 $registryExport = $registry->dispatch('POST', 'material.sample.export', []);
@@ -763,12 +766,26 @@ materialTestCheck(
 );
 $sampleSheetXml = materialTestXlsxSheet($sampleExport);
 materialTestCheck(
-    str_contains($sampleSheetXml, '地砖')
+    str_contains($sampleSheetXml, 'Project One材料样品信息追踪表')
+        && str_contains($sampleSheetXml, '导出时间: ')
+        && str_contains($sampleSheetXml, '记录总数: ' . count($samplePage->data['samples']))
+        && str_contains($sampleSheetXml, '内容统计: 总样品数量 2')
+        && str_contains($sampleSheetXml, '已送样品数量 1')
+        && str_contains($sampleSheetXml, '已审批样品数量 1')
+        && str_contains($sampleSheetXml, '材料代号')
+        && str_contains($sampleSheetXml, '适用范围')
+        && str_contains($sampleSheetXml, '样品图片')
+        && str_contains($sampleSheetXml, '品牌')
+        && str_contains($sampleSheetXml, '示例品牌')
+        && str_contains($sampleSheetXml, 'A1:N1')
+        && str_contains($sampleSheetXml, '地砖')
         && str_contains($sampleSheetXml, '供应商甲')
         && str_contains($sampleSheetXml, '未送')
-        && str_contains($sampleSheetXml, '报价单价')
-        && substr_count($sampleSheetXml, '<row r=') === count($samplePage->data['samples']) + 1,
-    'Exported sample rows should mirror the current project samples with localized labels.'
+        && str_contains($sampleSheetXml, '█ 暖灰')
+        && !str_contains($sampleSheetXml, '报价单价')
+        && !str_contains($sampleSheetXml, 'EEU')
+        && substr_count($sampleSheetXml, '<row r=') === count($samplePage->data['samples']) + 6,
+    'Exported sample rows should mirror the legacy 样品信息追踪表 layout.'
 );
 
 $previousMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -862,8 +879,53 @@ $privacySheetXml = materialTestXlsxSheet($plugin->dispatch('sample.export', []))
 materialTestCheck(
     !str_contains($privacySheetXml, '报价单价')
         && !str_contains($privacySheetXml, '报价日期')
-        && !str_contains($privacySheetXml, 'CNY'),
+        && !str_contains($privacySheetXml, '品牌')
+        && !str_contains($privacySheetXml, 'CNY')
+        && !str_contains($privacySheetXml, 'EEU'),
     'Sample export must omit commercial quotation columns without quotation permissions.'
+);
+$fakePngBytes = base64_decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    true
+);
+$drawingWorkbook = XlsxWorkbook::build('样品信息追踪表', ['材料代号', '样品图片'], [['M-001', '']], [
+    'title' => '📦 EEU材料样品信息追踪表（测试项目）',
+    'meta' => ['导出时间: 2026-01-01 00:00:00', '记录总数: 1'],
+    'images' => [[
+        'row' => 6,
+        'column' => 1,
+        'bytes' => (string) $fakePngBytes,
+        'extension' => 'png',
+        'hyperlink' => 'https://example.com/sample.png?a=1&b=2',
+    ]],
+    'fixedWidths' => [1 => 15.0],
+]);
+$drawingPath = (string) tempnam(sys_get_temp_dir(), 'material-drawing-');
+file_put_contents($drawingPath, (string) $drawingWorkbook);
+$drawingZip = new ZipArchive();
+$drawingOpened = $drawingZip->open($drawingPath) === true;
+materialTestCheck(
+    $drawingOpened
+        && $drawingZip->locateName('xl/drawings/drawing1.xml') !== false
+        && $drawingZip->locateName('xl/media/image1.png') !== false
+        && $drawingZip->locateName('xl/worksheets/_rels/sheet1.xml.rels') !== false,
+    'Sample export should embed sample images as drawing parts.'
+);
+$drawingXml = (string) $drawingZip->getFromName('xl/drawings/drawing1.xml');
+$drawingRels = (string) $drawingZip->getFromName('xl/drawings/_rels/drawing1.xml.rels');
+$drawingContentTypes = (string) $drawingZip->getFromName('[Content_Types].xml');
+$drawingSheetXml = (string) $drawingZip->getFromName('xl/worksheets/sheet1.xml');
+$drawingZip->close();
+@unlink($drawingPath);
+materialTestCheck(
+    str_contains($drawingXml, '<xdr:twoCellAnchor editAs="oneCell">')
+        && str_contains($drawingXml, 'r:embed="rIdM0"')
+        && str_contains($drawingRels, 'Target="../media/image1.png"')
+        && str_contains($drawingRels, 'Target="https://example.com/sample.png?a=1&amp;b=2"')
+        && str_contains($drawingContentTypes, 'Extension="png" ContentType="image/png"')
+        && str_contains($drawingSheetXml, '<drawing r:id="rId1"/>')
+        && str_contains($drawingSheetXml, '<mergeCell ref="A1:B1"/>'),
+    'Embedded sample images must anchor inside their cell, link to the source, and register their media type.'
 );
 $unquotedPost = $plugin->dispatch('sample.save', [
     'material_id' => (string) $materialId,

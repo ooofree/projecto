@@ -15,6 +15,14 @@ use Throwable;
 
 final class MaterialManagementPlugin implements PluginInterface
 {
+    private const EXPORT_IMAGE_EXTENSIONS = [
+        'image/png' => 'png',
+        'image/jpeg' => 'jpg',
+        'image/gif' => 'gif',
+        'image/bmp' => 'bmp',
+    ];
+    private const EXPORT_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+
     private MaterialCatalogService $catalog;
     private ProjectMaterialService $projectMaterials;
     private TenderListService $tenderList;
@@ -489,44 +497,70 @@ final class MaterialManagementPlugin implements PluginInterface
         $canViewQuotations = Support::hasPermission($this->context->db, 'view_material_quotations');
         $samples = $this->projectMaterials->listSamples($projectId, $canViewQuotations, null);
 
+        // Column labels and layout follow the legacy 样品信息追踪表 export.
         $headers = [
-            '材料编码', '材料名称', '供应商', '项目位置', '送样数量', '单位', '颜色',
-            '资料状态', '送样状态', '送样日期', '业主审批状态', '业主审批日期', '图片数量', '备注',
+            '材料代号', '材料名称', '适用范围', '供应商', '样品图片', '样品数量', '颜色',
+            '文档状态', '寄送状态', '寄送日期', '业主审批状态', '业主审批日期', '备注',
         ];
         if ($canViewQuotations) {
-            $headers[] = '报价单价';
-            $headers[] = '币种';
-            $headers[] = '报价日期';
+            array_splice($headers, 4, 0, ['品牌']);
         }
+        $imageColumn = $canViewQuotations ? 5 : 4;
 
         $rows = [];
-        foreach ($samples as $sample) {
+        $images = [];
+        $totalQuantity = 0;
+        $sentQuantity = 0;
+        $approvedQuantity = 0;
+        // Report layout: title row 1, three metadata lines, blank spacer, header row 6, data from row 7.
+        $firstDataRow = 7;
+        foreach ($samples as $index => $sample) {
+            $rowNumber = $firstDataRow + count($rows);
+            $quantity = (int) $sample['sample_quantity'];
+            $totalQuantity += $quantity;
+            if ($sample['sent_status'] === 'sent') {
+                $sentQuantity += $quantity;
+            }
+            if ($sample['owner_approval_status'] === 'approved') {
+                $approvedQuantity += $quantity;
+            }
             $row = [
-                (string) ($sample['material_code'] ?? ''),
-                (string) $sample['material_name'],
-                (string) $sample['supplier_name'],
-                (string) ($sample['location_name'] ?? ''),
-                (int) $sample['sample_quantity'],
-                (string) ($sample['unit'] ?? ''),
-                (string) ($sample['color'] ?? ''),
-                SampleStatusLabels::document((string) $sample['document_status']),
-                SampleStatusLabels::sent((string) $sample['sent_status']),
-                (string) ($sample['sent_date'] ?? ''),
-                SampleStatusLabels::approval((string) $sample['owner_approval_status']),
-                (string) ($sample['owner_approval_date'] ?? ''),
-                count($sample['images']),
-                (string) ($sample['remarks'] ?? ''),
+                self::exportText($sample['material_code'] ?? null),
+                self::exportText($sample['material_name'] ?? null),
+                isset($sample['location_name']) && $sample['location_name'] !== ''
+                    ? (string) $sample['location_name']
+                    : '未指定',
+                self::exportText($sample['supplier_name'] ?? null),
             ];
             if ($canViewQuotations) {
-                $hasQuotation = $sample['quotation_id'] !== null;
-                $row[] = $hasQuotation ? (string) $sample['purchase_unit_price'] : '';
-                $row[] = $hasQuotation ? (string) $sample['currency_code'] : '';
-                $row[] = $hasQuotation ? (string) $sample['quotation_date'] : '';
+                $row[] = self::exportText($sample['quotation_brand_name'] ?? null);
             }
+            $row[] = $this->exportImageCell($sample, $images, $rowNumber, $imageColumn);
+            $row[] = (int) $sample['sample_quantity'];
+            $row[] = isset($sample['color']) && $sample['color'] !== null && $sample['color'] !== ''
+                ? '█ ' . $sample['color']
+                : '-';
+            $row[] = SampleStatusLabels::document((string) $sample['document_status']);
+            $row[] = SampleStatusLabels::sent((string) $sample['sent_status']);
+            $row[] = self::exportText($sample['sent_date'] ?? null);
+            $row[] = SampleStatusLabels::approval((string) $sample['owner_approval_status']);
+            $row[] = self::exportText($sample['owner_approval_date'] ?? null);
+            $row[] = self::exportText($sample['remarks'] ?? null);
             $rows[] = $row;
         }
 
-        $body = XlsxWorkbook::build('样品跟踪', $headers, $rows);
+        $body = XlsxWorkbook::build('样品信息追踪表', $headers, $rows, [
+            'title' => '📦 ' . $project['project_name'] . '材料样品信息追踪表',
+            'meta' => [
+                '导出时间: ' . date('Y-m-d H:i:s'),
+                '记录总数: ' . count($rows),
+                '内容统计: 总样品数量 ' . $totalQuantity
+                    . '，已送样品数量 ' . $sentQuantity
+                    . '，已审批样品数量 ' . $approvedQuantity,
+            ],
+            'images' => $images,
+            'fixedWidths' => [$imageColumn => 15.0],
+        ]);
         Support::audit(
             $this->context->db,
             'material.sample.export',
@@ -534,10 +568,128 @@ final class MaterialManagementPlugin implements PluginInterface
         );
 
         return PluginResponse::download(
-            'sample_data_' . date('Ymd_His') . '.xlsx',
+            '材料样品信息表_' . date('Ymd_His') . '.xlsx',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             $body
         );
+    }
+
+    private static function exportText(mixed $value): string
+    {
+        $text = $value === null ? '' : trim((string) $value);
+
+        return $text === '' ? '-' : $text;
+    }
+
+    /**
+     * Embeds the first readable sample image into its cell, like the legacy
+     * export; the cell stays "-" when storage is unconfigured or an image
+     * cannot be fetched.
+     *
+     * @param array<string, mixed> $sample
+     * @param list<array{row: int, column: int, bytes: string, extension: string, hyperlink?: string}> $images
+     */
+    private function exportImageCell(array $sample, array &$images, int $rowNumber, int $imageColumn): string
+    {
+        if ($this->imageStorage === null || !$this->imageStorage->isConfigured()) {
+            return '-';
+        }
+        foreach ($sample['images'] ?? [] as $image) {
+            if (!is_array($image) || !isset($image['url']) || !is_string($image['url']) || $image['url'] === '') {
+                continue;
+            }
+            $payload = $this->fetchExportImage($image['url'], (string) ($image['content_type'] ?? ''));
+            if ($payload === null) {
+                continue;
+            }
+            $images[] = [
+                'row' => $rowNumber,
+                'column' => $imageColumn,
+                'bytes' => $payload['bytes'],
+                'extension' => $payload['extension'],
+                'hyperlink' => $image['url'],
+            ];
+
+            return ''; // the drawing overlays the cell
+        }
+
+        return '-';
+    }
+
+    /**
+     * @return array{bytes: string, extension: string}|null
+     */
+    private function fetchExportImage(string $url, string $contentType): ?array
+    {
+        $bytes = $this->downloadExportImage($url);
+        if ($bytes === null) {
+            return null;
+        }
+        if (isset(self::EXPORT_IMAGE_EXTENSIONS[$contentType])) {
+            return ['bytes' => $bytes, 'extension' => self::EXPORT_IMAGE_EXTENSIONS[$contentType]];
+        }
+        // Excel cannot display WebP inside a workbook; convert it to PNG via GD.
+        if ($contentType === 'image/webp' && function_exists('imagecreatefromwebp')) {
+            $image = @imagecreatefromwebp('data://image/webp;base64,' . base64_encode($bytes));
+            if ($image === false) {
+                return null;
+            }
+            $temporaryPath = tempnam(sys_get_temp_dir(), 'sample-webp-');
+            if ($temporaryPath === false) {
+                imagedestroy($image);
+                return null;
+            }
+            $converted = imagepng($image, $temporaryPath);
+            imagedestroy($image);
+            if (!$converted) {
+                @unlink($temporaryPath);
+                return null;
+            }
+            $convertedBytes = file_get_contents($temporaryPath);
+            @unlink($temporaryPath);
+            if (is_string($convertedBytes) && $convertedBytes !== '') {
+                return ['bytes' => $convertedBytes, 'extension' => 'png'];
+            }
+        }
+
+        return null;
+    }
+
+    private function downloadExportImage(string $url): ?string
+    {
+        try {
+            if (function_exists('curl_init')) {
+                $handle = curl_init($url);
+                if ($handle === false) {
+                    return null;
+                }
+                curl_setopt_array($handle, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_CONNECTTIMEOUT => 5,
+                    CURLOPT_TIMEOUT => 20,
+                ]);
+                $bytes = curl_exec($handle);
+                $status = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
+                curl_close($handle);
+                if (!is_string($bytes) || $status >= 400) {
+                    return null;
+                }
+            } else {
+                $context = stream_context_create([
+                    'http' => ['timeout' => 20],
+                    'https' => ['timeout' => 20],
+                ]);
+                $bytes = @file_get_contents($url, false, $context);
+                if (!is_string($bytes)) {
+                    return null;
+                }
+            }
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $bytes === '' || strlen($bytes) > self::EXPORT_IMAGE_MAX_BYTES ? null : $bytes;
     }
 
     private function saveEstimate(array $input): PluginResponse
