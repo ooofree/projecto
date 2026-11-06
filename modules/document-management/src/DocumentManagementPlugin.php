@@ -7,6 +7,8 @@ use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Storage\CloudStorageSettings;
+use ProjectO\Storage\R2ObjectStorage;
 use ProjectO\Support;
 
 final class DocumentManagementPlugin implements PluginInterface
@@ -24,6 +26,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'documents' => $this->documentsIndex(),
             'issues' => $this->issuesIndex(),
             'rfis' => $this->rfisIndex(),
+            'settings' => $this->settingsIndex(),
             'issue.create' => $this->createIssue($input),
             'issue.update' => $this->updateIssue($input),
             'issue.transition' => $this->transitionIssue($input),
@@ -34,6 +37,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'rfi.transition' => $this->transitionRfi($input),
             'rfi.followup.create' => $this->createRfiFollowUp($input),
             'rfi.followup.complete' => $this->completeRfiFollowUp($input),
+            'settings.save' => $this->saveSettings($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
     }
@@ -48,6 +52,7 @@ final class DocumentManagementPlugin implements PluginInterface
         return $this->context->view('documents.php', [
             'title' => '文档管理',
             'currentProject' => $project,
+            'canManageSettings' => $this->canManageSettings(),
             'issueCount' => count($issues),
             'rfiCount' => count($rfis),
             'openIssueCount' => count(array_filter(
@@ -78,6 +83,7 @@ final class DocumentManagementPlugin implements PluginInterface
         return $this->context->view('issues.php', [
             'title' => '问题管理',
             'currentProject' => $project,
+            'canManageSettings' => $this->canManageSettings(),
             'issues' => $issues,
             'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'canEdit' => $this->canEdit(),
@@ -103,6 +109,7 @@ final class DocumentManagementPlugin implements PluginInterface
         return $this->context->view('rfis.php', [
             'title' => 'RFI 管理',
             'currentProject' => $project,
+            'canManageSettings' => $this->canManageSettings(),
             'rfis' => $rfis,
             'issues' => $this->documents->listIssues($projectId),
             'users' => $this->documents->activeUsers(),
@@ -319,6 +326,57 @@ final class DocumentManagementPlugin implements PluginInterface
 
         Support::flash('RFI 后续事项已完成。');
         return PluginResponse::redirect('?page=rfis');
+    }
+
+    private function settingsIndex(): PluginResponse
+    {
+        $this->requireSettingsAccess();
+        $storage = new R2ObjectStorage($this->context->db);
+        $config = (new CloudStorageSettings($this->context->db))->read();
+
+        return $this->context->view('settings.php', [
+            'title' => '系统设置',
+            'canManageSettings' => true,
+            'storageStatus' => $storage->configurationStatus(),
+            'storageConfig' => [
+                'exists' => $config['exists'],
+                'enabled' => $config['enabled'],
+                'account_id' => $config['account_id'],
+                'bucket' => $config['bucket'],
+                'access_key_id' => $config['access_key_id'],
+                'secret_configured' => $config['secret_access_key'] !== '',
+            ],
+        ]);
+    }
+
+    private function saveSettings(array $input): PluginResponse
+    {
+        $this->requireSettingsAccess();
+        $enabled = array_key_exists('enabled', $input)
+            && is_string($input['enabled'])
+            && $input['enabled'] === '1';
+        (new CloudStorageSettings($this->context->db))->save($input);
+        Support::audit(
+            $this->context->db,
+            'document.settings.storage.save',
+            'Updated image object storage configuration (enabled=' . ($enabled ? '1' : '0') . ').'
+        );
+        Support::flash('图片存储配置已保存。');
+
+        return PluginResponse::redirect('?page=document-settings');
+    }
+
+    private function canManageSettings(): bool
+    {
+        return Support::hasPermission($this->context->db, 'manage_document_settings')
+            || Support::hasPermission($this->context->db, 'manage_platform');
+    }
+
+    private function requireSettingsAccess(): void
+    {
+        if (!$this->canManageSettings()) {
+            throw new HttpException('您没有权限执行此操作。', 403);
+        }
     }
 
     private function requireEdit(): void

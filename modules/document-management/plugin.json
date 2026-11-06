@@ -12,6 +12,7 @@
         "GET documents": "documents",
         "GET issues": "issues",
         "GET rfis": "rfis",
+        "GET document-settings": "settings",
         "POST issue.create": "issue.create",
         "POST issue.update": "issue.update",
         "POST issue.transition": "issue.transition",
@@ -21,7 +22,8 @@
         "POST rfi.update": "rfi.update",
         "POST rfi.transition": "rfi.transition",
         "POST rfi.followup.create": "rfi.followup.create",
-        "POST rfi.followup.complete": "rfi.followup.complete"
+        "POST rfi.followup.complete": "rfi.followup.complete",
+        "POST document.settings.save": "settings.save"
     },
     "migrations": [
         "database/migrations"
@@ -46,6 +48,11 @@
             "name": "manage_issues",
             "display_name": "管理问题与 RFI",
             "description": "允许重新打开已关闭的问题或 RFI"
+        },
+        {
+            "name": "manage_document_settings",
+            "display_name": "配置文件模块系统设置",
+            "description": "维护图片对象存储等文件模块系统设置"
         }
     ]
 }

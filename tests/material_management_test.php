@@ -6,6 +6,7 @@ use ProjectO\Modules\MaterialManagement\MaterialCatalogService;
 use ProjectO\Modules\MaterialManagement\MaterialManagementPlugin;
 use ProjectO\Modules\MaterialManagement\ProjectMaterialService;
 use ProjectO\Modules\MaterialManagement\XlsxWorkbook;
+use ProjectO\Storage\CloudStorageSettings;
 use ProjectO\Modules\ProjectFoundation\ProjectSpaceService;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginRegistry;
@@ -828,6 +829,7 @@ $_SERVER['REQUEST_METHOD'] = 'GET';
 foreach ([
     'materials' => '材料目录',
     'quotations' => '材料报价',
+    'samples' => '样品跟踪',
     'tender-list' => '招标清单',
 ] as $page => $heading) {
     $_GET = ['page' => $page];
@@ -1000,7 +1002,7 @@ materialTestCheck(
 $previousStorageAdapter = getenv('APP_OBJECT_STORAGE_ADAPTER');
 putenv('APP_OBJECT_STORAGE_ADAPTER');
 materialTestCheck(StorageFactory::fromEnvironment() === null, 'Object storage must remain optional when no adapter is configured.');
-putenv('APP_OBJECT_STORAGE_ADAPTER=ProjectO\\Modules\\MaterialManagement\\R2SampleImageStorage');
+putenv('APP_OBJECT_STORAGE_ADAPTER=ProjectO\\Storage\\R2ObjectStorage');
 $storageAdapter = StorageFactory::fromEnvironment();
 materialTestCheck(
     $storageAdapter instanceof ObjectStorageInterface,
@@ -1011,6 +1013,50 @@ if ($previousStorageAdapter === false) {
 } else {
     putenv('APP_OBJECT_STORAGE_ADAPTER=' . $previousStorageAdapter);
 }
+
+// Shared image storage is configured in the document module settings; sample
+// tracking only consumes it and links there instead of hosting its own form.
+$unconfiguredPlugin = new MaterialManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/material-management')
+);
+$unconfiguredHtml = renderMaterialTestView($unconfiguredPlugin->dispatch('samples', []));
+materialTestCheck(
+    str_contains($unconfiguredHtml, '?page=document-settings')
+        && !str_contains($unconfiguredHtml, 'sample-storage-config'),
+    'Sample tracking must link to the document settings instead of hosting storage configuration.'
+);
+putenv('APP_R2_ACCOUNT_ID');
+putenv('APP_R2_BUCKET');
+putenv('APP_R2_ACCESS_KEY_ID');
+putenv('APP_R2_SECRET_ACCESS_KEY');
+$storageSettings = new CloudStorageSettings($db);
+$storageSettings->save([
+    'enabled' => '1',
+    'account_id' => 'd8f4d2fa4b3c4d5e8f9012345678abcd',
+    'bucket' => 'project-o-samples',
+    'access_key_id' => 'r2-access-key-id-example',
+    'secret_access_key' => 'r2-secret-access-key-example',
+]);
+$projectMaterials->addImage(
+    1,
+    $linkedSampleId,
+    1,
+    'samples/1/' . $linkedSampleId . '/storage-test.png',
+    'storage-test.png',
+    'image/png',
+    456
+);
+$storagePlugin = new MaterialManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/material-management')
+);
+$storageHtml = renderMaterialTestView($storagePlugin->dispatch('samples', []));
+if (class_exists(\Aws\S3\S3Client::class)) {
+    materialTestCheck(
+        str_contains($storageHtml, 'X-Amz-Signature=') && str_contains($storageHtml, 'r2.cloudflarestorage.com'),
+        'Sample images should render five-minute signed URLs from the shared storage configuration.'
+    );
+}
+$db->exec("DELETE FROM System_Settings WHERE setting_key LIKE 'cloud_storage.%'");
 
 unset($_SESSION['active_project_id']);
 materialTestExpectStatus(

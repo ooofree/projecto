@@ -8,10 +8,8 @@
         "ext-mbstring": "*",
         "ext-pdo": "*",
         "ext-pdo_mysql": "*",
-        "ext-zip": "*"
-    },
-    "suggest": {
-        "aws/aws-sdk-php": "Required only when enabling Cloudflare R2 sample-image storage"
+        "ext-zip": "*",
+        "aws/aws-sdk-php": "^3.403"
     },
     "scripts": {
         "test": [

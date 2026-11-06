@@ -28,7 +28,7 @@
 
 ### 样品图片存储（可选）
 
-启用 R2 图片存储时，除上述依赖外执行 `composer require aws/aws-sdk-php`，并在 `.env` 中配置 `APP_OBJECT_STORAGE_ADAPTER=ProjectO\Modules\MaterialManagement\R2SampleImageStorage`、`APP_R2_ACCOUNT_ID`、`APP_R2_BUCKET`、`APP_R2_ACCESS_KEY_ID` 和 `APP_R2_SECRET_ACCESS_KEY`。R2 bucket 应保持私有；应用仅生成 5 分钟有效的读取签名 URL。上传限制为 PNG/JPEG/GIF/BMP/WebP、单文件 5 MiB；PHP 部署的 `upload_max_filesize` 和 `post_max_size` 也应允许至少 5 MiB 请求。未配置适配器、凭据或 AWS SDK 时，样品跟踪可继续使用，但图片上传/查看明确不可用。
+AWS SDK（`aws/aws-sdk-php`）已列入 `composer.json` 依赖，由 `composer install` 安装；启用 R2 图片存储时，在文件模块「系统设置」（`?page=document-settings`；平台管理员 `manage_platform`，或获授 `manage_document_settings`）填写 Cloudflare R2 Account ID、私有存储桶名称和访问密钥；配置持久化在数据库 `System_Settings` 中，密钥只写（留空表示保留已保存密钥），变更写入审计。也可改用部署级环境变量 `APP_R2_ACCOUNT_ID`、`APP_R2_BUCKET`、`APP_R2_ACCESS_KEY_ID`、`APP_R2_SECRET_ACCESS_KEY`；已保存的数据库配置优先于环境变量，`APP_OBJECT_STORAGE_ADAPTER` 仍可指定其他对象存储实现。R2 bucket 应保持私有；应用仅生成 5 分钟有效的读取签名 URL。上传限制为 PNG/JPEG/GIF/BMP/WebP、单文件 5 MiB；PHP 部署的 `upload_max_filesize` 和 `post_max_size` 也应允许至少 5 MiB 请求。未配置适配器、凭据或 AWS SDK 时，样品跟踪可继续使用，但图片上传/查看明确不可用。
 
 测试：运行 `composer test`，覆盖认证、项目插件/服务、材料/空间/样品服务、文档问题/RFI 服务、后台设置/权限/插件启停和页面授权。迁移与服务行为测试使用 SQLite 等价结构；部署前应在专用测试 MySQL 验证迁移，不得直接对生产库执行未审阅迁移。
 

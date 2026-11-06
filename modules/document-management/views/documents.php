@@ -14,6 +14,9 @@ ob_start();
     <a class="button button-primary" href="?page=documents" aria-current="page">文档管理首页</a>
     <a class="button button-secondary" href="?page=issues">问题管理</a>
     <a class="button button-secondary" href="?page=rfis">RFI 管理</a>
+    <?php if (!empty($canManageSettings)): ?>
+        <a class="button button-secondary" href="?page=document-settings">系统设置</a>
+    <?php endif; ?>
 </nav>
 
 <section class="record-grid">

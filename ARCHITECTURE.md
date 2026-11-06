@@ -128,7 +128,7 @@ project-o/
 └── composer.json
 ```
 
-这是目标建议而非要求一次性创建所有目录。命名空间通过 Composer PSR-4 管理。插件的静态资源、翻译和视图仅在插件启用/页面需要时加载。用户上传文件应使用核心 `ObjectStorageInterface`，避免 webroot 暴露或将特定云 SDK 变成核心强依赖。当前 R2 适配器由环境变量按类名注入；AWS SDK 是可选依赖，只在部署启用 R2 图片时安装。
+这是目标建议而非要求一次性创建所有目录。命名空间通过 Composer PSR-4 管理。插件的静态资源、翻译和视图仅在插件启用/页面需要时加载。用户上传文件应使用核心 `ObjectStorageInterface`，避免 webroot 暴露或将特定云 SDK 变成核心强依赖。R2 适配器实现位于核心存储层（`src/Storage`），可由 `APP_OBJECT_STORAGE_ADAPTER` 按类名注入；AWS SDK 作为项目依赖随 `composer install` 安装，仅由该适配器使用（`class_exists` 软检测），其余核心代码不依赖特定云 SDK。
 
 ## 5. Web/API 与安全边界
 

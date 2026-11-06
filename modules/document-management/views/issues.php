@@ -28,6 +28,9 @@ ob_start();
     <a class="button button-secondary" href="?page=documents">文档管理首页</a>
     <a class="button button-primary" href="?page=issues" aria-current="page">问题管理</a>
     <a class="button button-secondary" href="?page=rfis">RFI 管理</a>
+    <?php if (!empty($canManageSettings)): ?>
+        <a class="button button-secondary" href="?page=document-settings">系统设置</a>
+    <?php endif; ?>
 </nav>
 
 <?php if ($canCreate): ?>

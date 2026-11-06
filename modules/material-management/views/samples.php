@@ -30,7 +30,11 @@ require __DIR__ . '/_nav.php';
     <?php endif; ?>
 </section>
 <?php if (!$imageStorageReady): ?>
-    <div class="notice notice-info">R2 图片存储尚未配置；样品资料可维护，但图片上传和查看暂不可用。</div>
+    <?php if (is_array($storageStatus ?? null) && ($storageStatus['sdk_available'] ?? false) === false): ?>
+        <div class="notice notice-info">服务器尚未安装 AWS SDK（composer require aws/aws-sdk-php）；R2 图片上传和查看暂不可用，样品资料仍可维护。</div>
+    <?php else: ?>
+        <div class="notice notice-info">R2 图片存储尚未配置；样品资料可维护，但图片上传和查看暂不可用。<?= !empty($canManageSettings) ? '图片存储由文件模块“系统设置”统一配置，<a href="?page=document-settings">前往配置</a>。' : '' ?></div>
+    <?php endif; ?>
 <?php endif; ?>
 
 <section class="panel">

@@ -7,6 +7,8 @@ use ProjectO\Modules\DocumentManagement\DocumentManagementPlugin;
 use ProjectO\Modules\DocumentManagement\DocumentService;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginRegistry;
+use ProjectO\Storage\CloudStorageSettings;
+use ProjectO\Storage\R2ObjectStorage;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -101,11 +103,11 @@ $db->exec(
     "INSERT INTO Permissions (permission_id, permission_name)
      VALUES
         (1, 'view_issues'), (2, 'create_issues'), (3, 'edit_issues'),
-        (4, 'manage_issues'), (5, 'view_projects')"
+        (4, 'manage_issues'), (5, 'view_projects'), (6, 'manage_document_settings')"
 );
 $db->exec(
     'INSERT INTO Role_Permissions (role_id, permission_id)
-     VALUES (1, 1), (1, 2), (1, 3), (1, 4), (1, 5)'
+     VALUES (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6)'
 );
 
 $db->exec(
@@ -739,6 +741,204 @@ documentTestCheck(
 documentTestCheck(
     (int) $db->query('SELECT COUNT(*) FROM document_rfis WHERE rfi_id = ' . $secondRfiId)->fetchColumn() === 1,
     'A second RFI linked to the same primary issue should persist independently.'
+);
+
+// --- Document module system settings: shared image object storage ---
+putenv('APP_R2_ACCOUNT_ID');
+putenv('APP_R2_BUCKET');
+putenv('APP_R2_ACCESS_KEY_ID');
+putenv('APP_R2_SECRET_ACCESS_KEY');
+
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id = 6');
+documentTestExpectStatus(
+    static fn () => $plugin->dispatch('settings', []),
+    403,
+    'System settings must enforce the document settings permission.'
+);
+documentTestExpectStatus(
+    static fn () => $plugin->dispatch('settings.save', ['enabled' => '1']),
+    403,
+    'Saving system settings must enforce the document settings permission.'
+);
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 6)');
+
+$settingsPage = $plugin->dispatch('settings', []);
+documentTestCheck(
+    $settingsPage->type === 'view' && is_file((string) $settingsPage->viewPath),
+    'The system settings page should resolve its plugin view.'
+);
+
+documentTestExpectStatus(
+    static fn () => $plugin->dispatch('settings.save', [
+        'enabled' => '1',
+        'account_id' => 'not-hex',
+        'bucket' => 'project-o-images',
+        'access_key_id' => 'r2-access-key-id-example',
+        'secret_access_key' => 'r2-secret-access-key-example',
+    ]),
+    422,
+    'The R2 account id must be validated as 32 hexadecimal characters.'
+);
+documentTestExpectStatus(
+    static fn () => $plugin->dispatch('settings.save', [
+        'enabled' => '1',
+        'account_id' => 'd8f4d2fa4b3c4d5e8f9012345678abcd',
+        'bucket' => 'Invalid_Bucket!',
+        'access_key_id' => 'r2-access-key-id-example',
+        'secret_access_key' => 'r2-secret-access-key-example',
+    ]),
+    422,
+    'The R2 bucket name must be validated.'
+);
+documentTestExpectStatus(
+    static fn () => $plugin->dispatch('settings.save', [
+        'enabled' => '1',
+        'account_id' => 'd8f4d2fa4b3c4d5e8f9012345678abcd',
+        'bucket' => 'project-o-images',
+        'access_key_id' => '',
+        'secret_access_key' => '',
+    ]),
+    422,
+    'Enabling image storage requires bucket credentials.'
+);
+documentTestExpectStatus(
+    static fn () => $plugin->dispatch('settings.save', [
+        'enabled' => '1',
+        'account_id' => 'd8f4d2fa4b3c4d5e8f9012345678abcd',
+        'bucket' => 'project-o-images',
+        'access_key_id' => 'r2-access-key-id-example',
+    ]),
+    422,
+    'Enabling image storage requires a secret when none is stored yet.'
+);
+$settingsSave = $plugin->dispatch('settings.save', [
+    'enabled' => '1',
+    'account_id' => 'D8F4D2FA4B3C4D5E8F9012345678ABCD',
+    'bucket' => 'project-o-images',
+    'access_key_id' => 'r2-access-key-id-example',
+    'secret_access_key' => 'r2-secret-access-key-example',
+]);
+documentTestCheck(
+    $settingsSave->type === 'redirect',
+    'Saving valid system settings should redirect back to the settings page.'
+);
+$storedCloudStorage = (new CloudStorageSettings($db))->read();
+documentTestCheck(
+    $storedCloudStorage['exists']
+        && $storedCloudStorage['enabled']
+        && $storedCloudStorage['account_id'] === 'D8F4D2FA4B3C4D5E8F9012345678ABCD'
+        && $storedCloudStorage['bucket'] === 'project-o-images'
+        && $storedCloudStorage['access_key_id'] === 'r2-access-key-id-example'
+        && $storedCloudStorage['secret_access_key'] === 'r2-secret-access-key-example',
+    'Valid image storage settings must be persisted in System_Settings.'
+);
+$plugin->dispatch('settings.save', [
+    'enabled' => '1',
+    'account_id' => 'D8F4D2FA4B3C4D5E8F9012345678ABCD',
+    'bucket' => 'project-o-images',
+    'access_key_id' => 'r2-access-key-id-example',
+    'secret_access_key' => '',
+]);
+documentTestCheck(
+    (new CloudStorageSettings($db))->read()['secret_access_key'] === 'r2-secret-access-key-example',
+    'A blank secret submit must keep the previously stored secret.'
+);
+$plugin->dispatch('settings.save', [
+    'enabled' => '0',
+    'account_id' => 'D8F4D2FA4B3C4D5E8F9012345678ABCD',
+    'bucket' => 'project-o-images',
+    'access_key_id' => 'r2-access-key-id-example',
+]);
+documentTestCheck(
+    (new CloudStorageSettings($db))->read()['enabled'] === false,
+    'Clearing the enable checkbox must disable the stored storage configuration.'
+);
+$plugin->dispatch('settings.save', [
+    'enabled' => '1',
+    'account_id' => 'D8F4D2FA4B3C4D5E8F9012345678ABCD',
+    'bucket' => 'project-o-images',
+    'access_key_id' => 'r2-access-key-id-example',
+]);
+
+$settingsAuditCount = 0;
+$settingsAuditLeak = false;
+foreach ($db->query(
+    "SELECT details FROM audit_logs WHERE action = 'document.settings.storage.save'"
+)->fetchAll() as $auditRow) {
+    $settingsAuditCount++;
+    if (str_contains((string) $auditRow['details'], 'r2-secret')) {
+        $settingsAuditLeak = true;
+    }
+}
+documentTestCheck(
+    $settingsAuditCount >= 4 && !$settingsAuditLeak,
+    'System settings changes must be audited without recording the secret.'
+);
+
+$sdkAvailable = class_exists(\Aws\S3\S3Client::class);
+$storageAdapter = new R2ObjectStorage($db);
+$storageStatus = $storageAdapter->configurationStatus();
+documentTestCheck(
+    $storageStatus['source'] === 'database'
+        && $storageStatus['enabled'] === true
+        && $storageStatus['sdk_available'] === $sdkAvailable
+        && $storageStatus['configured'] === $sdkAvailable
+        && $storageAdapter->isConfigured() === $sdkAvailable,
+    'The adapter must prefer database configuration and gate readiness on the optional AWS SDK.'
+);
+if ($sdkAvailable) {
+    $signedUrl = $storageAdapter->signedReadUrl('issues/1/1/test.png', 'image/png');
+    documentTestCheck(
+        str_contains($signedUrl, 'r2.cloudflarestorage.com')
+            && str_contains($signedUrl, 'X-Amz-Signature=')
+            && str_contains($signedUrl, 'X-Amz-Expires=300'),
+        'Configured storage must produce five-minute presigned read URLs.'
+    );
+}
+
+$_GET = ['page' => 'document-settings'];
+ob_start();
+(new Application($db))->run();
+$renderedSettingsPage = ob_get_clean();
+documentTestCheck(
+    str_contains($renderedSettingsPage, '系统设置')
+        && str_contains($renderedSettingsPage, 'value="document.settings.save"')
+        && str_contains($renderedSettingsPage, '图片存储')
+        && str_contains($renderedSettingsPage, 'value="project-o-images"')
+        && !str_contains($renderedSettingsPage, 'r2-secret-access-key-example'),
+    'The document settings route must render the storage configuration without exposing the secret.'
+);
+$_GET = ['page' => 'issues'];
+ob_start();
+(new Application($db))->run();
+$renderedIssuesWithSettings = ob_get_clean();
+documentTestCheck(
+    str_contains($renderedIssuesWithSettings, 'href="?page=document-settings"'),
+    'Authorized document pages must link to the system settings.'
+);
+
+$db->exec("DELETE FROM System_Settings WHERE setting_key LIKE 'cloud_storage.%'");
+putenv('APP_R2_ACCOUNT_ID=d8f4d2fa4b3c4d5e8f9012345678abcd');
+putenv('APP_R2_BUCKET=project-o-images');
+putenv('APP_R2_ACCESS_KEY_ID=r2-access-key-id-example');
+putenv('APP_R2_SECRET_ACCESS_KEY=r2-secret-access-key-example');
+documentTestCheck(
+    (new R2ObjectStorage($db))->configurationStatus()['source'] === 'environment',
+    'Without database configuration the adapter must fall back to environment variables.'
+);
+putenv('APP_R2_ACCOUNT_ID');
+putenv('APP_R2_BUCKET');
+putenv('APP_R2_ACCESS_KEY_ID');
+putenv('APP_R2_SECRET_ACCESS_KEY');
+$unconfiguredAdapter = new R2ObjectStorage($db);
+documentTestCheck(
+    $unconfiguredAdapter->configurationStatus()['source'] === 'none',
+    'With neither database nor environment configuration the adapter must report none.'
+);
+documentTestExpectStatus(
+    static fn () => $unconfiguredAdapter->upload('issues/1/1/test.png', 'php://memory', 'image/png'),
+    503,
+    'Unconfigured storage must refuse uploads with a diagnosable error.'
 );
 
 echo "Document management tests passed.\n";

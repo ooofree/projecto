@@ -21,7 +21,7 @@ final class Application
         $this->plugins = new PluginRegistry(
             $db,
             dirname(__DIR__) . '/modules',
-            StorageFactory::fromEnvironment()
+            StorageFactory::fromEnvironment($this->db)
         );
         $this->platformAdministration = new PlatformAdministrationService($db, $this->plugins);
     }

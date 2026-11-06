@@ -10,6 +10,7 @@ use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
 use ProjectO\Storage\ObjectStorageInterface;
+use ProjectO\Storage\R2ObjectStorage;
 use ProjectO\Support;
 use Throwable;
 
@@ -33,7 +34,10 @@ final class MaterialManagementPlugin implements PluginInterface
         $this->catalog = new MaterialCatalogService($context->db);
         $this->projectMaterials = new ProjectMaterialService($context->db);
         $this->tenderList = new TenderListService($context->db);
-        $this->imageStorage = $context->objectStorage();
+        // Sample images use the shared platform object storage; without an
+        // environment-injected adapter, fall back to the database-configured
+        // R2 adapter managed from the document module's system settings.
+        $this->imageStorage = $context->objectStorage() ?? new R2ObjectStorage($context->db);
     }
 
     public function dispatch(string $handler, array $input): PluginResponse
@@ -166,7 +170,7 @@ final class MaterialManagementPlugin implements PluginInterface
         $projectId = (int) $project['project_id'];
         $canViewQuotations = Support::hasPermission($this->context->db, 'view_material_quotations');
         $samples = $this->projectMaterials->listSamples($projectId, $canViewQuotations);
-        if ($this->imageStorage?->isConfigured()) {
+        if ($this->imageStorage->isConfigured()) {
             foreach ($samples as &$sample) {
                 foreach ($sample['images'] as &$image) {
                     $image['url'] = $this->imageStorage->signedReadUrl(
@@ -179,6 +183,8 @@ final class MaterialManagementPlugin implements PluginInterface
             unset($sample);
         }
 
+        $canManageSettings = Support::hasPermission($this->context->db, 'manage_document_settings')
+            || Support::hasPermission($this->context->db, 'manage_platform');
         return $this->context->view('samples.php', [
             'title' => '材料样品跟踪',
             'currentProject' => $project,
@@ -191,7 +197,11 @@ final class MaterialManagementPlugin implements PluginInterface
             'canEditSampleQuotation' => $canViewQuotations
                 && Support::hasPermission($this->context->db, 'edit_material_quotations'),
             'canArchive' => Support::hasPermission($this->context->db, 'delete_sample'),
-            'imageStorageReady' => $this->imageStorage?->isConfigured() ?? false,
+            'canManageSettings' => $canManageSettings,
+            'storageStatus' => $this->imageStorage instanceof R2ObjectStorage
+                ? $this->imageStorage->configurationStatus()
+                : null,
+            'imageStorageReady' => $this->imageStorage->isConfigured(),
             'nav' => $this->nav(),
         ]);
     }
@@ -424,8 +434,11 @@ final class MaterialManagementPlugin implements PluginInterface
         $projectId = (int) $project['project_id'];
         $sampleId = $this->requiredId($input, 'sample_id');
         $this->projectMaterials->requireActiveSample($projectId, $sampleId);
-        if ($this->imageStorage === null || !$this->imageStorage->isConfigured()) {
-            throw new HttpException('尚未配置 R2 图片存储，请联系部署管理员。', 503);
+        if (!$this->imageStorage->isConfigured()) {
+            throw new HttpException(
+                '尚未配置图片存储：请在文件模块“系统设置”完成设置，或核对部署环境变量与 AWS SDK。',
+                503
+            );
         }
 
         $files = $input['_files'] ?? null;
@@ -591,7 +604,7 @@ final class MaterialManagementPlugin implements PluginInterface
      */
     private function exportImageCell(array $sample, array &$images, int $rowNumber, int $imageColumn): string
     {
-        if ($this->imageStorage === null || !$this->imageStorage->isConfigured()) {
+        if (!$this->imageStorage->isConfigured()) {
             return '-';
         }
         foreach ($sample['images'] ?? [] as $image) {
