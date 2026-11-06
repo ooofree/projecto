@@ -685,7 +685,7 @@ materialTestExpectStatus(
 );
 $db->exec("UPDATE Material_Samples SET owner_approval_status = '已审批通过' WHERE sample_id = {$sampleId}");
 $samples = $projectMaterials->listSamples(1);
-materialTestCheck($samples[0]['location_name'] === 'A 1F 首层', 'Samples must show the selected project floor.');
+materialTestCheck($samples[0]['location_name'] === 'A栋已更新 首层', 'Samples must show the selected project floor by name.');
 materialTestCheck($samples[0]['owner_approval_status'] === 'approved', 'The legacy approved label must be normalized for display.');
 $spaceArchiveResult = $spaceService->deleteOrArchive(1, 'floor', $floorId, 1);
 materialTestCheck($spaceArchiveResult === 'archived', 'A floor used by a sample should be archived.');
@@ -706,7 +706,7 @@ materialTestExpectStatus(
     'Sample writes must reject archived locations.'
 );
 materialTestCheck(
-    $projectMaterials->listSamples(1)[0]['location_name'] === 'A 1F 首层',
+    $projectMaterials->listSamples(1)[0]['location_name'] === 'A栋已更新 首层',
     'Archiving a referenced space must retain sample history and its recorded location.'
 );
 $projectMaterials->addImage(1, $sampleId, 1, 'samples/1/' . $sampleId . '/test.png', 'test.png', 'image/png', 123);
@@ -808,6 +808,11 @@ materialTestCheck(
         && !str_contains($sampleTestHtml, '>归档</button>'),
     'Samples must use the 使用位置 column and a 删除 action with a confirmation dialog.'
 );
+materialTestCheck(
+    str_contains($sampleTestHtml, 'A栋已更新')
+        && !str_contains($sampleTestHtml, 'A 1F'),
+    'Sample locations must show building and floor names instead of their numbers.'
+);
 $sampleExport = $plugin->dispatch('sample.export', []);
 materialTestCheck(
     $sampleExport->type === 'download'
@@ -859,6 +864,7 @@ materialTestCheck(
         && str_contains($sampleSheetXml, '示例品牌')
         && str_contains($sampleSheetXml, 'A1:N1')
         && str_contains($sampleSheetXml, '地砖')
+        && str_contains($sampleSheetXml, 'A栋已更新')
         && str_contains($sampleSheetXml, '供应商甲')
         && str_contains($sampleSheetXml, '未送')
         && str_contains($sampleSheetXml, '█ 暖灰')
@@ -1008,6 +1014,48 @@ materialTestCheck(
         && str_contains($drawingSheetXml, '<mergeCell ref="A1:B1"/>'),
     'Embedded sample images must anchor inside their cell, link to the source, and register their media type.'
 );
+$fakeImageStorage = new class implements ObjectStorageInterface {
+    public function isConfigured(): bool
+    {
+        return true;
+    }
+
+    public function upload(string $objectKey, string $filePath, string $contentType): void
+    {
+    }
+
+    public function signedReadUrl(string $objectKey, string $contentType): string
+    {
+        return 'https://signed.example.test/' . $objectKey;
+    }
+
+    public function read(string $objectKey): string
+    {
+        return '';
+    }
+
+    public function delete(string $objectKey): void
+    {
+    }
+};
+$imageStoragePlugin = new MaterialManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/material-management', $fakeImageStorage)
+);
+$db->exec(
+    "INSERT INTO Material_Sample_Images (sample_id, project_id, object_key, original_name, content_type, file_size, uploaded_by)
+     VALUES ({$linkedSampleId}, 1, 'samples/1/{$linkedSampleId}/photo.png', 'photo.png', 'image/png', 2048, 1)"
+);
+$sampleImagesPage = $imageStoragePlugin->dispatch('samples', []);
+$sampleImagesHtml = renderMaterialTestView($sampleImagesPage);
+materialTestCheck(
+    str_contains($sampleImagesHtml, 'data-dialog-open="sample-images-' . $linkedSampleId . '"')
+        && str_contains($sampleImagesHtml, 'id="sample-images-' . $linkedSampleId . '"')
+        && str_contains($sampleImagesHtml, '样品图片 · 地砖')
+        && str_contains($sampleImagesHtml, '样品信息')
+        && str_contains($sampleImagesHtml, 'page=sample-image'),
+    'Sample thumbnails should open a detail dialog with the image and sample information below it.'
+);
+
 $unquotedPost = $plugin->dispatch('sample.save', [
     'material_id' => (string) $materialId,
     'supplier_id' => (string) $supplierId,

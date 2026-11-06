@@ -97,7 +97,7 @@ final class ProjectMaterialService
         );
         $areas->execute(['project_id' => $projectId]);
         $rooms = $this->db->prepare(
-            'SELECT r.room_id, r.room_number, f.floor_number, b.building_number, b.building_name
+            'SELECT r.room_id, r.room_number, f.floor_number, f.floor_name, b.building_number, b.building_name
              FROM Rooms r
              JOIN Building_Floors f ON f.floor_id = r.floor_id AND f.building_id = r.building_id
              JOIN Buildings b ON b.building_id = r.building_id
@@ -151,13 +151,18 @@ final class ProjectMaterialService
                     sup.supplier_name,
                     lm.location_type, lm.location_id,
                     b.building_number AS location_building_number,
+                    b.building_name AS location_building_name,
                     bf.building_number AS floor_building_number,
+                    bf.building_name AS floor_building_name,
                     f.floor_number AS location_floor_number,
                     f.floor_name AS location_floor_name,
                     ba.building_number AS area_building_number,
+                    ba.building_name AS area_building_name,
                     a.area_name AS location_area_name,
                     br.building_number AS room_building_number,
+                    br.building_name AS room_building_name,
                     rf.floor_number AS room_floor_number,
+                    rf.floor_name AS room_floor_name,
                     r.room_number AS location_room_number
              FROM Material_Samples s
              JOIN Sample_Location_Map lm
@@ -197,18 +202,17 @@ final class ProjectMaterialService
                 (string) $sample['owner_approval_status']
             );
             $sample['location_name'] = match ($sample['location_type']) {
-                'building' => trim((string) $sample['location_building_number']),
-                'floor' => trim(
-                    (string) $sample['floor_building_number'] . ' ' .
-                    (string) $sample['location_floor_number'] . ' ' .
-                    (string) ($sample['location_floor_name'] ?? '')
-                ),
-                'area' => trim((string) $sample['area_building_number'] . ' ' . (string) $sample['location_area_name']),
-                'room' => trim(
-                    (string) $sample['room_building_number'] . ' ' .
-                    (string) $sample['room_floor_number'] . ' ' .
-                    (string) $sample['location_room_number']
-                ),
+                'building' => self::joinLocation([$sample['location_building_name']]),
+                'floor' => self::joinLocation([
+                    $sample['floor_building_name'],
+                    self::floorLabel($sample['location_floor_name'] ?? null, $sample['location_floor_number'] ?? null),
+                ]),
+                'area' => self::joinLocation([$sample['area_building_name'], $sample['location_area_name']]),
+                'room' => self::joinLocation([
+                    $sample['room_building_name'],
+                    self::floorLabel($sample['room_floor_name'] ?? null, $sample['room_floor_number'] ?? null),
+                    $sample['location_room_number'],
+                ]),
                 default => '',
             };
             $images->execute([
@@ -219,6 +223,35 @@ final class ProjectMaterialService
         }
         unset($sample);
         return $samples;
+    }
+
+    /**
+     * Joins the non-empty location parts with a single space.
+     *
+     * @param list<string|null> $parts
+     */
+    private static function joinLocation(array $parts): string
+    {
+        $names = [];
+        foreach ($parts as $part) {
+            $part = trim((string) $part);
+            if ($part !== '') {
+                $names[] = $part;
+            }
+        }
+
+        return implode(' ', $names);
+    }
+
+    /**
+     * Floors are displayed by name; their number is only a fallback when a
+     * floor has no name.
+     */
+    private static function floorLabel(?string $floorName, ?string $floorNumber): string
+    {
+        $name = trim((string) $floorName);
+
+        return $name !== '' ? $name : trim((string) $floorNumber);
     }
 
     public function saveSample(int $projectId, int $userId, array $data): int

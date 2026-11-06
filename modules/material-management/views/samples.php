@@ -7,16 +7,16 @@ $sentTones = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::SENT_TONES
 $approvalTones = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::APPROVAL_TONES;
 $locationOptions = [];
 foreach ($locations['buildings'] as $location) {
-    $locationOptions[] = ['value' => 'building:' . $location['building_id'], 'label' => $location['building_number'] . ' ' . $location['building_name']];
+    $locationOptions[] = ['value' => 'building:' . $location['building_id'], 'label' => $location['building_name']];
 }
 foreach ($locations['floors'] as $location) {
-    $locationOptions[] = ['value' => 'floor:' . $location['floor_id'], 'label' => $location['building_number'] . ' ' . $location['floor_number'] . ' ' . ($location['floor_name'] ?? '')];
+    $locationOptions[] = ['value' => 'floor:' . $location['floor_id'], 'label' => trim($location['building_name'] . ' ' . ($location['floor_name'] ?: $location['floor_number']))];
 }
 foreach ($locations['areas'] as $location) {
-    $locationOptions[] = ['value' => 'area:' . $location['area_id'], 'label' => $location['building_number'] . ' ' . $location['area_name']];
+    $locationOptions[] = ['value' => 'area:' . $location['area_id'], 'label' => trim($location['building_name'] . ' ' . $location['area_name'])];
 }
 foreach ($locations['rooms'] as $location) {
-    $locationOptions[] = ['value' => 'room:' . $location['room_id'], 'label' => $location['building_number'] . ' ' . $location['floor_number'] . ' ' . $location['room_number']];
+    $locationOptions[] = ['value' => 'room:' . $location['room_id'], 'label' => trim($location['building_name'] . ' ' . ($location['floor_name'] ?: $location['floor_number']) . ' ' . $location['room_number'])];
 }
 $canCreateSample = $canCreate && $choices['materials'] !== [] && $choices['suppliers'] !== [] && $locationOptions !== [];
 ob_start();
@@ -104,9 +104,9 @@ require __DIR__ . '/_nav.php';
                                 <div class="thumb-list">
                                     <?php foreach ($sample['images'] as $image): ?>
                                         <?php if (isset($image['url'])): $linkedImages++; ?>
-                                            <a href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer" title="<?= $escape($image['original_name']) ?>">
+                                            <button class="thumb-button" type="button" data-dialog-open="sample-images-<?= (int) $sample['sample_id'] ?>" title="查看样品图片">
                                                 <img class="thumb" src="<?= $escape($image['url']) ?>" alt="<?= $escape($image['original_name']) ?>" loading="lazy">
-                                            </a>
+                                            </button>
                                         <?php endif; ?>
                                     <?php endforeach; ?>
                                 </div>
@@ -325,6 +325,54 @@ require __DIR__ . '/_nav.php';
                 <?php else: ?>
                     <p class="muted">R2 图片存储未配置，暂不可上传。</p>
                 <?php endif; ?>
+            </div>
+        </dialog>
+    <?php endforeach; ?>
+<?php endif; ?>
+
+<?php if ($imageStorageReady): ?>
+    <?php foreach ($samples as $sample): ?>
+        <?php if ($sample['images'] === []) { continue; } ?>
+        <dialog class="edit-dialog wide" id="sample-images-<?= (int) $sample['sample_id'] ?>" aria-labelledby="sample-images-title-<?= (int) $sample['sample_id'] ?>">
+            <div class="dialog-heading">
+                <div>
+                    <p class="eyebrow">材料样品</p>
+                    <h2 id="sample-images-title-<?= (int) $sample['sample_id'] ?>">样品图片 · <?= $escape($sample['material_name']) ?></h2>
+                </div>
+                <button class="button button-quiet" type="button" data-dialog-close aria-label="关闭">关闭</button>
+            </div>
+            <div class="image-gallery">
+                <?php foreach ($sample['images'] as $image): ?>
+                    <?php if (!isset($image['url'])) { continue; } ?>
+                    <figure>
+                        <a href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer" title="在新窗口打开原图">
+                            <img src="<?= $escape($image['url']) ?>" alt="<?= $escape($image['original_name']) ?>" loading="lazy">
+                        </a>
+                        <figcaption>
+                            <?= $escape($image['original_name']) ?>
+                            · <?= number_format((int) $image['file_size'] / 1024, 1) ?> KB
+                            <?php if (!empty($image['created_at'])): ?>· <?= $escape($image['created_at']) ?><?php endif; ?>
+                        </figcaption>
+                    </figure>
+                <?php endforeach; ?>
+            </div>
+            <div class="dialog-section">
+                <h3>样品信息</h3>
+                <dl class="image-meta">
+                    <div><dt>材料</dt><dd><?= $escape($sample['material_name']) ?><?= $sample['material_code'] ? '（' . $escape($sample['material_code']) . '）' : '' ?></dd></div>
+                    <div><dt>供样供应商</dt><dd><?= $escape($sample['supplier_name']) ?></dd></div>
+                    <div><dt>使用位置</dt><dd><?= $escape($sample['location_name'] !== '' ? $sample['location_name'] : '—') ?></dd></div>
+                    <div><dt>送样数量</dt><dd><?= (int) $sample['sample_quantity'] ?></dd></div>
+                    <div><dt>颜色</dt><dd><?= $escape($sample['color'] ?: '—') ?></dd></div>
+                    <div><dt>送样日期</dt><dd><?= $escape($sample['sent_date'] ?: '—') ?></dd></div>
+                    <div><dt>资料状态</dt><dd><span class="status-badge is-<?= $escape($documentTones[$sample['document_status']] ?? 'neutral') ?>"><?= $escape($documentLabels[$sample['document_status']] ?? $sample['document_status']) ?></span></dd></div>
+                    <div><dt>送样状态</dt><dd><span class="status-badge is-<?= $escape($sentTones[$sample['sent_status']] ?? 'neutral') ?>"><?= $escape($sentLabels[$sample['sent_status']] ?? $sample['sent_status']) ?></span></dd></div>
+                    <div><dt>业主审批</dt><dd><span class="status-badge is-<?= $escape($approvalTones[$sample['owner_approval_status']] ?? 'neutral') ?>"><?= $escape($approvalLabels[$sample['owner_approval_status']] ?? $sample['owner_approval_status']) ?></span><?= $sample['owner_approval_date'] ? ' <span class="muted">' . $escape($sample['owner_approval_date']) . '</span>' : '' ?></dd></div>
+                    <?php if ($canViewQuotations && $sample['quotation_id'] !== null): ?>
+                        <div><dt>商业报价</dt><dd><?= $escape($sample['purchase_unit_price'] . ' ' . $sample['currency_code'] . ' · ' . $sample['quotation_date']) ?></dd></div>
+                    <?php endif; ?>
+                    <div class="image-meta-wide"><dt>备注</dt><dd><?= $sample['remarks'] !== null && $sample['remarks'] !== '' ? nl2br($escape($sample['remarks'])) : '—' ?></dd></div>
+                </dl>
             </div>
         </dialog>
     <?php endforeach; ?>
