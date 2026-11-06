@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace ProjectO\Modules\DocumentManagement;
 
+use ProjectO\Export\ExportImage;
+use ProjectO\Export\XlsxWorkbook;
 use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
@@ -15,6 +17,19 @@ use ProjectO\Support;
 
 final class DocumentManagementPlugin implements PluginInterface
 {
+    private const ISSUE_STATUS_LABELS = [
+        'open' => '待评估',
+        'in_review' => '处理中',
+        'resolved' => '待关闭',
+        'closed' => '已关闭',
+    ];
+    private const ISSUE_SEVERITY_LABELS = [
+        'low' => '低',
+        'medium' => '中',
+        'high' => '高',
+        'critical' => '紧急',
+    ];
+
     private DocumentService $documents;
     private DocumentImageService $images;
     private ObjectStorageInterface $imageStorage;
@@ -49,6 +64,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'rfi.image.upload' => $this->uploadRfiImage($input),
             'rfi.image.delete' => $this->deleteRfiImage($input),
             'document.image.view' => $this->viewDocumentImage($input),
+            'issue.export' => $this->exportIssues($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
     }
@@ -579,6 +595,153 @@ final class DocumentManagementPlugin implements PluginInterface
             $contentType,
             $body
         );
+    }
+
+    private function exportIssues(array $input): PluginResponse
+    {
+        $this->requireDocumentAccess();
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $issues = $this->documents->listIssues($projectId);
+        $imageStorageReady = $this->imageStorage->isConfigured();
+        $imagesByIssue = $this->images->issueImagesForProject($projectId);
+        foreach ($issues as &$issue) {
+            $issue['images'] = $imagesByIssue[(int) $issue['issue_id']] ?? [];
+            if ($imageStorageReady) {
+                foreach ($issue['images'] as &$image) {
+                    $image['url'] = $this->imageStorage->signedReadUrl(
+                        (string) $image['object_key'],
+                        (string) $image['content_type']
+                    );
+                }
+                unset($image);
+            }
+        }
+        unset($issue);
+
+        $headers = [
+            '问题编号', '问题描述', '严重程度', '状态', '位置', '图片',
+            '登记人', '登记时间', '更新时间', '处理结果', '后续事项', '关闭时间',
+        ];
+        $imageColumn = 5;
+        $images = [];
+        $rows = [];
+        $statusCounts = ['open' => 0, 'in_review' => 0, 'resolved' => 0, 'closed' => 0];
+        $firstDataRow = 7;
+        foreach ($issues as $issue) {
+            $rowNumber = $firstDataRow + count($rows);
+            $status = (string) $issue['status'];
+            $statusCounts[$status] = ($statusCounts[$status] ?? 0) + 1;
+            $followUps = $issue['follow_ups'] ?? [];
+            $completedFollowUps = count(array_filter(
+                $followUps,
+                static fn (array $followUp): bool => (int) $followUp['is_completed'] === 1
+            ));
+            $rows[] = [
+                self::exportText($issue['issue_number'] ?? null),
+                self::exportText($issue['description'] ?? null),
+                self::ISSUE_SEVERITY_LABELS[$issue['severity']] ?? (string) $issue['severity'],
+                self::ISSUE_STATUS_LABELS[$status] ?? $status,
+                self::exportText($issue['location'] ?? null),
+                $this->exportIssueImageCell($issue, $images, $rowNumber, $imageColumn),
+                self::exportText($issue['reported_by_name'] ?? null),
+                Support::formatDateTime($issue['reported_at'] ?? null),
+                Support::formatDateTime($issue['updated_at'] ?? null),
+                self::exportText($issue['resolution_result'] ?? null),
+                $followUps === [] ? '-' : $completedFollowUps . ' / ' . count($followUps),
+                Support::formatDateTime($issue['closed_at'] ?? null),
+            ];
+        }
+
+        $exportDay = Support::nowLocal('Ymd');
+        $exportSequence = Support::nextDailySequence(
+            $this->context->db,
+            'document.issue.export_sequence',
+            $exportDay
+        );
+        $body = XlsxWorkbook::build('问题信息追踪表', $headers, $rows, [
+            'title' => '📦 ' . $project['project_name'] . '问题信息追踪表',
+            'meta' => [
+                '导出时间: ' . Support::nowLocal('Y-m-d H:i:s'),
+                '记录总数: ' . count($rows),
+                '内容统计: 待评估 ' . $statusCounts['open']
+                    . '，处理中 ' . $statusCounts['in_review']
+                    . '，待关闭 ' . $statusCounts['resolved']
+                    . '，已关闭 ' . $statusCounts['closed'],
+            ],
+            'images' => $images,
+            'fixedWidths' => [$imageColumn => 15.0],
+        ]);
+        Support::audit(
+            $this->context->db,
+            'document.issue.export',
+            'Exported ' . count($rows) . ' issue rows for project ' . $projectId . '.'
+        );
+
+        return PluginResponse::download(
+            '问题信息追踪表_' . $exportDay . '_' . $exportSequence . '.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            $body
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $issue
+     * @param list<array{row: int, column: int, bytes: string, extension: string, hyperlink?: string}> $images
+     */
+    private function exportIssueImageCell(
+        array $issue,
+        array &$images,
+        int $rowNumber,
+        int $imageColumn
+    ): string {
+        if (!$this->imageStorage->isConfigured()) {
+            return '-';
+        }
+        foreach ($issue['images'] ?? [] as $image) {
+            if (!is_array($image) || !isset($image['url']) || !is_string($image['url']) || $image['url'] === '') {
+                continue;
+            }
+            $payload = ExportImage::fetch($image['url'], (string) ($image['content_type'] ?? ''));
+            if ($payload === null) {
+                continue;
+            }
+            $images[] = [
+                'row' => $rowNumber,
+                'column' => $imageColumn,
+                'bytes' => $payload['bytes'],
+                'extension' => $payload['extension'],
+                'hyperlink' => $this->issueImageProxyUrl(
+                    (int) $issue['issue_id'],
+                    (int) $image['image_id']
+                ),
+            ];
+
+            return '';
+        }
+
+        return '-';
+    }
+
+    private function issueImageProxyUrl(int $issueId, int $imageId): string
+    {
+        $query = '?page=document-image&type=issue&issue_id=' . $issueId . '&image_id=' . $imageId;
+        $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+        if ($host === '') {
+            return $query;
+        }
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php');
+        $base = rtrim(str_replace('\\', '/', dirname($script)), '/');
+
+        return $scheme . '://' . $host . $base . '/' . $query;
+    }
+
+    private static function exportText(mixed $value): string
+    {
+        $text = $value === null ? '' : trim((string) $value);
+
+        return $text === '' ? '-' : $text;
     }
 
     private function requireEdit(): void

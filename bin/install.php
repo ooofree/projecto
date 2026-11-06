@@ -8,6 +8,7 @@ use ProjectO\Plugin\PluginRegistry;
 require dirname(__DIR__) . '/src/Environment.php';
 Environment::load(dirname(__DIR__) . '/.env');
 require dirname(__DIR__) . '/vendor/autoload.php';
+date_default_timezone_set('UTC');
 
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "Run this installer from the command line.\n");

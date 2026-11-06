@@ -27,6 +27,7 @@
         "POST document.settings.save": "settings.save",
         "POST issue.image.upload": "issue.image.upload",
         "POST issue.image.delete": "issue.image.delete",
+        "POST issue.export": "issue.export",
         "POST rfi.image.upload": "rfi.image.upload",
         "POST rfi.image.delete": "rfi.image.delete"
     },

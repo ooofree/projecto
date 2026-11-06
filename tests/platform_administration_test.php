@@ -46,6 +46,7 @@ $db->exec(
         ('language', 'zh-CN'),
         ('default_country_code', 'CN'),
         ('default_currency_code', 'CNY'),
+        ('timezone', 'Asia/Shanghai'),
         ('admin_guard', '1')"
 );
 $db->exec(
@@ -62,6 +63,7 @@ $db->exec(
         username TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
         country_code TEXT NOT NULL,
+        timezone TEXT,
         is_active INTEGER NOT NULL
     )'
 );
@@ -115,6 +117,11 @@ $pageData = $admin->pageData();
 platformAdminCheck(count($pageData['plugins']) === 3, 'The plugin catalog should list all discovered plugins.');
 platformAdminCheck($pageData['settings']['default_currency_code'] === 'CNY', 'The default currency should be loaded.');
 platformAdminCheck(
+    $pageData['settings']['timezone'] === 'Asia/Shanghai'
+        && isset($pageData['timezones']['Asia/Shanghai']),
+    'The platform default timezone should be loaded and selectable.'
+);
+platformAdminCheck(
     ($pageData['currencies']['CNY'] ?? null) === 'CNY - 人民币'
         && isset($pageData['currencies']['USD']),
     'Platform currency choices should come from the standard currency catalog.'
@@ -136,9 +143,11 @@ $admin->dispatch('admin.settings.save', [
     'theme' => 'dark',
     'default_country_code' => 'us',
     'default_currency_code' => 'usd',
+    'timezone' => 'America/New_York',
 ]);
 platformAdminCheck($db->query("SELECT setting_value FROM System_Settings WHERE setting_key = 'theme'")->fetchColumn() === 'dark', 'The theme should be saved.');
 platformAdminCheck($db->query("SELECT setting_value FROM System_Settings WHERE setting_key = 'default_country_code'")->fetchColumn() === 'US', 'Country codes should be normalized.');
+platformAdminCheck($db->query("SELECT setting_value FROM System_Settings WHERE setting_key = 'timezone'")->fetchColumn() === 'America/New_York', 'The default timezone should be saved.');
 platformAdminCheck($admin->theme() === 'dark', 'The saved theme should be applied to subsequent renders.');
 
 platformAdminExpectStatus(
@@ -146,6 +155,7 @@ platformAdminExpectStatus(
         'theme' => 'solarized',
         'default_country_code' => 'USA',
         'default_currency_code' => 'US',
+        'timezone' => 'Not/AZone',
     ]),
     422,
     'Unsupported settings values should be rejected.'
@@ -155,6 +165,7 @@ platformAdminExpectStatus(
         'theme' => 'dark',
         'default_country_code' => 'CN',
         'default_currency_code' => 'ZZZ',
+        'timezone' => 'Asia/Shanghai',
     ]),
     422,
     'Currencies outside the ISO 4217 catalog must be rejected.'
@@ -249,14 +260,60 @@ $_SERVER['REQUEST_METHOD'] = 'GET';
 ob_start();
 (new Application($db))->run();
 $adminHtml = ob_get_clean();
-platformAdminCheck(str_contains($adminHtml, '<h1>后台管理</h1>'), 'The authorized admin page should render.');
-platformAdminCheck(str_contains($adminHtml, 'PHP 版本'), 'The admin page should show safe runtime diagnostics.');
 platformAdminCheck(
-    str_contains($adminHtml, 'value="' . $samplePermissionId . '"')
-        && str_contains($adminHtml, '查看材料样品'),
-    'The admin page must render a selectable sample-management permission.'
+    str_contains($adminHtml, '<h1>系统设置</h1>')
+        && str_contains($adminHtml, 'class="admin-shell"')
+        && str_contains($adminHtml, 'aria-label="系统设置导航"'),
+    'The authorized settings page should render with two-column navigation.'
 );
-platformAdminCheck(!str_contains($adminHtml, 'password_hash'), 'The admin page must not expose password data.');
+platformAdminCheck(
+    str_contains($adminHtml, '>系统配置</a>')
+        && str_contains($adminHtml, '>人员管理</a>')
+        && str_contains($adminHtml, 'value="admin.settings.save"'),
+    'The default settings section must show configuration and list personnel management.'
+);
+platformAdminCheck(
+    !str_contains($adminHtml, 'PHP 版本') && !str_contains($adminHtml, '查看材料样品'),
+    'Only the active settings section should be rendered.'
+);
+
+$_GET = ['page' => 'admin', 'section' => 'runtime'];
+ob_start();
+(new Application($db))->run();
+$runtimeHtml = ob_get_clean();
+platformAdminCheck(str_contains($runtimeHtml, 'PHP 版本'), 'The runtime section should show safe diagnostics.');
+platformAdminCheck(!str_contains($runtimeHtml, 'password_hash'), 'Runtime diagnostics must not expose password data.');
+
+$_GET = ['page' => 'admin', 'section' => 'roles'];
+ob_start();
+(new Application($db))->run();
+$rolesHtml = ob_get_clean();
+platformAdminCheck(
+    str_contains($rolesHtml, 'value="' . $samplePermissionId . '"')
+        && str_contains($rolesHtml, '查看材料样品'),
+    'The roles section must render a selectable sample-management permission.'
+);
+platformAdminCheck(!str_contains($rolesHtml, 'password_hash'), 'The settings page must not expose password data.');
+
+$_GET = ['page' => 'admin', 'section' => 'people'];
+$_SERVER['REQUEST_METHOD'] = 'GET';
+ob_start();
+(new Application($db))->run();
+$peopleHtml = ob_get_clean();
+platformAdminCheck(
+    str_contains($peopleHtml, '<h2>人员管理</h2>')
+        && str_contains($peopleHtml, 'value="admin.user.create"')
+        && str_contains($peopleHtml, 'href="?page=profile"')
+        && str_contains($peopleHtml, 'aria-current="page"')
+        && !str_contains($peopleHtml, 'value="admin.settings.save"'),
+    'The personnel section must render only its own management panel.'
+);
+platformAdminExpectStatus(
+    fn () => $admin->pageData('unknown-section'),
+    404,
+    'Unknown settings sections must be rejected.'
+);
+$_GET = ['page' => 'admin'];
 
 $_SESSION = ['user_id' => 2, 'username' => 'viewer'];
 platformAdminExpectStatus(

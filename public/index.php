@@ -8,6 +8,7 @@ use ProjectO\Environment;
 require dirname(__DIR__) . '/src/Environment.php';
 Environment::load(dirname(__DIR__) . '/.env');
 require dirname(__DIR__) . '/vendor/autoload.php';
+date_default_timezone_set('UTC');
 
 $isProduction = getenv('APP_ENV') === 'production';
 ini_set('display_errors', $isProduction ? '0' : '1');

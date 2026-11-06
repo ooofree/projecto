@@ -21,6 +21,7 @@ $db->exec(
         ('language', 'zh-CN'),
         ('default_country_code', 'CN'),
         ('default_currency_code', 'CNY'),
+        ('timezone', 'Asia/Shanghai'),
         ('admin_guard', '1')"
 );
 $_SESSION = [];

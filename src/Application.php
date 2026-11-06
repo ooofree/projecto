@@ -71,10 +71,21 @@ final class Application
         }
 
         Support::requireLogin();
+        Support::setDisplayTimezone(Support::resolveTimezone($this->db));
 
         if ($action === 'logout') {
             $this->auth->logout();
             $this->redirect('?page=login');
+        }
+
+        if ($action === 'profile.save') {
+            $this->saveProfile();
+            return;
+        }
+
+        if ($action === 'profile.password') {
+            $this->changePassword();
+            return;
         }
 
         if (str_starts_with($action, 'admin.')) {
@@ -107,10 +118,21 @@ final class Application
         }
 
         Support::requireLogin();
+        Support::setDisplayTimezone(Support::resolveTimezone($this->db));
+
+        if ($page === 'profile') {
+            $this->render(dirname(__DIR__) . '/views/profile.php', $this->profileData(), true);
+            return;
+        }
+
         if ($page === 'admin') {
+            $section = $_GET['section'] ?? 'settings';
+            if (!is_string($section)) {
+                throw new HttpException('设置分区参数无效。', 422);
+            }
             $this->render(
                 dirname(__DIR__) . '/views/admin.php',
-                $this->platformAdministration->pageData(),
+                $this->platformAdministration->pageData($section),
                 true
             );
             return;
@@ -241,6 +263,65 @@ final class Application
         header('X-Content-Type-Options: nosniff');
         header('Cache-Control: private, max-age=300');
         echo $body;
+    }
+
+    private function saveProfile(): void
+    {
+        $timezone = $_POST['timezone'] ?? '';
+        if (!is_string($timezone)) {
+            throw new HttpException('时区选项无效。', 422);
+        }
+        (new ProfileService($this->db))->saveTimezone((int) ($_SESSION['user_id'] ?? 0), $timezone);
+        Support::flash('个人时区设置已保存。');
+        $this->redirect('?page=profile');
+    }
+
+    private function changePassword(): void
+    {
+        $currentPassword = $_POST['current_password'] ?? '';
+        $newPassword = $_POST['new_password'] ?? '';
+        $confirmation = $_POST['new_password_confirmation'] ?? '';
+        if (!is_string($currentPassword) || !is_string($newPassword) || !is_string($confirmation)) {
+            throw new HttpException('密码字段格式无效。', 422);
+        }
+
+        (new ProfileService($this->db))->changePassword(
+            (int) ($_SESSION['user_id'] ?? 0),
+            $currentPassword,
+            $newPassword,
+            $confirmation
+        );
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+        Support::flash('密码已更新，下次登录请使用新密码。');
+        $this->redirect('?page=profile');
+    }
+
+    private function profileData(): array
+    {
+        $userId = (int) ($_SESSION['user_id'] ?? 0);
+        $statement = $this->db->prepare('SELECT username, timezone FROM Users WHERE user_id = :user_id');
+        $statement->execute(['user_id' => $userId]);
+        $user = $statement->fetch() ?: ['username' => '', 'timezone' => null];
+
+        $defaultTimezone = 'Asia/Shanghai';
+        $setting = $this->db->prepare("SELECT setting_value FROM System_Settings WHERE setting_key = 'timezone'");
+        $setting->execute();
+        $stored = $setting->fetchColumn();
+        if (is_string($stored) && Support::isValidTimezone($stored)) {
+            $defaultTimezone = $stored;
+        }
+
+        return [
+            'title' => '个人设置',
+            'currentUsername' => (string) ($_SESSION['username'] ?? ($user['username'] ?? '')),
+            'userTimezone' => (string) ($user['timezone'] ?? ''),
+            'defaultTimezone' => $defaultTimezone,
+            'effectiveTimezone' => Support::displayTimezone()->getName(),
+            'timezones' => Support::timezoneOptions(),
+            'currentLocalTime' => Support::nowLocal('Y-m-d H:i:s'),
+        ];
     }
 
     private function redirect(string $location): never

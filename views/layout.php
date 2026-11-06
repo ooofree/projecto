@@ -12,8 +12,9 @@
     <?php if ($username !== ''): ?>
         <div class="account">
             <?php if ($canManagePlatform): ?>
-                <a class="button button-quiet" href="?page=admin">平台管理</a>
+                <a class="button button-quiet" href="?page=admin">系统设置</a>
             <?php endif; ?>
+            <a class="button button-quiet" href="?page=profile">个人设置</a>
             <span><?= $escape($username) ?></span>
             <form method="post" action="">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">

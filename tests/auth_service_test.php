@@ -18,6 +18,7 @@ $db->exec(
         user_id INTEGER PRIMARY KEY,
         username TEXT NOT NULL,
         password_hash TEXT NOT NULL,
+        timezone TEXT,
         is_active INTEGER NOT NULL
     )'
 );

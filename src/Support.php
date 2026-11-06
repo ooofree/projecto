@@ -7,6 +7,8 @@ use PDO;
 
 final class Support
 {
+    private static ?\DateTimeZone $displayTimezone = null;
+
     public static function escape(string|int|null $value): string
     {
         return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -71,6 +73,128 @@ final class Support
     public static function flash(string $message, string $type = 'success'): void
     {
         $_SESSION['flash'] = ['message' => $message, 'type' => $type];
+    }
+
+    /**
+     * Sets the timezone used to display UTC timestamps and to interpret
+     * user-entered local date-times for the current request.
+     */
+    public static function setDisplayTimezone(string $timezone): void
+    {
+        try {
+            self::$displayTimezone = new \DateTimeZone($timezone);
+        } catch (\Throwable) {
+            self::$displayTimezone = new \DateTimeZone('UTC');
+        }
+    }
+
+    public static function displayTimezone(): \DateTimeZone
+    {
+        return self::$displayTimezone ??= new \DateTimeZone('UTC');
+    }
+
+    /** @return array<string, string> */
+    public static function timezoneOptions(): array
+    {
+        $identifiers = \DateTimeZone::listIdentifiers();
+
+        return array_combine($identifiers, $identifiers);
+    }
+
+    public static function isValidTimezone(string $timezone): bool
+    {
+        return in_array($timezone, \DateTimeZone::listIdentifiers(), true);
+    }
+
+    /**
+     * Effective display timezone: the signed-in user's own timezone when set,
+     * otherwise the system default, otherwise Asia/Shanghai.
+     */
+    public static function resolveTimezone(PDO $db): string
+    {
+        $userId = (int) ($_SESSION['user_id'] ?? 0);
+        if ($userId > 0) {
+            try {
+                $statement = $db->prepare('SELECT timezone FROM Users WHERE user_id = :user_id');
+                $statement->execute(['user_id' => $userId]);
+                $timezone = $statement->fetchColumn();
+                if (is_string($timezone) && self::isValidTimezone($timezone)) {
+                    return $timezone;
+                }
+            } catch (\Throwable $exception) {
+                error_log('Unable to read the user timezone: ' . $exception->getMessage());
+            }
+        }
+
+        $statement = $db->prepare("SELECT setting_value FROM System_Settings WHERE setting_key = 'timezone'");
+        $statement->execute();
+        $timezone = $statement->fetchColumn();
+        if (is_string($timezone) && self::isValidTimezone($timezone)) {
+            return $timezone;
+        }
+
+        return 'Asia/Shanghai';
+    }
+
+    /**
+     * Formats a UTC timestamp in the effective display timezone.
+     */
+    public static function formatDateTime(?string $value, string $format = 'Y-m-d H:i'): string
+    {
+        if ($value === null || trim($value) === '') {
+            return '';
+        }
+        $date = new \DateTimeImmutable($value, new \DateTimeZone('UTC'));
+
+        return $date->setTimezone(self::displayTimezone())->format($format);
+    }
+
+    /**
+     * Increments a per-day sequence stored in System_Settings (used by export
+     * file names) and returns the new value.
+     */
+    public static function nextDailySequence(PDO $db, string $prefix, ?string $day = null): int
+    {
+        $day = $day ?? self::nowLocal('Ymd');
+        $key = $prefix . '.' . $day;
+        $db->beginTransaction();
+        try {
+            $select = $db->prepare('SELECT setting_value FROM System_Settings WHERE setting_key = :setting_key');
+            $select->execute(['setting_key' => $key]);
+            $current = (int) $select->fetchColumn();
+            $next = $current + 1;
+            if ($current === 0) {
+                $write = $db->prepare(
+                    'INSERT INTO System_Settings (setting_key, setting_value, updated_by)
+                     VALUES (:setting_key, :setting_value, :updated_by)'
+                );
+            } else {
+                $write = $db->prepare(
+                    'UPDATE System_Settings SET setting_value = :setting_value, updated_by = :updated_by
+                     WHERE setting_key = :setting_key'
+                );
+            }
+            $write->execute([
+                'setting_key' => $key,
+                'setting_value' => (string) $next,
+                'updated_by' => (int) ($_SESSION['user_id'] ?? 0),
+            ]);
+            $db->commit();
+        } catch (\Throwable $exception) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $exception;
+        }
+
+        return $next;
+    }
+
+    public static function nowLocal(string $format = 'Y-m-d H:i:s'): string
+    {
+        return (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
+            ->setTimezone(self::displayTimezone())
+            ->format($format);
     }
 
     public static function audit(PDO $db, string $action, string $details): void

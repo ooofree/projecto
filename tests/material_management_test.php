@@ -5,7 +5,7 @@ use ProjectO\HttpException;
 use ProjectO\Modules\MaterialManagement\MaterialCatalogService;
 use ProjectO\Modules\MaterialManagement\MaterialManagementPlugin;
 use ProjectO\Modules\MaterialManagement\ProjectMaterialService;
-use ProjectO\Modules\MaterialManagement\XlsxWorkbook;
+use ProjectO\Export\XlsxWorkbook;
 use ProjectO\Storage\CloudStorageSettings;
 use ProjectO\Modules\ProjectFoundation\ProjectSpaceService;
 use ProjectO\Plugin\PluginContext;
@@ -145,7 +145,7 @@ $db->exec(
         UNIQUE (entity_type, entity_id)
     )'
 );
-$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, is_active INTEGER NOT NULL DEFAULT 1)');
+$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, is_active INTEGER NOT NULL DEFAULT 1, timezone TEXT)');
 $db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY, role_name TEXT)');
 $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
 $db->exec('CREATE TABLE Permissions (permission_id INTEGER PRIMARY KEY AUTOINCREMENT, permission_name TEXT UNIQUE, display_name TEXT, description TEXT, module TEXT)');
@@ -165,6 +165,7 @@ $db->exec(
         ('language', 'zh-CN'),
         ('default_country_code', 'CN'),
         ('default_currency_code', 'CNY'),
+        ('timezone', 'Asia/Shanghai'),
         ('admin_guard', '1')"
 );
 $db->exec(

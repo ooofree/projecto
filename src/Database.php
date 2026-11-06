@@ -20,10 +20,17 @@ final class Database
             );
         }
 
-        return new PDO($dsn, $username, $password, [
+        $pdo = new PDO($dsn, $username, $password, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
+        if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+            // Store and read every timestamp in UTC; display conversion happens
+            // in the application layer using the effective user/project zone.
+            $pdo->exec("SET time_zone = '+00:00'");
+        }
+
+        return $pdo;
     }
 }

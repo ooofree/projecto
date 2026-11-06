@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace ProjectO\Modules\MaterialManagement;
 
 use ProjectO\CurrencyCatalog;
+use ProjectO\Export\ExportImage;
+use ProjectO\Export\XlsxWorkbook;
 use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
@@ -16,14 +18,6 @@ use Throwable;
 
 final class MaterialManagementPlugin implements PluginInterface
 {
-    private const EXPORT_IMAGE_EXTENSIONS = [
-        'image/png' => 'png',
-        'image/jpeg' => 'jpg',
-        'image/gif' => 'gif',
-        'image/bmp' => 'bmp',
-    ];
-    private const EXPORT_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
-
     private MaterialCatalogService $catalog;
     private ProjectMaterialService $projectMaterials;
     private TenderListService $tenderList;
@@ -524,12 +518,12 @@ final class MaterialManagementPlugin implements PluginInterface
             $rows[] = $row;
         }
 
-        $exportDay = date('Ymd');
-        $exportSequence = $this->nextDailyExportSequence($exportDay);
+        $exportDay = Support::nowLocal('Ymd');
+        $exportSequence = Support::nextDailySequence($this->context->db, 'material.sample.export_sequence', $exportDay);
         $body = XlsxWorkbook::build('样品信息追踪表', $headers, $rows, [
             'title' => '📦 ' . $project['project_name'] . '材料样品信息追踪表',
             'meta' => [
-                '导出时间: ' . date('Y-m-d H:i:s'),
+                '导出时间: ' . Support::nowLocal('Y-m-d H:i:s'),
                 '记录总数: ' . count($rows),
                 '内容统计: 总样品数量 ' . $totalQuantity
                     . '，已送样品数量 ' . $sentQuantity
@@ -624,44 +618,6 @@ final class MaterialManagementPlugin implements PluginInterface
         return $scheme . '://' . $host . $base . '/' . $query;
     }
 
-    private function nextDailyExportSequence(string $day): int
-    {
-        $key = 'material.sample.export_sequence.' . $day;
-        $this->context->db->beginTransaction();
-        try {
-            $select = $this->context->db->prepare(
-                'SELECT setting_value FROM System_Settings WHERE setting_key = :setting_key'
-            );
-            $select->execute(['setting_key' => $key]);
-            $current = (int) $select->fetchColumn();
-            $next = $current + 1;
-            if ($current === 0) {
-                $write = $this->context->db->prepare(
-                    'INSERT INTO System_Settings (setting_key, setting_value, updated_by)
-                     VALUES (:setting_key, :setting_value, :updated_by)'
-                );
-            } else {
-                $write = $this->context->db->prepare(
-                    'UPDATE System_Settings SET setting_value = :setting_value, updated_by = :updated_by
-                     WHERE setting_key = :setting_key'
-                );
-            }
-            $write->execute([
-                'setting_key' => $key,
-                'setting_value' => (string) $next,
-                'updated_by' => (int) ($_SESSION['user_id'] ?? 0),
-            ]);
-            $this->context->db->commit();
-        } catch (Throwable $exception) {
-            if ($this->context->db->inTransaction()) {
-                $this->context->db->rollBack();
-            }
-            throw $exception;
-        }
-
-        return $next;
-    }
-
     private function attachImageUrls(array &$samples): void
     {
         if (!$this->imageStorage->isConfigured()) {
@@ -703,7 +659,7 @@ final class MaterialManagementPlugin implements PluginInterface
             if (!is_array($image) || !isset($image['url']) || !is_string($image['url']) || $image['url'] === '') {
                 continue;
             }
-            $payload = $this->fetchExportImage($image['url'], (string) ($image['content_type'] ?? ''));
+            $payload = ExportImage::fetch($image['url'], (string) ($image['content_type'] ?? ''));
             if ($payload === null) {
                 continue;
             }
@@ -719,82 +675,6 @@ final class MaterialManagementPlugin implements PluginInterface
         }
 
         return '-';
-    }
-
-    /**
-     * @return array{bytes: string, extension: string}|null
-     */
-    private function fetchExportImage(string $url, string $contentType): ?array
-    {
-        $bytes = $this->downloadExportImage($url);
-        if ($bytes === null) {
-            return null;
-        }
-        if (isset(self::EXPORT_IMAGE_EXTENSIONS[$contentType])) {
-            return ['bytes' => $bytes, 'extension' => self::EXPORT_IMAGE_EXTENSIONS[$contentType]];
-        }
-        // Excel cannot display WebP inside a workbook; convert it to PNG via GD.
-        if ($contentType === 'image/webp' && function_exists('imagecreatefromwebp')) {
-            $image = @imagecreatefromwebp('data://image/webp;base64,' . base64_encode($bytes));
-            if ($image === false) {
-                return null;
-            }
-            $temporaryPath = tempnam(sys_get_temp_dir(), 'sample-webp-');
-            if ($temporaryPath === false) {
-                imagedestroy($image);
-                return null;
-            }
-            $converted = imagepng($image, $temporaryPath);
-            imagedestroy($image);
-            if (!$converted) {
-                @unlink($temporaryPath);
-                return null;
-            }
-            $convertedBytes = file_get_contents($temporaryPath);
-            @unlink($temporaryPath);
-            if (is_string($convertedBytes) && $convertedBytes !== '') {
-                return ['bytes' => $convertedBytes, 'extension' => 'png'];
-            }
-        }
-
-        return null;
-    }
-
-    private function downloadExportImage(string $url): ?string
-    {
-        try {
-            if (function_exists('curl_init')) {
-                $handle = curl_init($url);
-                if ($handle === false) {
-                    return null;
-                }
-                curl_setopt_array($handle, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_FOLLOWLOCATION => true,
-                    CURLOPT_CONNECTTIMEOUT => 5,
-                    CURLOPT_TIMEOUT => 20,
-                ]);
-                $bytes = curl_exec($handle);
-                $status = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
-                curl_close($handle);
-                if (!is_string($bytes) || $status >= 400) {
-                    return null;
-                }
-            } else {
-                $context = stream_context_create([
-                    'http' => ['timeout' => 20],
-                    'https' => ['timeout' => 20],
-                ]);
-                $bytes = @file_get_contents($url, false, $context);
-                if (!is_string($bytes)) {
-                    return null;
-                }
-            }
-        } catch (Throwable) {
-            return null;
-        }
-
-        return $bytes === '' || strlen($bytes) > self::EXPORT_IMAGE_MAX_BYTES ? null : $bytes;
     }
 
     private function saveEstimate(array $input): PluginResponse

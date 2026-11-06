@@ -36,13 +36,15 @@ final class DocumentService
     public function listIssues(int $projectId): array
     {
         $stmt = $this->db->prepare(
-            'SELECT issue_id, project_id, issue_number, description, severity, status, location,
-                    reported_by, reported_at, resolution_result, verification_status,
-                    verification_note, evidence_reference, closed_at, closed_by,
-                    created_at, updated_at
-             FROM document_issues
-             WHERE project_id = :project_id
-             ORDER BY updated_at DESC, issue_id DESC'
+            'SELECT i.issue_id, i.project_id, i.issue_number, i.description, i.severity, i.status,
+                    i.location, i.reported_by, i.reported_at, i.resolution_result,
+                    i.verification_status, i.verification_note, i.evidence_reference,
+                    i.closed_at, i.closed_by, i.created_at, i.updated_at,
+                    u.username AS reported_by_name
+             FROM document_issues i
+             LEFT JOIN Users u ON u.user_id = i.reported_by
+             WHERE i.project_id = :project_id
+             ORDER BY i.updated_at DESC, i.issue_id DESC'
         );
         $stmt->execute(['project_id' => $projectId]);
         $issues = $stmt->fetchAll();
@@ -1248,7 +1250,7 @@ final class DocumentService
             throw new HttpException('RFI 截止时间格式无效。', 422);
         }
 
-        $date = DateTimeImmutable::createFromFormat('!Y-m-d\TH:i', $value);
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d\TH:i', $value, \ProjectO\Support::displayTimezone());
         $errors = DateTimeImmutable::getLastErrors();
         if (
             !$date
@@ -1258,7 +1260,7 @@ final class DocumentService
             throw new HttpException('RFI 截止时间格式无效。', 422);
         }
 
-        return $date->format('Y-m-d H:i:s');
+        return $date->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
     private function idList(array $records, string $field): array

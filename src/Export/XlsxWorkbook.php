@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace ProjectO\Modules\MaterialManagement;
+namespace ProjectO\Export;
 
 use RuntimeException;
 use ZipArchive;

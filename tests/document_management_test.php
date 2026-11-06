@@ -9,8 +9,10 @@ use ProjectO\Modules\DocumentManagement\DocumentService;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginRegistry;
 use ProjectO\Storage\CloudStorageSettings;
+use ProjectO\ProfileService;
 use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
+use ProjectO\Support;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -33,9 +35,36 @@ function documentTestExpectStatus(callable $operation, int $status, string $mess
     }
 }
 
+function documentTestXlsxPart(\ProjectO\Plugin\PluginResponse $response, string $part): string
+{
+    $body = $response->data['body'] ?? null;
+    if ($response->type !== 'download' || !is_string($body)) {
+        throw new RuntimeException('Expected an xlsx download response.');
+    }
+    $path = tempnam(sys_get_temp_dir(), 'document-xlsx-');
+    if ($path === false) {
+        throw new RuntimeException('Unable to create a temporary file for the xlsx export.');
+    }
+    file_put_contents($path, $body);
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        @unlink($path);
+        throw new RuntimeException('Export is not a readable xlsx zip package.');
+    }
+    $xml = $zip->getFromName($part);
+    $zip->close();
+    @unlink($path);
+    if (!is_string($xml) || $xml === '') {
+        throw new RuntimeException('Export is missing its ' . $part . ' part.');
+    }
+
+    return $xml;
+}
+
 final class DocumentTestImageStorage implements ObjectStorageInterface
 {
     public static string $body = '';
+    public static string $fileUrl = '';
     /** @var array<string, array{path: string, content_type: string}> */
     public array $uploaded = [];
     /** @var list<string> */
@@ -57,7 +86,9 @@ final class DocumentTestImageStorage implements ObjectStorageInterface
 
     public function signedReadUrl(string $objectKey, string $contentType): string
     {
-        return 'https://r2.example.test/' . $objectKey . '?signature=test';
+        return self::$fileUrl !== ''
+            ? self::$fileUrl
+            : 'https://r2.example.test/' . $objectKey . '?signature=test';
     }
 
     public function read(string $objectKey): string
@@ -100,6 +131,7 @@ $db->exec(
     "CREATE TABLE Users (
         user_id INTEGER PRIMARY KEY,
         username TEXT NOT NULL,
+        timezone TEXT,
         is_active INTEGER NOT NULL DEFAULT 1
     )"
 );
@@ -122,6 +154,7 @@ $db->exec(
         ('language', 'zh-CN'),
         ('default_country_code', 'CN'),
         ('default_currency_code', 'CNY'),
+        ('timezone', 'Asia/Shanghai'),
         ('admin_guard', '1')"
 );
 $db->exec(
@@ -1285,5 +1318,156 @@ documentTestCheck(
 $db->exec('DELETE FROM document_issue_images');
 $db->exec('DELETE FROM document_rfi_images');
 $db->exec("DELETE FROM System_Settings WHERE setting_key LIKE 'cloud_storage.%'");
+
+// --- Timezone: UTC storage with project default and per-user display ---
+documentTestCheck(
+    Support::resolveTimezone($db) === 'Asia/Shanghai',
+    'The system default timezone must be the project timezone.'
+);
+(new ProfileService($db))->saveTimezone(1, 'Europe/London');
+documentTestCheck(
+    Support::resolveTimezone($db) === 'Europe/London',
+    'A personal timezone must override the project default.'
+);
+documentTestExpectStatus(
+    static fn () => (new ProfileService($db))->saveTimezone(1, 'Not/AZone'),
+    422,
+    'Invalid personal timezones must be rejected.'
+);
+(new ProfileService($db))->saveTimezone(1, '');
+documentTestCheck(
+    Support::resolveTimezone($db) === 'Asia/Shanghai',
+    'Clearing the personal timezone must fall back to the project default.'
+);
+
+$db->exec("UPDATE Users SET timezone = 'Asia/Shanghai' WHERE user_id = 1");
+$db->exec(
+    "UPDATE document_issues
+     SET reported_at = '2026-03-03 10:00:00', updated_at = '2026-03-03 10:00:00'
+     WHERE issue_id = {$issueId}"
+);
+$_SERVER = ['REQUEST_METHOD' => 'GET', 'SCRIPT_NAME' => '/index.php'];
+$_GET = ['page' => 'issues'];
+ob_start();
+(new Application($db))->run();
+$issuesInChinaTime = (string) ob_get_clean();
+documentTestCheck(
+    str_contains($issuesInChinaTime, '2026-03-03 18:00'),
+    'UTC timestamps must be displayed in the effective timezone.'
+);
+$_GET = ['page' => 'profile'];
+ob_start();
+(new Application($db))->run();
+$profilePage = (string) ob_get_clean();
+documentTestCheck(
+    str_contains($profilePage, '个人设置')
+        && str_contains($profilePage, 'Asia/Shanghai')
+        && str_contains($profilePage, 'name="timezone"'),
+    'Every signed-in user must be able to choose their display timezone.'
+);
+documentTestCheck(
+    str_contains($profilePage, 'name="current_password"')
+        && str_contains($profilePage, 'name="new_password"')
+        && str_contains($profilePage, 'name="new_password_confirmation"')
+        && str_contains($profilePage, 'value="profile.password"'),
+    'Personal settings must expose self-service password change.'
+);
+
+Support::setDisplayTimezone('Asia/Shanghai');
+$timezoneRfiId = $documents->createRfi(1, 1, [
+    'primary_issue_id' => (string) $issueId,
+    'assigned_to' => '1',
+    'priority' => 'medium',
+    'due_date' => '2030-02-01T09:30',
+    'description' => 'Timezone conversion check',
+]);
+$storedDueDate = (string) $db->query(
+    'SELECT due_date FROM document_rfis WHERE rfi_id = ' . $timezoneRfiId
+)->fetchColumn();
+documentTestCheck(
+    $storedDueDate === '2030-02-01 01:30:00',
+    'Local due-date input must be converted to UTC before storage.'
+);
+Support::setDisplayTimezone('UTC');
+
+// --- Issue Excel export ---
+$issueExport = $plugin->dispatch('issue.export', []);
+documentTestCheck(
+    $issueExport->type === 'download'
+        && ($issueExport->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        && preg_match('/^问题信息追踪表_\d{8}_\d+\.xlsx$/u', (string) ($issueExport->data['filename'] ?? '')) === 1,
+    'Issue export should produce an .xlsx download with the table/date/daily-sequence name.'
+);
+$issueExportSequence = (int) preg_replace(
+    '/^问题信息追踪表_\d{8}_(\d+)\.xlsx$/u',
+    '$1',
+    (string) $issueExport->data['filename']
+);
+$issueSheet = documentTestXlsxPart($issueExport, 'xl/worksheets/sheet1.xml');
+$issueStyles = documentTestXlsxPart($issueExport, 'xl/styles.xml');
+$issueRows = count($plugin->dispatch('issues', [])->data['issues']);
+documentTestCheck(
+    str_contains($issueSheet, 'Project One问题信息追踪表')
+        && str_contains($issueSheet, '问题编号')
+        && str_contains($issueSheet, '问题描述')
+        && str_contains($issueSheet, '登记时间')
+        && str_contains($issueSheet, '内容统计:')
+        && !str_contains($issueSheet, 'Project two issue')
+        && substr_count($issueSheet, '<row r=') === $issueRows + 6,
+    'The issue export must contain the current project issues and status statistics.'
+);
+documentTestCheck(
+    substr_count($issueStyles, 'wrapText="1"') >= 2,
+    'The issue export must wrap text inside the fixed column widths.'
+);
+$secondIssueExport = $plugin->dispatch('issue.export', []);
+$secondIssueSequence = (int) preg_replace(
+    '/^问题信息追踪表_\d{8}_(\d+)\.xlsx$/u',
+    '$1',
+    (string) ($secondIssueExport->data['filename'] ?? '')
+);
+documentTestCheck(
+    $secondIssueSequence === $issueExportSequence + 1,
+    'Issue export file names must use an incrementing daily sequence.'
+);
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id = 1');
+documentTestExpectStatus(
+    static fn () => $plugin->dispatch('issue.export', []),
+    403,
+    'Issue export must enforce the issue view permission.'
+);
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 1)');
+
+// Embedded issue image in the export.
+$exportPngPath = tempnam(sys_get_temp_dir(), 'document-export-image-');
+documentTestCheck($exportPngPath !== false, 'The export image fixture should be created.');
+file_put_contents((string) $exportPngPath, $faviconPng);
+DocumentTestImageStorage::$fileUrl = 'file://' . $exportPngPath;
+$db->exec(
+    "INSERT INTO document_issue_images (issue_id, project_id, object_key, original_name, content_type, file_size, uploaded_by)
+     VALUES ({$issueId}, 1, 'issues/1/{$issueId}/export.png', 'export.png', 'image/png', 70, 1)"
+);
+$exportImagePlugin = new DocumentManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/document-management', new DocumentTestImageStorage())
+);
+$issueExportWithImage = $exportImagePlugin->dispatch('issue.export', []);
+$imageExportPath = tempnam(sys_get_temp_dir(), 'document-image-export-');
+file_put_contents((string) $imageExportPath, (string) ($issueExportWithImage->data['body'] ?? ''));
+$imageExportZip = new ZipArchive();
+documentTestCheck($imageExportZip->open((string) $imageExportPath) === true, 'The image export should be readable.');
+$imageExportDrawing = (string) $imageExportZip->getFromName('xl/drawings/drawing1.xml');
+$imageExportRels = (string) $imageExportZip->getFromName('xl/drawings/_rels/drawing1.xml.rels');
+$imageExportMedia = $imageExportZip->locateName('xl/media/image1.png') !== false;
+$imageExportZip->close();
+@unlink((string) $imageExportPath);
+DocumentTestImageStorage::$fileUrl = '';
+@unlink((string) $exportPngPath);
+documentTestCheck(
+    $imageExportMedia
+        && str_contains($imageExportDrawing, 'cy="714375"')
+        && str_contains($imageExportRels, 'page=document-image'),
+    'Issue exports must embed the first readable image at the fixed height with a link to the image route.'
+);
+$db->exec('DELETE FROM document_issue_images');
 
 echo "Document management tests passed.\n";

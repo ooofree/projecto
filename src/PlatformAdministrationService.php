@@ -11,15 +11,26 @@ use Throwable;
 
 final class PlatformAdministrationService
 {
+    private const SECTIONS = [
+        'settings' => '系统配置',
+        'people' => '人员管理',
+        'roles' => '角色与权限',
+        'plugins' => '插件管理',
+        'runtime' => '运行参数',
+    ];
+
     public function __construct(
         private readonly PDO $db,
         private readonly PluginRegistry $plugins
     ) {
     }
 
-    public function pageData(): array
+    public function pageData(string $section = 'settings'): array
     {
         Support::requirePermission($this->db, 'manage_platform');
+        if (!array_key_exists($section, self::SECTIONS)) {
+            throw new HttpException('设置分区不存在。', 404);
+        }
         $this->synchronizePluginPermissions();
 
         $settings = $this->settings();
@@ -74,9 +85,12 @@ final class PlatformAdministrationService
         )->fetchAll();
 
         return [
-            'title' => '平台管理',
+            'title' => '系统设置',
+            'activeSection' => $section,
+            'sections' => self::SECTIONS,
             'settings' => $settings,
             'currencies' => CurrencyCatalog::options(),
+            'timezones' => Support::timezoneOptions(),
             'plugins' => $this->plugins->catalog(),
             'users' => $users,
             'roles' => $roles,
@@ -100,6 +114,14 @@ final class PlatformAdministrationService
     {
         Support::requirePermission($this->db, 'manage_platform');
 
+        $section = match ($action) {
+            'admin.settings.save' => 'settings',
+            'admin.plugin.toggle' => 'plugins',
+            'admin.user.create', 'admin.user.update' => 'people',
+            'admin.role.create', 'admin.role.update' => 'roles',
+            default => throw new HttpException('未找到对应操作。', 404),
+        };
+
         match ($action) {
             'admin.settings.save' => $this->saveSettings($input),
             'admin.plugin.toggle' => $this->togglePlugin($input),
@@ -107,11 +129,10 @@ final class PlatformAdministrationService
             'admin.user.update' => $this->updateUser($input),
             'admin.role.create' => $this->createRole($input),
             'admin.role.update' => $this->updateRole($input),
-            default => throw new HttpException('未找到对应操作。', 404),
         };
 
-        Support::flash('平台管理操作已完成。');
-        return PluginResponse::redirect('?page=admin');
+        Support::flash('系统设置操作已完成。');
+        return PluginResponse::redirect('?page=admin&section=' . $section);
     }
 
     private function saveSettings(array $input): void
@@ -119,6 +140,7 @@ final class PlatformAdministrationService
         $theme = $this->requiredString($input, 'theme');
         $countryCode = strtoupper($this->requiredString($input, 'default_country_code'));
         $currencyCode = strtoupper($this->requiredString($input, 'default_currency_code'));
+        $timezone = $this->requiredString($input, 'timezone');
         if (!in_array($theme, ['light', 'dark'], true)) {
             throw new HttpException('主题选项无效。', 422);
         }
@@ -128,12 +150,16 @@ final class PlatformAdministrationService
         if (!CurrencyCatalog::supports($currencyCode)) {
             throw new HttpException('默认币种必须来自 ISO 4217 标准目录。', 422);
         }
+        if (!Support::isValidTimezone($timezone)) {
+            throw new HttpException('默认时区必须是有效的 IANA 时区标识。', 422);
+        }
 
-        $this->transaction(function () use ($theme, $countryCode, $currencyCode): void {
+        $this->transaction(function () use ($theme, $countryCode, $currencyCode, $timezone): void {
             $this->lockAdminGuard();
             $this->writeSetting('theme', $theme);
             $this->writeSetting('default_country_code', $countryCode);
             $this->writeSetting('default_currency_code', $currencyCode);
+            $this->writeSetting('timezone', $timezone);
             Support::audit($this->db, 'platform.settings.update', 'Updated platform settings.');
         });
     }
@@ -324,20 +350,23 @@ final class PlatformAdministrationService
         $rows = $this->db->query(
             "SELECT setting_key, setting_value
              FROM System_Settings
-             WHERE setting_key IN ('theme', 'language', 'default_country_code', 'default_currency_code')"
+             WHERE setting_key IN ('theme', 'language', 'default_country_code', 'default_currency_code', 'timezone')"
         )->fetchAll();
         $settings = [];
         foreach ($rows as $row) {
             $settings[(string) $row['setting_key']] = (string) $row['setting_value'];
         }
 
-        foreach (['theme', 'language', 'default_country_code', 'default_currency_code'] as $key) {
+        foreach (['theme', 'language', 'default_country_code', 'default_currency_code', 'timezone'] as $key) {
             if (!array_key_exists($key, $settings)) {
                 throw new RuntimeException('Required platform setting is missing: ' . $key);
             }
         }
         if (!in_array($settings['theme'], ['light', 'dark'], true)) {
             throw new RuntimeException('Stored platform theme is invalid.');
+        }
+        if (!Support::isValidTimezone($settings['timezone'])) {
+            throw new RuntimeException('Stored platform timezone is invalid.');
         }
 
         return $settings;

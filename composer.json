@@ -20,6 +20,7 @@
             "php tests/document_management_test.php",
             "php tests/material_management_test.php",
             "php tests/platform_administration_test.php",
+            "php tests/profile_service_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php"
         ]

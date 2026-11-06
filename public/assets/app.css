@@ -513,3 +513,20 @@ body.theme-dark .auth-card { background: var(--surface); border-color: var(--bor
 .button-danger:hover { color: #fff; background: #944640; box-shadow: 0 5px 14px rgb(120 60 50 / 18%); transform: translateY(-1px); }
 body.theme-dark .button-danger { color: #f3e7e5; background: #7d4a44; }
 body.theme-dark .button-danger:hover { background: #8c544d; }
+
+/* Platform settings: two-column navigation layout */
+.admin-shell { display: grid; grid-template-columns: minmax(188px, 232px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.admin-sidebar { position: sticky; top: 88px; padding: 9px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+.admin-nav { display: grid; gap: 3px; }
+.admin-nav a { display: flex; align-items: center; min-height: 40px; padding: 8px 12px; color: var(--text-muted); border-radius: 9px; font-size: .86rem; font-weight: 620; text-decoration: none; transition: background-color .14s ease, color .14s ease; }
+.admin-nav a:hover { color: var(--text); background: var(--surface-muted); }
+.admin-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+.admin-content > .panel { margin: 0; }
+.admin-content .panel-heading .muted a { color: var(--accent); font-weight: 620; }
+
+@media (max-width: 900px) {
+    .admin-shell { grid-template-columns: 1fr; gap: 12px; }
+    .admin-sidebar { position: static; padding: 6px; }
+    .admin-nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+    .admin-nav a { flex: 0 0 auto; min-height: 36px; padding: 7px 11px; font-size: .8rem; white-space: nowrap; }
+}

@@ -136,7 +136,7 @@ ob_start();
                             <td><?= $escape($rfi['assignee_name']) ?></td>
                             <td><span class="badge badge-neutral"><?= $escape($priorityLabels[$rfi['priority']] ?? $rfi['priority']) ?></span></td>
                             <td><span class="badge"><?= $escape($statusLabels[$rfi['status']] ?? $rfi['status']) ?></span></td>
-                            <td><?= $escape($rfi['due_date']) ?></td>
+                            <td><?= $escape(\ProjectO\Support::formatDateTime($rfi['due_date'])) ?></td>
                             <td><?= count($rfi['images']) ?></td>
                             <td><button class="button button-secondary" type="button" data-dialog-open="rfi-dialog-<?= (int) $rfi['rfi_id'] ?>">查看 / 编辑</button></td>
                         </tr>
@@ -149,7 +149,7 @@ ob_start();
         <?php foreach ($rfis as $rfi): ?>
             <?php
             $relatedIssueIds = array_map(static fn (array $issue): int => (int) $issue['issue_id'], $rfi['related_issues']);
-            $dueDateValue = $rfi['due_date'] ? str_replace(' ', 'T', substr((string) $rfi['due_date'], 0, 16)) : '';
+            $dueDateValue = \ProjectO\Support::formatDateTime($rfi['due_date'] ?? null, 'Y-m-d\\TH:i');
             ?>
             <dialog class="edit-dialog" id="rfi-dialog-<?= (int) $rfi['rfi_id'] ?>">
                 <div class="dialog-heading">
@@ -167,7 +167,7 @@ ob_start();
                         <?php endforeach; ?>
                     </p>
                 <?php endif; ?>
-                <p class="muted">负责人：<?= $escape($rfi['assignee_name']) ?> · 截止：<?= $escape($rfi['due_date']) ?> · 创建：<?= $escape($rfi['created_at']) ?></p>
+                <p class="muted">负责人：<?= $escape($rfi['assignee_name']) ?> · 截止：<?= $escape(\ProjectO\Support::formatDateTime($rfi['due_date'])) ?> · 创建：<?= $escape(\ProjectO\Support::formatDateTime($rfi['created_at'])) ?></p>
 
                 <?php if ($rfi['response_text']): ?>
                     <section class="record-tools">
@@ -272,7 +272,7 @@ ob_start();
                                         <div>
                                             <span class="<?= (int) $followUp['is_completed'] === 1 ? 'is-complete' : '' ?>"><?= $escape($followUp['title']) ?></span>
                                             <?php foreach ($followUp['status_history'] as $event): ?>
-                                                <span class="muted record-meta"><?= $escape($event['changed_at']) ?> · <?= $escape($event['reason']) ?></span>
+                                                <span class="muted record-meta"><?= $escape(\ProjectO\Support::formatDateTime($event['changed_at'])) ?> · <?= $escape($event['reason']) ?></span>
                                             <?php endforeach; ?>
                                         </div>
                                         <?php if ((int) $followUp['is_completed'] !== 1): ?>
@@ -353,7 +353,7 @@ ob_start();
                             <?php foreach ($rfi['status_history'] as $event): ?>
                                 <li>
                                     <strong><?= $escape($event['old_status'] ?? '新建') ?> → <?= $escape($event['new_status']) ?></strong>
-                                    <span><?= $escape($event['changed_at']) ?> · 操作人 #<?= (int) $event['changed_by'] ?></span>
+                                    <span><?= $escape(\ProjectO\Support::formatDateTime($event['changed_at'])) ?> · 操作人 #<?= (int) $event['changed_by'] ?></span>
                                     <p><?= nl2br($escape($event['reason'])) ?></p>
                                     <?php if ($event['evidence_reference']): ?><p>证据档案：<?= $escape($event['evidence_reference']) ?></p><?php endif; ?>
                                 </li>

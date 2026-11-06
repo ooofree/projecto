@@ -81,6 +81,13 @@ ob_start();
             <input type="search" placeholder="搜索问题…" data-list-search="issues-table">
         </label>
     </div>
+    <div class="toolbar">
+        <form method="post" action="">
+            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+            <input type="hidden" name="action" value="issue.export">
+            <button class="button button-secondary" type="submit">导出 Excel</button>
+        </form>
+    </div>
     <?php if ($issues === []): ?>
         <p class="empty-state">当前项目还没有问题记录。</p>
     <?php else: ?>
@@ -105,7 +112,7 @@ ob_start();
                             <td><span class="badge"><?= $escape($statusLabels[$issue['status']] ?? $issue['status']) ?></span></td>
                             <td><?= $escape($issue['location'] ?: '—') ?></td>
                             <td><?= count($issue['images']) ?></td>
-                            <td><?= $escape($issue['updated_at']) ?></td>
+                            <td><?= $escape(\ProjectO\Support::formatDateTime($issue['updated_at'])) ?></td>
                             <td><button class="button button-secondary" type="button" data-dialog-open="issue-dialog-<?= (int) $issue['issue_id'] ?>">查看 / 编辑</button></td>
                         </tr>
                     <?php endforeach; ?>
@@ -123,7 +130,7 @@ ob_start();
                     </div>
                     <button class="button button-quiet" type="button" data-dialog-close>关闭</button>
                 </div>
-                <p class="muted">登记于 <?= $escape($issue['reported_at']) ?> · 登记人编号 #<?= (int) $issue['reported_by'] ?></p>
+                <p class="muted">登记于 <?= $escape(\ProjectO\Support::formatDateTime($issue['reported_at'])) ?> · 登记人编号 #<?= (int) $issue['reported_by'] ?></p>
 
                 <?php if ($canEdit): ?>
                     <form method="post" class="form-grid">
@@ -213,7 +220,7 @@ ob_start();
                                         <div>
                                             <span class="<?= (int) $followUp['is_completed'] === 1 ? 'is-complete' : '' ?>"><?= $escape($followUp['title']) ?></span>
                                             <?php foreach ($followUp['status_history'] as $event): ?>
-                                                <span class="muted record-meta"><?= $escape($event['changed_at']) ?> · <?= $escape($event['reason']) ?></span>
+                                                <span class="muted record-meta"><?= $escape(\ProjectO\Support::formatDateTime($event['changed_at'])) ?> · <?= $escape($event['reason']) ?></span>
                                             <?php endforeach; ?>
                                         </div>
                                         <?php if ((int) $followUp['is_completed'] !== 1): ?>
@@ -294,7 +301,7 @@ ob_start();
                             <?php foreach ($issue['status_history'] as $event): ?>
                                 <li>
                                     <strong><?= $escape($event['old_status'] ?? '新建') ?> → <?= $escape($event['new_status']) ?></strong>
-                                    <span><?= $escape($event['changed_at']) ?> · 操作人 #<?= (int) $event['changed_by'] ?></span>
+                                    <span><?= $escape(\ProjectO\Support::formatDateTime($event['changed_at'])) ?> · 操作人 #<?= (int) $event['changed_by'] ?></span>
                                     <p><?= nl2br($escape($event['reason'])) ?></p>
                                     <?php if ($event['evidence_reference']): ?><p>证据档案：<?= $escape($event['evidence_reference']) ?></p><?php endif; ?>
                                 </li>
