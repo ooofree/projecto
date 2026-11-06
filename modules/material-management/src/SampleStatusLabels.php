@@ -30,6 +30,25 @@ final class SampleStatusLabels
         'rejected' => '已拒绝',
     ];
 
+    /** Badge color tones, keyed by status code (see .status-badge in app.css). */
+    public const DOCUMENT_TONES = [
+        'pending_submission' => 'amber',
+        'submitted' => 'blue',
+        'reviewed' => 'green',
+    ];
+
+    public const SENT_TONES = [
+        'not_sent' => 'orange',
+        'sent' => 'blue',
+        'partially_sent' => 'amber',
+    ];
+
+    public const APPROVAL_TONES = [
+        'pending' => 'purple',
+        'approved' => 'green',
+        'rejected' => 'red',
+    ];
+
     public static function document(string $status): string
     {
         return self::DOCUMENT[$status] ?? $status;
@@ -43,5 +62,20 @@ final class SampleStatusLabels
     public static function approval(string $status): string
     {
         return self::APPROVAL[$status] ?? $status;
+    }
+
+    public static function documentTone(string $status): string
+    {
+        return self::DOCUMENT_TONES[$status] ?? 'neutral';
+    }
+
+    public static function sentTone(string $status): string
+    {
+        return self::SENT_TONES[$status] ?? 'neutral';
+    }
+
+    public static function approvalTone(string $status): string
+    {
+        return self::APPROVAL_TONES[$status] ?? 'neutral';
     }
 }

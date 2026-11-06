@@ -790,6 +790,14 @@ materialTestCheck(
     'Sample tracking page markup must not repeat element IDs.'
 );
 materialTestCheck(
+    str_contains($sampleTestHtml, 'status-badge is-green')
+        && str_contains($sampleTestHtml, 'status-badge is-purple')
+        && str_contains($sampleTestHtml, 'status-badge is-blue')
+        && str_contains($sampleTestHtml, 'status-badge is-orange')
+        && str_contains($sampleTestHtml, 'status-badge is-amber'),
+    'Sample tracking should render status columns as colored badges.'
+);
+materialTestCheck(
     substr_count($sampleTestHtml, '<dialog class="edit-dialog') === count($samplePage->data['samples']) * 2 + 1,
     'Sample tracking should render create, edit and delete dialogs for each sample.'
 );

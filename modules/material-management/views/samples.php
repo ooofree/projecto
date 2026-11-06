@@ -2,6 +2,9 @@
 $documentLabels = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::DOCUMENT;
 $sentLabels = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::SENT;
 $approvalLabels = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::APPROVAL;
+$documentTones = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::DOCUMENT_TONES;
+$sentTones = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::SENT_TONES;
+$approvalTones = \ProjectO\Modules\MaterialManagement\SampleStatusLabels::APPROVAL_TONES;
 $locationOptions = [];
 foreach ($locations['buildings'] as $location) {
     $locationOptions[] = ['value' => 'building:' . $location['building_id'], 'label' => $location['building_number'] . ' ' . $location['building_name']];
@@ -84,11 +87,11 @@ require __DIR__ . '/_nav.php';
                         <td><?= $escape($sample['location_name'] !== '' ? $sample['location_name'] : '—') ?></td>
                         <td><?= (int) $sample['sample_quantity'] ?></td>
                         <td><?= $escape($sample['color'] ?: '—') ?></td>
-                        <td><?= $escape($documentLabels[$sample['document_status']] ?? $sample['document_status']) ?></td>
-                        <td><?= $escape($sentLabels[$sample['sent_status']] ?? $sample['sent_status']) ?></td>
+                        <td><span class="status-badge is-<?= $escape($documentTones[$sample['document_status']] ?? 'neutral') ?>"><?= $escape($documentLabels[$sample['document_status']] ?? $sample['document_status']) ?></span></td>
+                        <td><span class="status-badge is-<?= $escape($sentTones[$sample['sent_status']] ?? 'neutral') ?>"><?= $escape($sentLabels[$sample['sent_status']] ?? $sample['sent_status']) ?></span></td>
                         <td><?= $escape($sample['sent_date'] ?: '—') ?></td>
                         <td>
-                            <?= $escape($approvalLabels[$sample['owner_approval_status']] ?? $sample['owner_approval_status']) ?>
+                            <span class="status-badge is-<?= $escape($approvalTones[$sample['owner_approval_status']] ?? 'neutral') ?>"><?= $escape($approvalLabels[$sample['owner_approval_status']] ?? $sample['owner_approval_status']) ?></span>
                             <?php if ($sample['owner_approval_date']): ?>
                                 <span class="material-secondary"><?= $escape($sample['owner_approval_date']) ?></span>
                             <?php endif; ?>

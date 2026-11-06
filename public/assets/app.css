@@ -530,3 +530,19 @@ body.theme-dark .button-danger:hover { background: #8c544d; }
     .admin-nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
     .admin-nav a { flex: 0 0 auto; min-height: 36px; padding: 7px 11px; font-size: .8rem; white-space: nowrap; }
 }
+
+.status-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 640; line-height: 1.5; white-space: nowrap; }
+.status-badge.is-green { background: #d7f2e4; color: #10714e; }
+.status-badge.is-blue { background: #dbeafe; color: #1668dc; }
+.status-badge.is-amber { background: #fdf0c7; color: #946205; }
+.status-badge.is-orange { background: #ffe4d1; color: #c05621; }
+.status-badge.is-purple { background: #e9e2ff; color: #6553d8; }
+.status-badge.is-red { background: #ffdcdd; color: #c0392b; }
+.status-badge.is-neutral { background: var(--surface-muted); color: var(--text-muted); }
+body.theme-dark .status-badge.is-green { background: rgb(16 113 78 / 30%); color: #82e3b4; }
+body.theme-dark .status-badge.is-blue { background: rgb(22 104 220 / 32%); color: #93bdff; }
+body.theme-dark .status-badge.is-amber { background: rgb(148 98 5 / 34%); color: #ffd97a; }
+body.theme-dark .status-badge.is-orange { background: rgb(192 86 33 / 32%); color: #ffb184; }
+body.theme-dark .status-badge.is-purple { background: rgb(101 83 216 / 34%); color: #c9bfff; }
+body.theme-dark .status-badge.is-red { background: rgb(192 57 43 / 34%); color: #ff9e97; }
+body.theme-dark .status-badge.is-neutral { background: rgb(255 255 255 / 8%); color: #c1cac4; }
