@@ -3,12 +3,12 @@ declare(strict_types=1);
 
 namespace ProjectO\Modules\MaterialManagement;
 
-use finfo;
 use ProjectO\CurrencyCatalog;
 use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Storage\ImageUpload;
 use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
 use ProjectO\Support;
@@ -170,18 +170,7 @@ final class MaterialManagementPlugin implements PluginInterface
         $projectId = (int) $project['project_id'];
         $canViewQuotations = Support::hasPermission($this->context->db, 'view_material_quotations');
         $samples = $this->projectMaterials->listSamples($projectId, $canViewQuotations);
-        if ($this->imageStorage->isConfigured()) {
-            foreach ($samples as &$sample) {
-                foreach ($sample['images'] as &$image) {
-                    $image['url'] = $this->imageStorage->signedReadUrl(
-                        (string) $image['object_key'],
-                        (string) $image['content_type']
-                    );
-                }
-                unset($image);
-            }
-            unset($sample);
-        }
+        $this->attachImageUrls($samples);
 
         $canManageSettings = Support::hasPermission($this->context->db, 'manage_document_settings')
             || Support::hasPermission($this->context->db, 'manage_platform');
@@ -441,42 +430,13 @@ final class MaterialManagementPlugin implements PluginInterface
             );
         }
 
-        $files = $input['_files'] ?? null;
-        $file = is_array($files) ? ($files['image'] ?? null) : null;
-        if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-            throw new HttpException('请选择一张有效的样品图片后重试。', 422);
-        }
-        $temporaryPath = $file['tmp_name'] ?? null;
-        if (!is_string($temporaryPath) || !is_uploaded_file($temporaryPath)) {
-            throw new HttpException('上传文件校验失败。', 422);
-        }
-        $size = filesize($temporaryPath);
-        if ($size === false || $size < 1 || $size > 5 * 1024 * 1024) {
-            throw new HttpException('图片大小必须大于 0 且不超过 5 MB。', 422);
-        }
-        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($temporaryPath);
-        $extensions = [
-            'image/png' => 'png',
-            'image/jpeg' => 'jpg',
-            'image/gif' => 'gif',
-            'image/bmp' => 'bmp',
-            'image/webp' => 'webp',
-        ];
-        if (!is_string($mime) || !isset($extensions[$mime])) {
-            throw new HttpException('样品图片仅支持 PNG、JPEG、GIF、BMP 和 WebP 格式。', 422);
-        }
-        $originalName = $file['name'] ?? '';
-        if (!is_string($originalName)) {
-            $originalName = '';
-        }
-        $originalName = trim(preg_replace('/[\x00-\x1F\x7F]/u', '', basename(str_replace('\\', '/', $originalName))) ?? '');
-        if ($originalName === '') {
-            $originalName = 'sample-image.' . $extensions[$mime];
-        }
-        $originalName = mb_substr($originalName, 0, 255);
-        $objectKey = 'samples/' . $projectId . '/' . $sampleId . '/' . bin2hex(random_bytes(16)) . '.' . $extensions[$mime];
+        $file = $this->uploadedFile($input);
+        $image = ImageUpload::inspect($file['path']);
+        $originalName = ImageUpload::originalName($file['name'], $image['extension']);
+        $objectKey = 'samples/' . $projectId . '/' . $sampleId . '/'
+            . bin2hex(random_bytes(16)) . '.' . $image['extension'];
 
-        $this->imageStorage->upload($objectKey, $temporaryPath, $mime);
+        $this->imageStorage->upload($objectKey, $file['path'], $image['mime']);
         try {
             $imageId = $this->projectMaterials->addImage(
                 $projectId,
@@ -484,8 +444,8 @@ final class MaterialManagementPlugin implements PluginInterface
                 $this->userId(),
                 $objectKey,
                 $originalName,
-                $mime,
-                $size
+                $image['mime'],
+                $image['size']
             );
         } catch (Throwable $exception) {
             try {
@@ -509,6 +469,7 @@ final class MaterialManagementPlugin implements PluginInterface
         $projectId = (int) $project['project_id'];
         $canViewQuotations = Support::hasPermission($this->context->db, 'view_material_quotations');
         $samples = $this->projectMaterials->listSamples($projectId, $canViewQuotations, null);
+        $this->attachImageUrls($samples);
 
         // Column labels and layout follow the legacy 样品信息追踪表 export.
         $headers = [
@@ -585,6 +546,30 @@ final class MaterialManagementPlugin implements PluginInterface
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             $body
         );
+    }
+
+    /**
+     * Adds short-lived signed read URLs to the sample images so the list
+     * thumbnails and the Excel export can embed them without exposing the
+     * private bucket.
+     *
+     * @param list<array<string, mixed>> $samples
+     */
+    private function attachImageUrls(array &$samples): void
+    {
+        if (!$this->imageStorage->isConfigured()) {
+            return;
+        }
+        foreach ($samples as &$sample) {
+            foreach ($sample['images'] as &$image) {
+                $image['url'] = $this->imageStorage->signedReadUrl(
+                    (string) $image['object_key'],
+                    (string) $image['content_type']
+                );
+            }
+            unset($image);
+        }
+        unset($sample);
     }
 
     private static function exportText(mixed $value): string
@@ -741,6 +726,28 @@ final class MaterialManagementPlugin implements PluginInterface
         $id = $this->requiredId($input, 'tender_item_id');
         $this->tenderList->delete($this->currentProjectId(), $id);
         return $this->complete('material.tender.delete', '招标清单项已删除。', $id, '?page=tender-list');
+    }
+
+    /**
+     * @return array{path: string, name: string}
+     */
+    private function uploadedFile(array $input): array
+    {
+        $files = $input['_files'] ?? null;
+        $file = is_array($files) ? ($files['image'] ?? null) : null;
+        if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new HttpException('请选择一张有效的图片后重试。', 422);
+        }
+        $temporaryPath = $file['tmp_name'] ?? null;
+        if (!is_string($temporaryPath) || !is_uploaded_file($temporaryPath)) {
+            throw new HttpException('上传文件校验失败。', 422);
+        }
+        $originalName = $file['name'] ?? '';
+        if (!is_string($originalName)) {
+            $originalName = '';
+        }
+
+        return ['path' => $temporaryPath, 'name' => $originalName];
     }
 
     private function requireMaterialEdit(): int

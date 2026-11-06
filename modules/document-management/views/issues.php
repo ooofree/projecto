@@ -32,6 +32,9 @@ ob_start();
         <a class="button button-secondary" href="?page=document-settings">系统设置</a>
     <?php endif; ?>
 </nav>
+<?php if (!$imageStorageReady): ?>
+    <div class="notice notice-info">图片存储尚未配置；问题与 RFI 图片暂不可上传或查看。</div>
+<?php endif; ?>
 
 <?php if ($canCreate): ?>
     <dialog class="edit-dialog" id="issue-create-dialog">
@@ -84,7 +87,7 @@ ob_start();
         <div class="table-wrap">
             <table class="data-table">
                 <thead>
-                    <tr><th>编号</th><th>问题</th><th>严重程度</th><th>状态</th><th>位置</th><th>更新时间</th><th>操作</th></tr>
+                    <tr><th>编号</th><th>问题</th><th>严重程度</th><th>状态</th><th>位置</th><th>图片</th><th>更新时间</th><th>操作</th></tr>
                 </thead>
                 <tbody id="issues-table">
                     <?php foreach ($issues as $issue): ?>
@@ -101,6 +104,7 @@ ob_start();
                             <td><span class="badge badge-neutral"><?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?></span></td>
                             <td><span class="badge"><?= $escape($statusLabels[$issue['status']] ?? $issue['status']) ?></span></td>
                             <td><?= $escape($issue['location'] ?: '—') ?></td>
+                            <td><?= count($issue['images']) ?></td>
                             <td><?= $escape($issue['updated_at']) ?></td>
                             <td><button class="button button-secondary" type="button" data-dialog-open="issue-dialog-<?= (int) $issue['issue_id'] ?>">查看 / 编辑</button></td>
                         </tr>
@@ -237,6 +241,49 @@ ob_start();
                         </form>
                     </details>
                 <?php endif; ?>
+
+                <details class="record-tools">
+                    <summary>图片附件（<?= count($issue['images']) ?>）</summary>
+                    <?php if ($issue['images'] !== []): ?>
+                        <ul class="dialog-images">
+                            <?php foreach ($issue['images'] as $image): ?>
+                                <li>
+                                    <?php if (isset($image['url'])): ?>
+                                        <a href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer"><?= $escape($image['original_name']) ?></a>
+                                    <?php else: ?>
+                                        <span><?= $escape($image['original_name']) ?></span>
+                                    <?php endif; ?>
+                                    <span class="muted"><?= number_format((int) $image['file_size'] / 1024, 1) ?> KB</span>
+                                    <?php if ($canEdit && $imageStorageReady): ?>
+                                        <form method="post" class="inline-form" data-confirm="删除后图片将从记录和对象存储中移除。">
+                                            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                            <input type="hidden" name="action" value="issue.image.delete">
+                                            <input type="hidden" name="issue_id" value="<?= (int) $issue['issue_id'] ?>">
+                                            <input type="hidden" name="image_id" value="<?= (int) $image['image_id'] ?>">
+                                            <button class="button button-quiet" type="submit">删除</button>
+                                        </form>
+                                    <?php endif; ?>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php else: ?>
+                        <p class="muted">尚未上传图片。</p>
+                    <?php endif; ?>
+                    <?php if ($canEdit): ?>
+                        <?php if ($imageStorageReady): ?>
+                            <form method="post" enctype="multipart/form-data" class="inline-form">
+                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                <input type="hidden" name="action" value="issue.image.upload">
+                                <input type="hidden" name="issue_id" value="<?= (int) $issue['issue_id'] ?>">
+                                <label>上传图片<input type="file" name="image" accept="image/png,image/jpeg,image/gif,image/bmp,image/webp" required></label>
+                                <button class="button button-secondary" type="submit">上传</button>
+                                <span class="muted">PNG/JPEG/GIF/BMP/WebP，最大 5 MB</span>
+                            </form>
+                        <?php else: ?>
+                            <p class="muted">图片存储未配置，暂不可上传或查看；可在文件模块“系统设置”中配置。</p>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </details>
 
                 <details class="record-tools">
                     <summary>状态历史（<?= count($issue['status_history']) ?>）</summary>

@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 use ProjectO\HttpException;
 use ProjectO\Application;
+use ProjectO\Modules\DocumentManagement\DocumentImageService;
 use ProjectO\Modules\DocumentManagement\DocumentManagementPlugin;
 use ProjectO\Modules\DocumentManagement\DocumentService;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginRegistry;
 use ProjectO\Storage\CloudStorageSettings;
+use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
@@ -28,6 +30,34 @@ function documentTestExpectStatus(callable $operation, int $status, string $mess
         if ($exception->statusCode !== $status) {
             throw $exception;
         }
+    }
+}
+
+final class DocumentTestImageStorage implements ObjectStorageInterface
+{
+    /** @var array<string, array{path: string, content_type: string}> */
+    public array $uploaded = [];
+    /** @var list<string> */
+    public array $deleted = [];
+
+    public function isConfigured(): bool
+    {
+        return true;
+    }
+
+    public function upload(string $objectKey, string $filePath, string $contentType): void
+    {
+        $this->uploaded[$objectKey] = ['path' => $filePath, 'content_type' => $contentType];
+    }
+
+    public function signedReadUrl(string $objectKey, string $contentType): string
+    {
+        return 'https://r2.example.test/' . $objectKey . '?signature=test';
+    }
+
+    public function delete(string $objectKey): void
+    {
+        $this->deleted[] = $objectKey;
     }
 }
 
@@ -279,6 +309,36 @@ $db->exec(
         changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (follow_up_id, project_id) REFERENCES document_rfi_follow_ups (follow_up_id, project_id),
         FOREIGN KEY (changed_by) REFERENCES Users (user_id)
+    )"
+);
+$db->exec(
+    "CREATE TABLE document_issue_images (
+        image_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        issue_id INTEGER NOT NULL,
+        project_id INTEGER NOT NULL,
+        object_key TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        uploaded_by INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (issue_id, project_id) REFERENCES document_issues (issue_id, project_id),
+        FOREIGN KEY (uploaded_by) REFERENCES Users (user_id)
+    )"
+);
+$db->exec(
+    "CREATE TABLE document_rfi_images (
+        image_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rfi_id INTEGER NOT NULL,
+        project_id INTEGER NOT NULL,
+        object_key TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        uploaded_by INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (rfi_id, project_id) REFERENCES document_rfis (rfi_id, project_id),
+        FOREIGN KEY (uploaded_by) REFERENCES Users (user_id)
     )"
 );
 
@@ -940,5 +1000,197 @@ documentTestExpectStatus(
     503,
     'Unconfigured storage must refuse uploads with a diagnosable error.'
 );
+
+// --- Issue and RFI images use the shared private object storage ---
+documentTestCheck(
+    isset($registry->migrations()['document.management/202611060001_issue_rfi_images.sql']),
+    'The issue/RFI image migration must be exposed to the installer.'
+);
+$faviconPng = base64_decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    true
+);
+$imageTempPath = tempnam(sys_get_temp_dir(), 'document-image-');
+documentTestCheck(
+    $imageTempPath !== false && is_string($faviconPng),
+    'The image fixture should be created.'
+);
+file_put_contents((string) $imageTempPath, (string) $faviconPng);
+
+$fakeStorage = new DocumentTestImageStorage();
+$imageService = new DocumentImageService($db);
+$issueImageId = $imageService->addIssueImage(
+    1,
+    $issueId,
+    1,
+    (string) $imageTempPath,
+    'defect.png',
+    $fakeStorage
+);
+documentTestCheck(
+    count($fakeStorage->uploaded) === 1,
+    'Adding an issue image must upload the object to the configured storage.'
+);
+$uploadedIssueKey = (string) array_key_first($fakeStorage->uploaded);
+documentTestCheck(
+    str_starts_with($uploadedIssueKey, 'issues/1/' . $issueId . '/')
+        && str_ends_with($uploadedIssueKey, '.png'),
+    'Issue images must be stored under a project-scoped object key.'
+);
+$issueImages = $imageService->issueImagesForProject(1)[$issueId] ?? [];
+documentTestCheck(
+    count($issueImages) === 1
+        && $issueImages[0]['original_name'] === 'defect.png'
+        && (int) $issueImages[0]['file_size'] === strlen((string) $faviconPng),
+    'Issue image metadata must be persisted for the current project only.'
+);
+documentTestExpectStatus(
+    static fn () => $imageService->addIssueImage(2, $issueId, 1, (string) $imageTempPath, 'cross.png', $fakeStorage),
+    404,
+    'Images must not be attached to another project issue.'
+);
+$rfiImageId = $imageService->addRfiImage(
+    1,
+    $rfiId,
+    1,
+    (string) $imageTempPath,
+    'rfi-evidence.png',
+    $fakeStorage
+);
+$rfiImages = $imageService->rfiImagesForProject(1)[$rfiId] ?? [];
+documentTestCheck(
+    count($rfiImages) === 1 && $rfiImages[0]['original_name'] === 'rfi-evidence.png',
+    'RFI image metadata must be persisted.'
+);
+$imageService->deleteIssueImage(1, $issueId, $issueImageId, $fakeStorage);
+documentTestCheck(
+    (int) $db->query('SELECT COUNT(*) FROM document_issue_images WHERE issue_id = ' . $issueId)->fetchColumn() === 0
+        && in_array($uploadedIssueKey, $fakeStorage->deleted, true),
+    'Deleting an issue image must remove both the reference and the stored object.'
+);
+@unlink((string) $imageTempPath);
+
+$reporter = new DocumentManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/document-management', $fakeStorage)
+);
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id IN (3, 4)');
+documentTestExpectStatus(
+    static fn () => $reporter->dispatch('issue.image.upload', ['issue_id' => (string) $issueId]),
+    403,
+    'Uploading issue images must require issue editing permission.'
+);
+documentTestExpectStatus(
+    static fn () => $reporter->dispatch('rfi.image.delete', [
+        'rfi_id' => (string) $rfiId,
+        'image_id' => (string) $rfiImageId,
+    ]),
+    403,
+    'Deleting RFI images must require issue editing permission.'
+);
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 3), (1, 4)');
+
+$unconfiguredPlugin = new DocumentManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/document-management')
+);
+documentTestExpectStatus(
+    static fn () => $unconfiguredPlugin->dispatch('issue.image.upload', ['issue_id' => (string) $issueId]),
+    503,
+    'Image uploads must fail clearly when object storage is not configured.'
+);
+documentTestExpectStatus(
+    static fn () => $reporter->dispatch('issue.image.upload', [
+        'issue_id' => (string) $issueId,
+        '_files' => ['image' => ['error' => UPLOAD_ERR_NO_FILE]],
+    ]),
+    422,
+    'Image uploads must reject missing files.'
+);
+$rfiImageDelete = $reporter->dispatch('rfi.image.delete', [
+    'rfi_id' => (string) $rfiId,
+    'image_id' => (string) $rfiImageId,
+]);
+documentTestCheck(
+    $rfiImageDelete->type === 'redirect',
+    'Deleting an RFI image through the plugin route should redirect back to the RFI page.'
+);
+documentTestCheck(
+    (int) $db->query(
+        "SELECT COUNT(*) FROM audit_logs WHERE action = 'document.rfi.image.delete'"
+    )->fetchColumn() >= 1,
+    'Image deletions must be audited.'
+);
+
+$cloudStorage = new CloudStorageSettings($db);
+$cloudStorage->save([
+    'enabled' => '1',
+    'account_id' => 'd8f4d2fa4b3c4d5e8f9012345678abcd',
+    'bucket' => 'project-o-images',
+    'access_key_id' => 'r2-access-key-id-example',
+    'secret_access_key' => 'r2-secret-access-key-example',
+]);
+$db->exec(
+    "INSERT INTO document_issue_images (issue_id, project_id, object_key, original_name, content_type, file_size, uploaded_by)
+     VALUES ({$issueId}, 1, 'issues/1/{$issueId}/signed.png', 'signed.png', 'image/png', 68, 1)"
+);
+$db->exec(
+    "INSERT INTO document_rfi_images (rfi_id, project_id, object_key, original_name, content_type, file_size, uploaded_by)
+     VALUES ({$rfiId}, 1, 'rfis/1/{$rfiId}/signed.png', 'signed-rfi.png', 'image/png', 68, 1)"
+);
+$realStoragePlugin = new DocumentManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/document-management')
+);
+$sdkAvailable = class_exists(\Aws\S3\S3Client::class);
+$signedIssues = $realStoragePlugin->dispatch('issues', []);
+$signedRfis = $realStoragePlugin->dispatch('rfis', []);
+$_GET = ['page' => 'issues'];
+ob_start();
+(new Application($db))->run();
+$renderedIssuesWithImages = ob_get_clean();
+$_GET = ['page' => 'rfis'];
+ob_start();
+(new Application($db))->run();
+$renderedRfisWithImages = ob_get_clean();
+if ($sdkAvailable) {
+    documentTestCheck(
+        str_contains($renderedIssuesWithImages, 'X-Amz-Signature=')
+            && str_contains($renderedIssuesWithImages, 'signed.png')
+            && str_contains($renderedRfisWithImages, 'X-Amz-Signature=')
+            && str_contains($renderedRfisWithImages, 'signed-rfi.png'),
+        'Issue and RFI images must render short-lived signed URLs from the shared storage configuration.'
+    );
+} else {
+    documentTestCheck(
+        str_contains($renderedIssuesWithImages, '图片存储尚未配置')
+            && str_contains($renderedRfisWithImages, '图片存储尚未配置'),
+        'Pages must explain when image storage is unavailable.'
+    );
+}
+documentTestCheck(
+    str_contains($renderedIssuesWithImages, 'value="issue.image.upload"')
+        || !$sdkAvailable,
+    'Issue dialogs must expose the image upload form when storage is configured.'
+);
+documentTestCheck(
+    !str_contains($renderedIssuesWithImages, 'r2-secret-access-key-example')
+        && !str_contains($renderedRfisWithImages, 'r2-secret-access-key-example'),
+    'Rendered document pages must never expose the storage secret.'
+);
+$issueWithImages = array_values(array_filter(
+    $signedIssues->data['issues'],
+    static fn (array $row): bool => (int) $row['issue_id'] === $issueId
+));
+$rfiWithImages = array_values(array_filter(
+    $signedRfis->data['rfis'],
+    static fn (array $row): bool => (int) $row['rfi_id'] === $rfiId
+));
+documentTestCheck(
+    $issueWithImages !== [] && $issueWithImages[0]['images'] !== []
+        && $rfiWithImages !== [] && $rfiWithImages[0]['images'] !== [],
+    'Issue and RFI page data must include their image attachments.'
+);
+
+$db->exec('DELETE FROM document_issue_images');
+$db->exec('DELETE FROM document_rfi_images');
+$db->exec("DELETE FROM System_Settings WHERE setting_key LIKE 'cloud_storage.%'");
 
 echo "Document management tests passed.\n";

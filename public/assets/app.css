@@ -503,3 +503,8 @@ body.theme-dark .auth-card { background: var(--surface); border-color: var(--bor
 .dialog-images { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; padding: 0; list-style: none; }
 .dialog-images li { display: flex; align-items: center; gap: 6px; padding: 5px 9px; font-size: .82rem; background: var(--surface-muted); border: 1px solid var(--border); border-radius: 8px; }
 .edit-dialog.wide { width: min(960px, calc(100vw - 32px)); }
+
+/* Sample image thumbnails (samples page and edit dialogs) */
+.thumb-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.thumb { width: 64px; height: 48px; display: block; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-muted); }
+.dialog-images .thumb { width: 44px; height: 33px; }

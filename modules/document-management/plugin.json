@@ -23,7 +23,11 @@
         "POST rfi.transition": "rfi.transition",
         "POST rfi.followup.create": "rfi.followup.create",
         "POST rfi.followup.complete": "rfi.followup.complete",
-        "POST document.settings.save": "settings.save"
+        "POST document.settings.save": "settings.save",
+        "POST issue.image.upload": "issue.image.upload",
+        "POST issue.image.delete": "issue.image.delete",
+        "POST rfi.image.upload": "rfi.image.upload",
+        "POST rfi.image.delete": "rfi.image.delete"
     },
     "migrations": [
         "database/migrations"

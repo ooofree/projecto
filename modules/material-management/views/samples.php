@@ -98,11 +98,15 @@ require __DIR__ . '/_nav.php';
                                 —
                             <?php else: ?>
                                 <?php $linkedImages = 0; ?>
-                                <?php foreach ($sample['images'] as $imageIndex => $image): ?>
-                                    <?php if (isset($image['url'])): $linkedImages++; ?>
-                                        <a class="material-secondary" href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer">图片 <?= $imageIndex + 1 ?></a>
-                                    <?php endif; ?>
-                                <?php endforeach; ?>
+                                <div class="thumb-list">
+                                    <?php foreach ($sample['images'] as $image): ?>
+                                        <?php if (isset($image['url'])): $linkedImages++; ?>
+                                            <a href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer" title="<?= $escape($image['original_name']) ?>">
+                                                <img class="thumb" src="<?= $escape($image['url']) ?>" alt="<?= $escape($image['original_name']) ?>" loading="lazy">
+                                            </a>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </div>
                                 <?php if ($linkedImages === 0): ?>
                                     <span class="muted"><?= count($sample['images']) ?> 张（R2 未配置）</span>
                                 <?php endif; ?>
@@ -301,6 +305,7 @@ require __DIR__ . '/_nav.php';
                         <?php foreach ($sample['images'] as $image): ?>
                             <li>
                                 <?php if (isset($image['url'])): ?>
+                                    <a href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer"><img class="thumb" src="<?= $escape($image['url']) ?>" alt="<?= $escape($image['original_name']) ?>" loading="lazy"></a>
                                     <a href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer"><?= $escape($image['original_name']) ?></a>
                                 <?php else: ?>
                                     <span><?= $escape($image['original_name']) ?>（R2 未配置）</span>

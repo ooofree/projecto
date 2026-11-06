@@ -8,16 +8,21 @@ use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
 use ProjectO\Storage\CloudStorageSettings;
+use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
 use ProjectO\Support;
 
 final class DocumentManagementPlugin implements PluginInterface
 {
     private DocumentService $documents;
+    private DocumentImageService $images;
+    private ObjectStorageInterface $imageStorage;
 
     public function __construct(private readonly PluginContext $context)
     {
         $this->documents = new DocumentService($context->db);
+        $this->images = new DocumentImageService($context->db);
+        $this->imageStorage = $context->objectStorage() ?? new R2ObjectStorage($context->db);
     }
 
     public function dispatch(string $handler, array $input): PluginResponse
@@ -38,6 +43,10 @@ final class DocumentManagementPlugin implements PluginInterface
             'rfi.followup.create' => $this->createRfiFollowUp($input),
             'rfi.followup.complete' => $this->completeRfiFollowUp($input),
             'settings.save' => $this->saveSettings($input),
+            'issue.image.upload' => $this->uploadIssueImage($input),
+            'issue.image.delete' => $this->deleteIssueImage($input),
+            'rfi.image.upload' => $this->uploadRfiImage($input),
+            'rfi.image.delete' => $this->deleteRfiImage($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
     }
@@ -79,6 +88,21 @@ final class DocumentManagementPlugin implements PluginInterface
             );
         }
         unset($issue);
+        $imageStorageReady = $this->imageStorage->isConfigured();
+        $images = $this->images->issueImagesForProject((int) $project['project_id']);
+        foreach ($issues as &$issue) {
+            $issue['images'] = $images[(int) $issue['issue_id']] ?? [];
+            if ($imageStorageReady) {
+                foreach ($issue['images'] as &$image) {
+                    $image['url'] = $this->imageStorage->signedReadUrl(
+                        (string) $image['object_key'],
+                        (string) $image['content_type']
+                    );
+                }
+                unset($image);
+            }
+        }
+        unset($issue);
 
         return $this->context->view('issues.php', [
             'title' => '问题管理',
@@ -88,6 +112,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'canEdit' => $this->canEdit(),
             'canManage' => $canManage,
+            'imageStorageReady' => $imageStorageReady,
         ]);
     }
 
@@ -105,6 +130,21 @@ final class DocumentManagementPlugin implements PluginInterface
             );
         }
         unset($rfi);
+        $imageStorageReady = $this->imageStorage->isConfigured();
+        $images = $this->images->rfiImagesForProject($projectId);
+        foreach ($rfis as &$rfi) {
+            $rfi['images'] = $images[(int) $rfi['rfi_id']] ?? [];
+            if ($imageStorageReady) {
+                foreach ($rfi['images'] as &$image) {
+                    $image['url'] = $this->imageStorage->signedReadUrl(
+                        (string) $image['object_key'],
+                        (string) $image['content_type']
+                    );
+                }
+                unset($image);
+            }
+        }
+        unset($rfi);
 
         return $this->context->view('rfis.php', [
             'title' => 'RFI 管理',
@@ -116,6 +156,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'canEdit' => $this->canEdit(),
             'canManage' => $canManage,
+            'imageStorageReady' => $imageStorageReady,
         ]);
     }
 
@@ -377,6 +418,132 @@ final class DocumentManagementPlugin implements PluginInterface
         if (!$this->canManageSettings()) {
             throw new HttpException('您没有权限执行此操作。', 403);
         }
+    }
+
+    private function uploadIssueImage(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $issueId = $this->requiredId($input, 'issue_id', '问题');
+        $this->images->requireIssue($projectId, $issueId);
+        $this->requireImageStorage();
+        $file = $this->uploadedFile($input);
+        $this->images->addIssueImage(
+            $projectId,
+            $issueId,
+            $this->userId(),
+            $file['path'],
+            $file['name'],
+            $this->imageStorage
+        );
+        Support::audit(
+            $this->context->db,
+            'document.issue.image.upload',
+            'Added an image to issue ' . $issueId . '.'
+        );
+        Support::flash('问题图片已上传至私有对象存储。');
+
+        return PluginResponse::redirect('?page=issues');
+    }
+
+    private function deleteIssueImage(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $issueId = $this->requiredId($input, 'issue_id', '问题');
+        $imageId = $this->requiredId($input, 'image_id', '图片');
+        $this->images->requireIssue($projectId, $issueId);
+        $this->requireImageStorage();
+        $this->images->deleteIssueImage($projectId, $issueId, $imageId, $this->imageStorage);
+        Support::audit(
+            $this->context->db,
+            'document.issue.image.delete',
+            'Removed image ' . $imageId . ' from issue ' . $issueId . '.'
+        );
+        Support::flash('问题图片已删除。');
+
+        return PluginResponse::redirect('?page=issues');
+    }
+
+    private function uploadRfiImage(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $rfiId = $this->requiredId($input, 'rfi_id', 'RFI');
+        $this->images->requireRfi($projectId, $rfiId);
+        $this->requireImageStorage();
+        $file = $this->uploadedFile($input);
+        $this->images->addRfiImage(
+            $projectId,
+            $rfiId,
+            $this->userId(),
+            $file['path'],
+            $file['name'],
+            $this->imageStorage
+        );
+        Support::audit(
+            $this->context->db,
+            'document.rfi.image.upload',
+            'Added an image to RFI ' . $rfiId . '.'
+        );
+        Support::flash('RFI 图片已上传至私有对象存储。');
+
+        return PluginResponse::redirect('?page=rfis');
+    }
+
+    private function deleteRfiImage(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $rfiId = $this->requiredId($input, 'rfi_id', 'RFI');
+        $imageId = $this->requiredId($input, 'image_id', '图片');
+        $this->images->requireRfi($projectId, $rfiId);
+        $this->requireImageStorage();
+        $this->images->deleteRfiImage($projectId, $rfiId, $imageId, $this->imageStorage);
+        Support::audit(
+            $this->context->db,
+            'document.rfi.image.delete',
+            'Removed image ' . $imageId . ' from RFI ' . $rfiId . '.'
+        );
+        Support::flash('RFI 图片已删除。');
+
+        return PluginResponse::redirect('?page=rfis');
+    }
+
+    private function requireImageStorage(): void
+    {
+        if (!$this->imageStorage->isConfigured()) {
+            throw new HttpException(
+                '尚未配置图片存储：请在文件模块“系统设置”完成设置，或核对部署环境变量与 AWS SDK 安装。',
+                503
+            );
+        }
+    }
+
+    /**
+     * @return array{path: string, name: string}
+     */
+    private function uploadedFile(array $input): array
+    {
+        $files = $input['_files'] ?? null;
+        $file = is_array($files) ? ($files['image'] ?? null) : null;
+        if (!is_array($file) || ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new HttpException('请选择一张有效的图片后重试。', 422);
+        }
+        $temporaryPath = $file['tmp_name'] ?? null;
+        if (!is_string($temporaryPath) || !is_uploaded_file($temporaryPath)) {
+            throw new HttpException('上传文件校验失败。', 422);
+        }
+        $originalName = $file['name'] ?? '';
+        if (!is_string($originalName)) {
+            $originalName = '';
+        }
+
+        return ['path' => $temporaryPath, 'name' => $originalName];
     }
 
     private function requireEdit(): void

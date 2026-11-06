@@ -81,6 +81,31 @@ function materialTestXlsxSheet(PluginResponse $response): string
     return $xml;
 }
 
+final class MaterialTestImageStorage implements ObjectStorageInterface
+{
+    public function __construct(private readonly string $fileUrl)
+    {
+    }
+
+    public function isConfigured(): bool
+    {
+        return true;
+    }
+
+    public function upload(string $objectKey, string $filePath, string $contentType): void
+    {
+    }
+
+    public function signedReadUrl(string $objectKey, string $contentType): string
+    {
+        return $this->fileUrl;
+    }
+
+    public function delete(string $objectKey): void
+    {
+    }
+}
+
 $db = new PDO('sqlite::memory:', options: [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -1057,6 +1082,62 @@ if (class_exists(\Aws\S3\S3Client::class)) {
     );
 }
 $db->exec("DELETE FROM System_Settings WHERE setting_key LIKE 'cloud_storage.%'");
+
+// Sample thumbnails and fixed-height Excel images (legacy export layout).
+$thumbPng = base64_decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    true
+);
+$thumbFile = tempnam(sys_get_temp_dir(), 'sample-thumb-');
+materialTestCheck($thumbFile !== false && is_string($thumbPng), 'The thumbnail fixture should be created.');
+file_put_contents((string) $thumbFile, (string) $thumbPng);
+$fakeImageStorage = new MaterialTestImageStorage('file://' . $thumbFile);
+$imagePlugin = new MaterialManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/material-management', $fakeImageStorage)
+);
+$projectMaterials->addImage(
+    1,
+    $linkedSampleId,
+    1,
+    'samples/1/' . $linkedSampleId . '/thumb.png',
+    'thumb.png',
+    'image/png',
+    68
+);
+$thumbHtml = renderMaterialTestView($imagePlugin->dispatch('samples', []));
+materialTestCheck(
+    str_contains($thumbHtml, 'class="thumb"')
+        && str_contains($thumbHtml, 'src="file://' . $thumbFile . '"'),
+    'The sample list must render image thumbnails from signed URLs.'
+);
+$thumbExport = $imagePlugin->dispatch('sample.export', []);
+$thumbExportBody = $thumbExport->data['body'] ?? null;
+materialTestCheck(
+    $thumbExport->type === 'download' && is_string($thumbExportBody),
+    'The sample export with images should return an xlsx download.'
+);
+$thumbExportPath = tempnam(sys_get_temp_dir(), 'sample-export-');
+materialTestCheck($thumbExportPath !== false, 'The export fixture path should be created.');
+file_put_contents((string) $thumbExportPath, (string) $thumbExportBody);
+$thumbZip = new ZipArchive();
+materialTestCheck(
+    $thumbZip->open((string) $thumbExportPath) === true,
+    'The image export should be a readable zip package.'
+);
+$thumbDrawing = (string) $thumbZip->getFromName('xl/drawings/drawing1.xml');
+$thumbSheet = (string) $thumbZip->getFromName('xl/worksheets/sheet1.xml');
+$thumbRels = (string) $thumbZip->getFromName('xl/drawings/_rels/drawing1.xml.rels');
+$thumbMedia = $thumbZip->locateName('xl/media/image1.png') !== false;
+$thumbZip->close();
+@unlink((string) $thumbExportPath);
+materialTestCheck(
+    $thumbMedia
+        && str_contains($thumbDrawing, 'cy="714375"')
+        && str_contains($thumbSheet, 'ht="85"')
+        && str_contains($thumbRels, 'file://' . $thumbFile),
+    'Exported sample images must embed at the legacy fixed height and link to the source.'
+);
+@unlink((string) $thumbFile);
 
 unset($_SESSION['active_project_id']);
 materialTestExpectStatus(
