@@ -2,3 +2,4 @@
 /vendor/
 /storage/*
 !/storage/.gitkeep
+index.php

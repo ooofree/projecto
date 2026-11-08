@@ -264,7 +264,10 @@ final class Application
         }
         header('Content-Length: ' . strlen($body));
         header('X-Content-Type-Options: nosniff');
-        header('Cache-Control: private, max-age=300');
+        // Inline images are immutable per object key (the key embeds 16 random
+        // bytes), so browsers may retain them for a week instead of refetching
+        // a multi-second remote read every five minutes.
+        header('Cache-Control: private, max-age=604800, immutable');
         echo $body;
     }
 

@@ -25,6 +25,8 @@ final class R2ObjectStorage implements ObjectStorageInterface
 
     private ?S3Client $client = null;
 
+    private ?LocalImageCache $imageCache = null;
+
     /** @var array{source: string, enabled: bool, account_id: string, bucket: string, access_key_id: string, secret_access_key: string}|null */
     private ?array $configuration = null;
 
@@ -88,12 +90,33 @@ final class R2ObjectStorage implements ObjectStorageInterface
 
     public function read(string $objectKey): string
     {
+        // A cache hit keeps the request off the remote bucket entirely; the
+        // object keys this platform generates embed 16 random bytes, so a key
+        // never maps to different content over time.
+        $cached = $this->imageCache()->get($objectKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
         $result = $this->client()->getObject([
             'Bucket' => $this->configuration()['bucket'],
             'Key' => $objectKey,
         ]);
+        $body = (string) $result['Body'];
+        $this->imageCache()->put($objectKey, $body);
 
-        return (string) $result['Body'];
+        return $body;
+    }
+
+    /**
+     * Reports the local image-cache state for the settings screen. Contains no
+     * credentials.
+     *
+     * @return array{directory: string, enabled: bool, writable: bool, ttl: int, entries: int, bytes: int}
+     */
+    public function imageCacheStatus(): array
+    {
+        return $this->imageCache()->status();
     }
 
     public function delete(string $objectKey): void
@@ -102,6 +125,12 @@ final class R2ObjectStorage implements ObjectStorageInterface
             'Bucket' => $this->configuration()['bucket'],
             'Key' => $objectKey,
         ]);
+        $this->imageCache()->forget($objectKey);
+    }
+
+    private function imageCache(): LocalImageCache
+    {
+        return $this->imageCache ??= new LocalImageCache();
     }
 
     private function client(): S3Client
