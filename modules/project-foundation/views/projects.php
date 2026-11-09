@@ -11,7 +11,7 @@ ob_start();
 <section class="page-heading projects-heading">
     <div>
         <p class="eyebrow">PROJECT WORKSPACE</p>
-        <h1>项目空间</h1>
+        <h1>项目首页</h1>
         <p class="muted">从项目总览快速进入空间、材料和文档等日常工作。</p>
     </div>
     <?php if ($archivedView): ?>
