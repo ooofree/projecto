@@ -61,7 +61,7 @@ ob_start();
                     <a class="quick-link" href="?page=spaces"><span class="quick-link-icon" aria-hidden="true">⌂</span><span>项目空间</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
                 <?php endif; ?>
                 <?php if ($canViewMaterials): ?>
-                    <a class="quick-link" href="?page=materials"><span class="quick-link-icon" aria-hidden="true">▦</span><span>材料目录</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
+                    <a class="quick-link" href="?page=materials"><span class="quick-link-icon" aria-hidden="true">▦</span><span>材料管理</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
                 <?php endif; ?>
                 <?php if ($canViewQuotations): ?>
                     <a class="quick-link" href="?page=quotations"><span class="quick-link-icon" aria-hidden="true">＄</span><span>材料报价</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>

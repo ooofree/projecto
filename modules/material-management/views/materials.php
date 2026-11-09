@@ -5,7 +5,7 @@ require __DIR__ . '/_nav.php';
 <section class="page-heading report-intro">
     <div>
         <p class="eyebrow">项目材料主数据</p>
-        <h1 class="report-heading">材料目录</h1>
+        <h1 class="report-heading">材料管理</h1>
         <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。分类和材料仅属于当前项目。</p>
     </div>
     <?php if ($canEdit): ?>

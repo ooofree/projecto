@@ -1,6 +1,6 @@
 <?php ob_start(); require __DIR__ . '/_nav.php'; ?>
 <section class="page-heading"><div><p class="eyebrow">项目估算 · 材料数量</p><h1>材料估算明细</h1><p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。本期仅记录空间、材料、估算数量和备注，不计算金额、税费、BOM 或汇总成本。</p></div></section>
-<?php if ($canEdit && ($choices['buildings'] === [] || $choices['materials'] === [])): ?><div class="notice notice-info">创建估算明细前，请先建立当前项目楼栋和材料目录。</div><?php endif; ?>
+<?php if ($canEdit && ($choices['buildings'] === [] || $choices['materials'] === [])): ?><div class="notice notice-info">创建估算明细前，请先建立当前项目楼栋，并在材料管理中维护材料。</div><?php endif; ?>
 <?php if ($canEdit && $choices['buildings'] !== [] && $choices['materials'] !== []): ?>
     <section class="panel">
         <div class="panel-heading"><h2>材料估算台账</h2><span class="muted"><?= count($estimates) ?> 条</span></div>

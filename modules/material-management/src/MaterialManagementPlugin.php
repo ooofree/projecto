@@ -81,7 +81,7 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'view_projects');
         $project = $this->context->requireCurrentProject();
         return $this->context->view('materials.php', [
-            'title' => '材料目录',
+            'title' => '材料管理',
             'currentProject' => $project,
             'data' => $this->catalog->materialData((int) $project['project_id']),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_materials'),

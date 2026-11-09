@@ -51,7 +51,7 @@
         {
             "name": "view_materials",
             "display_name": "查看材料",
-            "description": "查看当前项目的材料目录和材料估算所用材料"
+            "description": "查看当前项目的材料管理和材料估算所用材料"
         },
         {
             "name": "edit_materials",

@@ -892,7 +892,7 @@ materialTestCheck($estimatePage->type === 'view' && is_file((string) $estimatePa
 $tenderPage = $plugin->dispatch('tender-list', []);
 materialTestCheck($tenderPage->type === 'view' && is_file((string) $tenderPage->viewPath), 'Tender lists should resolve their plugin view.');
 foreach ([
-    [$materialPage, '材料目录'],
+    [$materialPage, '材料管理'],
     [$plugin->dispatch('quotations', []), '材料报价'],
     [$samplePage, '样品跟踪'],
     [$estimatePage, '材料估算明细'],
@@ -912,7 +912,7 @@ materialTestCheck(
 
 $_SERVER['REQUEST_METHOD'] = 'GET';
 foreach ([
-    'materials' => '材料目录',
+    'materials' => '材料管理',
     'quotations' => '材料报价',
     'samples' => '样品跟踪',
     'tender-list' => '招标清单',
