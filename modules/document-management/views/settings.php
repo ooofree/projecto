@@ -51,6 +51,20 @@ ob_start();
             已保存 Secret Access Key（留空提交表示保留）。
         <?php endif; ?>
     </p>
+    <?php if (!empty($imageCacheStatus)): ?>
+        <div class="field-wide muted">
+            <?php if (!empty($imageCacheStatus['enabled'])): ?>
+                本地图片缓存已生效，有效期 <?= (int) $imageCacheStatus['ttl'] ?> 秒，
+                已缓存 <?= (int) $imageCacheStatus['entries'] ?> 张图片、
+                占用 <?= number_format(((int) $imageCacheStatus['bytes']) / 1048576, 1) ?> MiB。
+                目录：<?= $escape($imageCacheStatus['directory']) ?>
+            <?php else: ?>
+                <strong>本地图片缓存未生效</strong>，图片每次都会从 R2 远程读取（单张可能需要数秒）。
+                请确认 PHP-FPM 运行用户对目录 <code><?= $escape($imageCacheStatus['directory']) ?></code>
+                具有读写权限，或通过 APP_IMAGE_CACHE_DIR 指向一个可写且不在 Web 根目录下的路径。
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
     <form method="post" action="" class="form-grid">
         <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
         <input type="hidden" name="action" value="document.settings.save">

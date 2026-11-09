@@ -54,12 +54,24 @@ final class LocalImageCache
         }
 
         try {
-            if (!is_dir($this->directory) && !mkdir($this->directory, 0o750, true) && !is_dir($this->directory)) {
+            if (
+                !is_dir($this->directory)
+                && !@mkdir($this->directory, 0o750, true)
+                && !is_dir($this->directory)
+            ) {
                 $this->available = false;
 
                 return false;
             }
             $this->available = is_writable($this->directory) && is_readable($this->directory);
+            if (!$this->available) {
+                // A silently disabled cache would look like a slow remote
+                // bucket, so record the reason once per request.
+                error_log(
+                    'Image cache is disabled because this directory is not readable and writable: '
+                    . $this->directory
+                );
+            }
         } catch (Throwable $exception) {
             error_log('Image cache directory is unusable: ' . $exception->getMessage());
             $this->available = false;
@@ -97,6 +109,10 @@ final class LocalImageCache
             return null;
         }
 
+        if (!$this->ownedByThisProcess($path)) {
+            return null;
+        }
+
         $contents = @file_get_contents($path);
         if (!is_string($contents) || $contents === '') {
             return null;
@@ -124,7 +140,11 @@ final class LocalImageCache
         $path = $this->path($objectKey);
         $shardDirectory = dirname($path);
         try {
-            if (!is_dir($shardDirectory) && !mkdir($shardDirectory, 0o750, true) && !is_dir($shardDirectory)) {
+            if (
+                !is_dir($shardDirectory)
+                && !@mkdir($shardDirectory, 0o750, true)
+                && !is_dir($shardDirectory)
+            ) {
                 return false;
             }
 
@@ -273,6 +293,21 @@ final class LocalImageCache
     }
 
     /**
+     * Whether the cached file belongs to the user running this request. Entries
+     * planted by another local user are ignored rather than streamed.
+     */
+    private function ownedByThisProcess(string $path): bool
+    {
+        if (!function_exists('posix_geteuid')) {
+            return true;
+        }
+
+        $owner = @fileowner($path);
+
+        return $owner !== false && $owner === posix_geteuid();
+    }
+
+    /**
      * Maps an object key to a sharded path. The key is hashed so bucket keys
      * containing slashes or traversal segments cannot escape the cache
      * directory, and the first two hex characters shard entries across
@@ -285,6 +320,15 @@ final class LocalImageCache
         return $this->directory . DIRECTORY_SEPARATOR . substr($hash, 0, 2) . DIRECTORY_SEPARATOR . $hash;
     }
 
+    /**
+     * Resolves the cache directory.
+     *
+     * The default deliberately lives outside the project tree: storage/ is
+     * inside the Apache DocumentRoot, so cached bytes there would be served as
+     * plain static files and private images would leak past the application's
+     * object-level permission checks. Set APP_IMAGE_CACHE_DIR to a path that is
+     * likewise not reachable over HTTP.
+     */
     private static function defaultDirectory(): string
     {
         $configured = trim((string) getenv('APP_IMAGE_CACHE_DIR'));
@@ -292,7 +336,9 @@ final class LocalImageCache
             return $configured;
         }
 
-        return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'image-cache';
+        $temporary = rtrim(sys_get_temp_dir(), '/\\');
+
+        return $temporary . DIRECTORY_SEPARATOR . 'project-o-image-cache';
     }
 
     private static function configuredTtl(): int

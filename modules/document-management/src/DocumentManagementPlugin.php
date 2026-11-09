@@ -393,6 +393,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'title' => '系统设置',
             'canManageSettings' => true,
             'storageStatus' => $storage->configurationStatus(),
+            'imageCacheStatus' => $storage->imageCacheStatus(),
             'storageConfig' => [
                 'exists' => $config['exists'],
                 'enabled' => $config['enabled'],
