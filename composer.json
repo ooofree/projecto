@@ -21,6 +21,7 @@
             "php tests/material_management_test.php",
             "php tests/platform_administration_test.php",
             "php tests/profile_service_test.php",
+            "php tests/labor_crew_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php"
         ]
@@ -30,7 +31,8 @@
             "ProjectO\\": "src/",
             "ProjectO\\Modules\\ProjectFoundation\\": "modules/project-foundation/src/",
             "ProjectO\\Modules\\DocumentManagement\\": "modules/document-management/src/",
-            "ProjectO\\Modules\\MaterialManagement\\": "modules/material-management/src/"
+            "ProjectO\\Modules\\MaterialManagement\\": "modules/material-management/src/",
+            "ProjectO\\Modules\\LaborCrew\\": "modules/labor-crew/src/"
         }
     }
 }

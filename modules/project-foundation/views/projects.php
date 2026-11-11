@@ -72,6 +72,9 @@ ob_start();
                 <?php if ($canViewSamples): ?>
                     <a class="quick-link" href="?page=samples"><span class="quick-link-icon" aria-hidden="true">◇</span><span>样品跟踪</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
                 <?php endif; ?>
+                <?php if ($canViewLaborCrews ?? false): ?>
+                    <a class="quick-link" href="?page=labor-crews"><span class="quick-link-icon" aria-hidden="true">☎</span><span>施工班组</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
+                <?php endif; ?>
                 <?php if ($canViewDocuments): ?>
                     <a class="quick-link" href="?page=documents"><span class="quick-link-icon" aria-hidden="true">▧</span><span>文档管理</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
                 <?php endif; ?>

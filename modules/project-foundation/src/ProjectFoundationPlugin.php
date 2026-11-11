@@ -58,6 +58,8 @@ final class ProjectFoundationPlugin implements PluginInterface
             'canViewSamples' => Support::hasPermission($this->context->db, 'view_projects')
                 && Support::hasPermission($this->context->db, 'view_material_samples'),
             'canViewEstimates' => Support::hasPermission($this->context->db, 'view_material_estimates'),
+            'canViewLaborCrews' => Support::hasPermission($this->context->db, 'view_labor_crews')
+                && Support::hasPermission($this->context->db, 'view_projects'),
         ]);
     }
 

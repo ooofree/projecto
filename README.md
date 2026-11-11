@@ -19,12 +19,18 @@
    GRANT ALL PRIVILEGES ON project_o.* TO 'project_o'@'localhost';
    ```
    请替换示例密码，并按部署环境调整 MySQL 主机/账号。
-2. 复制 `.env.example` 为 `.env`，配置 `APP_DSN`、`APP_DB_USER` 和 `APP_DB_PASSWORD`。
+2. 复制 `.env.example` 为 `.env`，配置 `APP_DSN`、`APP_DB_USER` 和 `APP_DB_PASSWORD`；如需用到施工班组的身份证号加密存储，另需配置 `APP_DATA_KEY`（见下）。
 3. 运行 `composer install`。
 4. 运行 `php bin/install.php`；首次安装会交互式创建管理员，密码至少 12 个字符。
 5. 运行 `php -S 127.0.0.1:8000 -t public` 并打开 `http://127.0.0.1:8000`。
 
 不要把 `.env`、真实密码或生产密钥提交到版本库。安装器拒绝对非空数据库首次建表；请勿把旧系统数据库用作新项目的安装目标。
+
+### 施工班组与工种目录
+
+`labor.crew` 插件提供施工班组负责人联系页（`?page=labor-crews`）与工种目录（`?page=labor-crew-types`）。每个项目的班组互相隔离（`Labor_Crews.project_id` 非空，业务口径为「班组只对项目负责」），工种目录跨项目共享。班组登记一位负责人：姓名与手机号必填，微信号、身份证号、紧急联系人（姓名与电话须成对）和备注选填；身份证号保存为 AES-256-GCM 密文加 HMAC 指纹，页面默认脱敏显示，完整号码需要单独的 `view_labor_crew_id_numbers` 权限，密文与指纹不进入审计明细。班组不提供硬删除，归档保留数据且可恢复。后续任务模块按 `project_id` + `crew_type_id` 引用该目录取班组与负责人联系方式。
+
+身份证号加密依赖 `APP_DATA_KEY`（64 位十六进制，即 32 字节；用 `php -r "echo bin2hex(random_bytes(32));"` 生成）。未配置时其余联系方式仍可维护，但保存身份证号会明确报错而不是静默丢弃；密钥丢失后已保存的密文无法恢复，请纳入部署密钥备份。
 
 ### 时间与时区
 
@@ -34,7 +40,7 @@
 
 AWS SDK（`aws/aws-sdk-php`）已列入 `composer.json` 依赖，由 `composer install` 安装；启用 R2 图片存储时，在文件模块「系统设置」（`?page=document-settings`；平台管理员 `manage_platform`，或获授 `manage_document_settings`）填写 Cloudflare R2 Account ID、私有存储桶名称和访问密钥；配置持久化在数据库 `System_Settings` 中，密钥只写（留空表示保留已保存密钥），变更写入审计；该配置同时用于材料样品与问题/RFI 图片附件。也可改用部署级环境变量 `APP_R2_ACCOUNT_ID`、`APP_R2_BUCKET`、`APP_R2_ACCESS_KEY_ID`、`APP_R2_SECRET_ACCESS_KEY`；已保存的数据库配置优先于环境变量，`APP_OBJECT_STORAGE_ADAPTER` 仍可指定其他对象存储实现。R2 bucket 应保持私有；页面图片由应用服务器按权限读取并输出（浏览器不直接访问私有桶），导出时服务器端通过 5 分钟签名 URL 读取图片。上传限制为 PNG/JPEG/GIF/BMP/WebP、单文件 5 MiB；PHP 部署的 `upload_max_filesize` 和 `post_max_size` 也应允许至少 5 MiB 请求。未配置适配器、凭据或 AWS SDK 时，样品、问题与 RFI 资料仍可维护，但图片上传/查看明确不可用。
 
-测试：运行 `composer test`，覆盖认证、项目插件/服务、材料/空间/样品服务、文档问题/RFI 服务、后台设置/权限/插件启停和页面授权。迁移与服务行为测试使用 SQLite 等价结构；部署前应在专用测试 MySQL 验证迁移，不得直接对生产库执行未审阅迁移。
+测试：运行 `composer test`，覆盖认证、项目插件/服务、材料/空间/样品服务、施工班组目录（含身份证号加密/脱敏、同项目查重、跨项目隔离、归档恢复与审计不泄露）、文档问题/RFI 服务、后台设置/权限/插件启停和页面授权。迁移与服务行为测试使用 SQLite 等价结构；部署前应在专用测试 MySQL 验证迁移，不得直接对生产库执行未审阅迁移。
 
 插件清单声明的迁移会在运行 `php bin/install.php` 时由核心迁移追踪器执行；插件停用不会删除已创建的数据表或记录。
 

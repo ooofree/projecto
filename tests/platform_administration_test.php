@@ -115,7 +115,14 @@ $registry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
 $admin = new PlatformAdministrationService($db, $registry);
 
 $pageData = $admin->pageData();
-platformAdminCheck(count($pageData['plugins']) === 3, 'The plugin catalog should list all discovered plugins.');
+platformAdminCheck(
+    count($pageData['plugins']) === count(glob(dirname(__DIR__) . '/modules/*/plugin.json')),
+    'The plugin catalog should list all discovered plugins.'
+);
+platformAdminCheck(
+    in_array('labor.crew', array_column($pageData['plugins'], 'id'), true),
+    'The labor.crew plugin should be discovered by the catalog.'
+);
 platformAdminCheck(
     $pageData['settings']['platform_name'] === 'Project O',
     'The default platform name should be loaded.'
