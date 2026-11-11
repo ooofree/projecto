@@ -197,6 +197,22 @@ final class Support
             ->format($format);
     }
 
+    /**
+     * Sanitises a label for use inside a download file name: replaces characters
+     * that are invalid on disk or in the Content-Disposition header, removes
+     * control characters, collapses whitespace, trims edge dots/underscores and
+     * caps the length. Returns an empty string when nothing usable remains.
+     */
+    public static function safeFileSegment(string $value, int $maxLength = 60): string
+    {
+        $clean = str_replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|', ';'], '_', $value);
+        $clean = preg_replace('/[\x00-\x1F\x7F]+/u', '', $clean);
+        $clean = is_string($clean) ? trim(preg_replace('/\s+/u', ' ', $clean) ?? '') : '';
+        $clean = trim($clean, " ._");
+
+        return $clean === '' ? '' : mb_substr($clean, 0, $maxLength, 'UTF-8');
+    }
+
     public static function audit(PDO $db, string $action, string $details): void
     {
         if (!isset($_SESSION['user_id'])) {

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace ProjectO\Modules\LaborCrew;
 
+use ProjectO\Export\XlsxWorkbook;
 use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
@@ -37,6 +38,7 @@ final class LaborCrewPlugin implements PluginInterface
             'crews' => $this->crewsIndex($input),
             'types' => $this->typesIndex(),
             'crew.save' => $this->saveCrew($input),
+            'crew.export' => $this->exportCrews(),
             'crew.archive' => $this->archiveCrew($input),
             'crew.restore' => $this->restoreCrew($input),
             'type.save' => $this->saveType($input),
@@ -125,6 +127,81 @@ final class LaborCrewPlugin implements PluginInterface
 
         return PluginResponse::redirect(
             '?page=labor-crews' . ($cameFromArchived ? '&archived=1' : '')
+        );
+    }
+
+    /**
+     * Excel export styled like the other module exports: merged title row with
+     * the project name, metadata lines (time / total / per-trade counts), then
+     * the header block and data rows. Columns are sequence number, craft type,
+     * crew name, leader name, phone and remarks; identity numbers and WeChat ids
+     * never enter the file, and archived crews are excluded. The download name
+     * carries the project name, the export date and the daily sequence.
+     */
+    private function exportCrews(): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_labor_crews');
+        Support::requirePermission($this->context->db, 'view_projects');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $rows = $this->directory->exportRows($projectId);
+
+        // Phone numbers are plain strings here: XlsxWorkbook writes string cells
+        // as inlineStr, so Excel keeps a +86 number as text without an escape
+        // prefix (which would be shown to the reader).
+        $typeCounts = [];
+        $body = [];
+        foreach ($rows as $row) {
+            $typeName = (string) $row['type_name'];
+            $typeCounts[$typeName] = ($typeCounts[$typeName] ?? 0) + 1;
+            $body[] = [
+                count($body) + 1,
+                $typeName,
+                (string) $row['crew_name'],
+                (string) $row['leader_name'],
+                (string) $row['leader_phone'],
+                (string) ($row['notes'] ?? ''),
+            ];
+        }
+        ksort($typeCounts, SORT_NATURAL);
+        $statistics = [];
+        foreach ($typeCounts as $typeName => $count) {
+            $statistics[] = $typeName . ' ' . $count;
+        }
+
+        $exportDay = Support::nowLocal('Ymd');
+        $exportSequence = Support::nextDailySequence($this->context->db, 'labor.crew.export_sequence', $exportDay);
+        $projectLabel = Support::safeFileSegment((string) $project['project_name']);
+        $fileName = '施工班组联系表_' . ($projectLabel !== '' ? $projectLabel : '项目')
+            . '_' . $exportDay . '_' . $exportSequence . '.xlsx';
+        $xlsx = XlsxWorkbook::build('施工班组联系表', [
+            '序号', '工种', '班组名称', '负责人姓名', '负责人电话', '备注',
+        ], $body, [
+            'title' => '👷 ' . $project['project_name'] . '施工班组负责人联系表',
+            'meta' => [
+                '导出时间: ' . Support::nowLocal('Y-m-d H:i:s'),
+                '记录总数: ' . count($body),
+                '内容统计: 涉及工种 ' . count($typeCounts) . ' 个（' . implode('，', $statistics) . '）',
+            ],
+            // Keep the sequence column narrow and give the craft type, crew name
+            // and remarks columns more room than the content-based default.
+            'fixedWidths' => [
+                0 => 6.0,
+                1 => 16.0,
+                2 => 30.0,
+                5 => 40.0,
+            ],
+        ]);
+        Support::audit(
+            $this->context->db,
+            'labor.crew.export',
+            'Exported ' . count($body) . ' crew rows for project ' . $projectId . '.'
+        );
+
+        return PluginResponse::download(
+            $fileName,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            $xlsx
         );
     }
 

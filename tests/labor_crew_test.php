@@ -33,6 +33,28 @@ function crewExpectStatus(callable $operation, int $status, string $message): vo
     }
 }
 
+function crewXlsxSheet(PluginResponse $response): string
+{
+    $body = $response->data['body'] ?? null;
+    if ($response->type !== 'download' || !is_string($body)) {
+        throw new RuntimeException('Expected an xlsx download response.');
+    }
+    $path = tempnam(sys_get_temp_dir(), 'crew-xlsx-');
+    file_put_contents($path, $body);
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        @unlink($path);
+        throw new RuntimeException('Export is not a readable xlsx zip package.');
+    }
+    $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    @unlink($path);
+    if (!is_string($xml) || $xml === '') {
+        throw new RuntimeException('Export is missing its worksheet part.');
+    }
+
+    return $xml;
+}
 function crewRenderView(PluginResponse $response): string
 {
     if ($response->type !== 'view' || $response->viewPath === null) {
@@ -70,7 +92,12 @@ $db->exec('CREATE TABLE System_Settings (setting_key TEXT PRIMARY KEY, setting_v
 $db->exec("INSERT INTO System_Settings (setting_key, setting_value) VALUES ('timezone', 'Asia/Shanghai'), ('theme', 'light')");
 $db->exec('CREATE TABLE audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, ip_address TEXT, user_agent TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
 
-$mysqlDdl = (string) file_get_contents(dirname(__DIR__) . '/modules/labor-crew/database/migrations/202611110001_labor_crews.sql');
+$migrationFiles = glob(dirname(__DIR__) . '/modules/labor-crew/database/migrations/*.sql') ?: [];
+sort($migrationFiles, SORT_STRING);
+$mysqlDdl = '';
+foreach ($migrationFiles as $migrationFile) {
+    $mysqlDdl .= (string) file_get_contents($migrationFile);
+}
 foreach ([
     'Labor_Crew_Types', 'Labor_Crews', 'project_id', 'crew_type_id', 'crew_name', 'leader_name',
     'leader_phone', 'wechat_id', 'id_card_number_encrypted', 'id_card_fingerprint',
@@ -81,6 +108,10 @@ foreach ([
 crewCheck(
     str_contains($mysqlDdl, 'project_id` int NOT NULL'),
     'Crews must require a project (crew answers to its project).'
+);
+crewCheck(
+    str_contains($mysqlDdl, 'ADD COLUMN `sort_order`'),
+    'Crews must gain an editable sort order column through a migration.'
 );
 
 // SQLite mirror of the same columns so the service can be exercised without MySQL.
@@ -104,6 +135,7 @@ $db->exec('CREATE TABLE Labor_Crews (
     emergency_contact_name TEXT,
     emergency_contact_phone TEXT,
     notes TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -247,6 +279,50 @@ crewExpectStatus(static function () use ($service, $crewId): void {
 }, 404, 'Project 2 must not archive a crew of project 1.');
 $service->restoreCrew(1, $crewId);
 
+// Manual ordering: the per-crew sort order drives list sequence (smaller first).
+$firstSortedId = $service->saveCrew(1, [
+    'crew_type_id' => 9, 'crew_name' => '排序首位班组', 'leader_name' => '排序乙',
+    'leader_phone' => '13500135002', 'sort_order' => 5,
+]);
+$service->saveCrew(1, [
+    'crew_type_id' => 9, 'crew_name' => '排序末位班组', 'leader_name' => '排序甲',
+    'leader_phone' => '13500135001', 'sort_order' => 900,
+]);
+$sortedNames = array_column($service->crews(1), 'crew_name');
+$firstPosition = array_search('排序首位班组', $sortedNames, true);
+$lastPosition = array_search('排序末位班组', $sortedNames, true);
+crewCheck(
+    is_int($firstPosition) && is_int($lastPosition) && $firstPosition < $lastPosition,
+    'Manual sort numbers must order the list from small to large.'
+);
+$service->saveCrew(1, [
+    'crew_id' => $firstSortedId, 'crew_type_id' => 9, 'crew_name' => '排序首位班组',
+    'leader_name' => '排序乙', 'leader_phone' => '13500135002', 'sort_order' => 950,
+]);
+$resortedNames = array_column($service->crews(1), 'crew_name');
+$firstPosition = array_search('排序首位班组', $resortedNames, true);
+$lastPosition = array_search('排序末位班组', $resortedNames, true);
+crewCheck(
+    is_int($firstPosition) && is_int($lastPosition) && $lastPosition < $firstPosition,
+    'Editing the sort number must move the crew in the list.'
+);
+crewCheck(
+    $resortedNames[0] === '排序末位班组',
+    'Crews with a sort number must come before crews left at the default 0.'
+);
+crewExpectStatus(static function () use ($service): void {
+    $service->saveCrew(1, [
+        'crew_type_id' => 9, 'crew_name' => '排序非法班组', 'leader_name' => '测试',
+        'leader_phone' => '13500135003', 'sort_order' => 10000,
+    ]);
+}, 422, 'Sort order above 9999 must be rejected.');
+crewExpectStatus(static function () use ($service): void {
+    $service->saveCrew(1, [
+        'crew_type_id' => 9, 'crew_name' => '排序非法班组', 'leader_name' => '测试',
+        'leader_phone' => '13500135003', 'sort_order' => -1,
+    ]);
+}, 422, 'Negative sort order must be rejected.');
+
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 Support::setDisplayTimezone('Asia/Shanghai');
 
@@ -255,6 +331,7 @@ $plugin = new LaborCrewPlugin($pluginContext);
 
 $pageHtml = crewRenderView($plugin->dispatch('crews', []));
 crewCheck(str_contains($pageHtml, '班组负责人联系方式'), 'Crew page must render its heading.');
+crewCheck(str_contains($pageHtml, 'name="sort_order"'), 'Crew forms must expose a manual sort field.');
 crewCheck(str_contains($pageHtml, '钢筋一班'), 'Crew page must list the saved crew.');
 crewCheck(str_contains($pageHtml, '13800138001'), 'Crew page must show the leader phone.');
 
@@ -263,9 +340,16 @@ $service->saveCrew(1, [
     'crew_id' => $crewId, 'crew_type_id' => 2, 'crew_name' => '钢筋一班',
     'leader_name' => '张伟', 'leader_phone' => '13800138001', 'id_card_number' => '11010519491231002X',
 ]);
-$maskedList = $service->crews(1);
-crewCheck(str_contains($maskedList[0]['id_card_masked'], '*'), 'Directory rows must expose a masked identity number.');
-crewCheck(!str_contains($maskedList[0]['id_card_masked'], '19491231'), 'Mask must hide the birth date.');
+$maskedRow = null;
+foreach ($service->crews(1) as $row) {
+    if ((int) $row['crew_id'] === $crewId) {
+        $maskedRow = $row;
+        break;
+    }
+}
+crewCheck($maskedRow !== null, 'The edited crew must stay in the project directory.');
+crewCheck(str_contains((string) $maskedRow['id_card_masked'], '*'), 'Directory rows must expose a masked identity number.');
+crewCheck(!str_contains((string) $maskedRow['id_card_masked'], '19491231'), 'Mask must hide the birth date.');
 
 $fullHtml = crewRenderView($plugin->dispatch('crews', []));
 crewCheck(str_contains($fullHtml, '11010519491231002X'), 'Permission holder may see the full identity number.');
@@ -356,6 +440,114 @@ crewRenderView($plugin->dispatch('crews', ['type' => 'abc', 'keyword' => '  ']))
 crewRenderView($plugin->dispatch('types', []));
 crewCheck(true, 'Unusable filter values fall back to showing everything without error.');
 
+
+// Excel export: report layout like the other modules, project-named title,
+// sequence number / craft type / crew name / leader / phone / remarks columns,
+// active crews only, and no identity numbers or WeChat ids in the file.
+$exportRemarkCrewId = $service->saveCrew(1, [
+    'crew_type_id' => 4, 'crew_name' => '导出备注班组', 'leader_name' => '备注联系人',
+    'leader_phone' => '13500135009', 'wechat_id' => 'export-wx-id', 'notes' => '导出备注内容-防水重点',
+]);
+$exportResponse = $plugin->dispatch('crew.export', []);
+crewCheck($exportResponse->type === 'download', 'Export must return a download response.');
+$exportName = (string) ($exportResponse->data['filename'] ?? '');
+crewCheck(
+    preg_match('/^施工班组联系表_Project One_[0-9]{8}_[0-9]+\.xlsx$/u', $exportName) === 1,
+    'Export file name must follow table name + project name + date + daily sequence, got: ' . $exportName
+);
+crewCheck(
+    ($exportResponse->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Export must use the xlsx content type.'
+);
+$sheetXml = crewXlsxSheet($exportResponse);
+crewCheck(str_contains($sheetXml, 'Project One施工班组负责人联系表'), 'Title row must carry the project name.');
+crewCheck(str_contains($sheetXml, '导出时间:') && str_contains($sheetXml, '记录总数:'), 'Meta rows must show export time and totals.');
+foreach (['序号', '工种', '班组名称', '负责人姓名', '负责人电话', '备注'] as $header) {
+    crewCheck(str_contains($sheetXml, $header), 'Header row must contain ' . $header . '.');
+}
+crewCheck(
+    str_contains($sheetXml, '钢筋一班') && str_contains($sheetXml, '13800138001'),
+    'Active crews must appear with leader and phone.'
+);
+crewCheck(str_contains($sheetXml, '导出备注内容-防水重点'), 'Remarks must be exported.');
+crewCheck(str_contains($sheetXml, '<c r="A7" s="3"><v>1</v></c>'), 'The first data row must carry sequence number 1.');
+crewCheck(
+    str_contains($sheetXml, '<col min="2" max="2" width="16" customWidth="1"/>')
+        && str_contains($sheetXml, '<col min="3" max="3" width="30" customWidth="1"/>'),
+    'Craft type and crew name columns must be widened.'
+);
+crewCheck(
+    strpos($sheetXml, '排序末位班组') !== false
+        && strpos($sheetXml, '排序末位班组') < strpos($sheetXml, '排序首位班组'),
+    'Export rows must keep the manual sort order.'
+);
+crewCheck(!str_contains($sheetXml, '11010519491231002X'), 'Identity numbers must never be exported.');
+crewCheck(!str_contains($sheetXml, 'export-wx-id'), 'WeChat ids must never be exported.');
+crewCheck(!str_contains($sheetXml, 'Project Two'), 'The export must stay inside the current project.');
+$db->exec('DELETE FROM Labor_Crews WHERE crew_id = ' . $exportRemarkCrewId);
+
+// The project name joins the file name; characters that cannot travel in a
+// download header or on disk are replaced instead of failing the export.
+$db->exec("INSERT INTO Projects (project_name, status) VALUES ('A/B:C*D', 'planning')");
+$unsafeProjectId = (int) $db->lastInsertId();
+$service->saveCrew($unsafeProjectId, [
+    'crew_type_id' => 2, 'crew_name' => '安全班组', 'leader_name' => '测试', 'leader_phone' => '13500135010',
+]);
+$_SESSION['active_project_id'] = $unsafeProjectId;
+$unsafeExportName = (string) ($plugin->dispatch('crew.export', [])->data['filename'] ?? '');
+$_SESSION['active_project_id'] = 1;
+crewCheck(
+    preg_match('/^施工班组联系表_A_B_C_D_[0-9]{8}_[0-9]+\.xlsx$/u', $unsafeExportName) === 1,
+    'Unsafe project-name characters must be sanitised in the export file name, got: ' . $unsafeExportName
+);
+crewCheck(
+    mb_strlen($unsafeExportName, 'UTF-8') <= 150,
+    'The export file name must stay within the download length limit.'
+);
+
+// A +86 style phone must stay text so Excel cannot mangle it.
+$service->saveCrew(1, [
+    'crew_type_id' => 4, 'crew_name' => '导出国际号班组', 'leader_name' => '跨境', 'leader_phone' => '+8613800001234',
+]);
+$plusSheet = crewXlsxSheet($plugin->dispatch('crew.export', []));
+crewCheck(
+    preg_match('/t="inlineStr"><is><t[^>]*>\+8613800001234/', $plusSheet) === 1,
+    'International numbers must be exported as text cells without an escape prefix.'
+);
+
+// Archived crews are excluded; restoring brings them back.
+$service->archiveCrew(1, $crewId);
+$afterArchive = crewXlsxSheet($plugin->dispatch('crew.export', []));
+crewCheck(str_contains($afterArchive, '导出国际号班组') && !str_contains($afterArchive, '钢筋一班'), 'Archived crews must be excluded from the export.');
+$service->restoreCrew(1, $crewId);
+$sheetAgain = crewXlsxSheet($plugin->dispatch('crew.export', []));
+crewCheck(str_contains($sheetAgain, '钢筋一班'), 'Restored crews must reappear.');
+
+// Export is a read: the daily sequence increments per export, viewers may export,
+// and every export is audited without leaking row contents.
+$auditCount = (int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'labor.crew.export'")->fetchColumn();
+crewCheck($auditCount >= 4, 'Each export must write an audit entry.');
+// Compare two back-to-back exports; earlier ones in this test also consumed
+// numbers of the day, so only adjacent calls must differ by exactly one.
+$firstName = (string) $plugin->dispatch('crew.export', [])->data['filename'];
+$secondName = (string) $plugin->dispatch('crew.export', [])->data['filename'];
+preg_match('/_([0-9]+)\.xlsx$/', $firstName, $m1);
+preg_match('/_([0-9]+)\.xlsx$/', $secondName, $m2);
+crewCheck(
+    (int) $m1[1] + 1 === (int) $m2[1],
+    'Adjacent exports must take the next number of the day: ' . $firstName . ' -> ' . $secondName
+);
+crewCheck(str_starts_with($secondName, '施工班组联系表_'), 'File name must start with the table name.');
+$_SESSION['user_id'] = 2;
+$viewerExport = $plugin->dispatch('crew.export', []);
+crewCheck($viewerExport->type === 'download', 'Users with view permission may export.');
+$_SESSION['user_id'] = 1;
+unset($_SESSION['active_project_id']);
+crewExpectStatus(static function () use ($plugin): void {
+    $plugin->dispatch('crew.export', []);
+}, 409, 'Export must require a selected project.');
+$_SESSION['active_project_id'] = 1;
+$db->exec("DELETE FROM Labor_Crews WHERE crew_name = '导出国际号班组'");
 // The project home page exposes the crew directory to permitted users only.
 $_SESSION['user_id'] = 2;
 $homeForViewer = null;

@@ -8,9 +8,16 @@ require __DIR__ . '/_nav.php';
         <h1 class="report-heading">材料管理</h1>
         <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。分类和材料仅属于当前项目。</p>
     </div>
-    <?php if ($canEdit): ?>
-        <button class="button button-quiet" type="button" data-disclosure-open="new-material">新增材料</button>
-    <?php endif; ?>
+    <div class="project-list-actions">
+        <?php if ($canEdit): ?>
+            <button class="button button-quiet" type="button" data-disclosure-open="new-material">新增材料</button>
+        <?php endif; ?>
+        <form method="post" action="" id="material-export-form" class="inline-form">
+            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+            <input type="hidden" name="action" value="material.export">
+            <button class="button button-secondary" type="submit">导出 Excel</button>
+        </form>
+    </div>
 </section>
 
 <section class="panel">
@@ -25,7 +32,7 @@ require __DIR__ . '/_nav.php';
         </label>
         <label>
             材料分类
-            <select id="material-category">
+            <select id="material-category" name="category_id" form="material-export-form">
                 <option value="">全部分类</option>
                 <?php foreach ($data['categories'] as $category): ?>
                     <option value="<?= (int) $category['category_id'] ?>"><?= $escape($category['category_name']) ?></option>

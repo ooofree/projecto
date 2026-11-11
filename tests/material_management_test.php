@@ -480,6 +480,22 @@ materialTestExpectStatus(
     'Material updates must reject IDs from another project.'
 );
 
+// Extra project-one categories and materials so the Excel export can be filtered.
+$lightingCategoryId = $catalog->saveCategory(1, ['category_name' => '灯具', 'sort_order' => '20']);
+$plumbingCategoryId = $catalog->saveCategory(1, ['category_name' => '水电', 'sort_order' => '30']);
+$catalog->saveMaterial(1, [
+    'material_code' => 'DG-001', 'material_name' => '筒灯', 'unit' => '个',
+    'category_id' => (string) $lightingCategoryId, 'specifications' => '9W 暖光',
+]);
+$catalog->saveMaterial(1, [
+    'material_code' => 'DG-002', 'material_name' => '射灯', 'unit' => '个',
+    'category_id' => (string) $lightingCategoryId,
+]);
+$catalog->saveMaterial(1, [
+    'material_code' => 'SD-001', 'material_name' => 'PVC 线管', 'unit' => 'm',
+    'category_id' => (string) $plumbingCategoryId,
+]);
+
 $tenderService = new \ProjectO\Modules\MaterialManagement\TenderListService($db);
 $tenderId = $tenderService->save(1, [
     'project_id' => '2',
@@ -938,11 +954,97 @@ foreach ([
             str_contains($html, 'id="material-search"')
             && str_contains($html, 'id="material-category"')
             && str_contains($html, 'class="report-table"')
-            && str_contains($html, 'data-dialog-open="material-edit-'),
-            'Materials page should render its report filters, table, and edit dialog controls.'
+            && str_contains($html, 'data-dialog-open="material-edit-')
+            && str_contains($html, 'id="material-export-form"')
+            && str_contains($html, 'value="material.export"')
+            && str_contains($html, 'id="material-category" name="category_id" form="material-export-form"'),
+            'Materials page should render its report filters, table, edit dialog and category-aware Excel export.'
         );
     }
 }
+
+// Material catalogue Excel export: all rows, or only the category chosen in the
+// list filter; the file name carries the project, category and date.
+$allMaterialsExport = $plugin->dispatch('material.export', []);
+materialTestCheck(
+    $allMaterialsExport->type === 'download'
+        && ($allMaterialsExport->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        && preg_match('/^Project One材料_全部_\d{8}\.xlsx$/u', (string) ($allMaterialsExport->data['filename'] ?? '')) === 1,
+    'Material export without a category must download an all-category workbook named after the project and date.'
+);
+$allMaterialsSheet = materialTestXlsxSheet($allMaterialsExport);
+materialTestCheck(
+    str_contains($allMaterialsSheet, 'Project One材料清单')
+        && str_contains($allMaterialsSheet, '导出范围: 全部材料')
+        && str_contains($allMaterialsSheet, '序号')
+        && str_contains($allMaterialsSheet, '材料代号')
+        && str_contains($allMaterialsSheet, '材料名称')
+        && str_contains($allMaterialsSheet, '单位')
+        && str_contains($allMaterialsSheet, '分类')
+        && str_contains($allMaterialsSheet, '规格')
+        && str_contains($allMaterialsSheet, '详细说明')
+        && str_contains($allMaterialsSheet, '地砖')
+        && str_contains($allMaterialsSheet, '筒灯')
+        && str_contains($allMaterialsSheet, '射灯')
+        && str_contains($allMaterialsSheet, 'PVC 线管')
+        && !str_contains($allMaterialsSheet, '项目二地砖')
+        && str_contains($allMaterialsSheet, '<col min="3" max="3" width="28" customWidth="1"/>')
+        && str_contains($allMaterialsSheet, '<col min="7" max="7" width="45" customWidth="1"/>')
+        && substr_count($allMaterialsSheet, '<row r=') === 5 + 6,
+    'The all-category export must contain every current-project material and no other project rows.'
+);
+$lightingExport = $plugin->dispatch('material.export', ['category_id' => (string) $lightingCategoryId]);
+materialTestCheck(
+    $lightingExport->type === 'download'
+        && preg_match('/^Project One材料_灯具_\d{8}\.xlsx$/u', (string) ($lightingExport->data['filename'] ?? '')) === 1,
+    'Selecting a category must put its name into the export file name.'
+);
+$lightingSheet = materialTestXlsxSheet($lightingExport);
+materialTestCheck(
+    str_contains($lightingSheet, '导出范围: 分类：灯具')
+        && str_contains($lightingSheet, '筒灯')
+        && str_contains($lightingSheet, '射灯')
+        && !str_contains($lightingSheet, '地砖')
+        && !str_contains($lightingSheet, 'PVC 线管')
+        && substr_count($lightingSheet, '<row r=') === 2 + 6,
+    'The category export must contain only the selected category materials.'
+);
+$registryMaterialExport = $registry->dispatch('POST', 'material.export', ['category_id' => (string) $lightingCategoryId]);
+materialTestCheck(
+    $registryMaterialExport instanceof PluginResponse && $registryMaterialExport->type === 'download',
+    'Material export must be registered as a plugin route in its manifest.'
+);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('material.export', ['category_id' => (string) $otherProjectCategoryId]),
+    404,
+    'Material export must reject a category from another project.'
+);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('material.export', ['category_id' => 'abc']),
+    422,
+    'Material export must reject malformed category ids.'
+);
+unset($_SESSION['active_project_id']);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('material.export', []),
+    409,
+    'Material export must require an active project.'
+);
+$_SESSION['active_project_id'] = 1;
+$db->exec(
+    "DELETE FROM Role_Permissions
+     WHERE permission_id = (SELECT permission_id FROM Permissions WHERE permission_name = 'view_materials')"
+);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('material.export', []),
+    403,
+    'Material export must require the view_materials permission.'
+);
+$db->exec(
+    "INSERT INTO Role_Permissions (role_id, permission_id)
+     SELECT 1, permission_id FROM Permissions WHERE permission_name = 'view_materials'"
+);
+
 $db->exec(
     "DELETE FROM Role_Permissions
      WHERE permission_id = (SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_quotations')"

@@ -42,7 +42,7 @@ final class CrewDirectoryService
         $sql = 'SELECT c.crew_id, c.project_id, c.crew_type_id, c.crew_name, c.leader_name,
                        c.leader_phone, c.wechat_id, c.id_card_number_encrypted,
                        c.emergency_contact_name, c.emergency_contact_phone, c.notes,
-                       c.is_active, c.created_at, c.updated_at,
+                       c.sort_order, c.is_active, c.created_at, c.updated_at,
                        t.type_name
                 FROM Labor_Crews c
                 JOIN Labor_Crew_Types t ON t.crew_type_id = c.crew_type_id
@@ -50,7 +50,12 @@ final class CrewDirectoryService
         if (!$includeArchived) {
             $sql .= ' AND c.is_active = 1';
         }
-        $sql .= ' ORDER BY t.sort_order, t.type_name, c.crew_name, c.crew_id';
+        // Crews with a sort number come first, smallest first; crews left at the
+        // default 0 (unset) follow in the original type-grouped order, so a
+        // single edited number moves a crew to the front instead of behind every
+        // other row. An upgrade with all rows at 0 keeps the previous order.
+        $sql .= ' ORDER BY CASE WHEN c.sort_order = 0 THEN 1 ELSE 0 END, c.sort_order,'
+            . ' t.sort_order, t.type_name, c.crew_name, c.crew_id';
 
         $statement = $this->db->prepare($sql);
         $statement->execute(['project_id' => $projectId]);
@@ -93,6 +98,7 @@ final class CrewDirectoryService
             ? null
             : $this->normalisePhone($emergencyPhoneRaw, '紧急联系人电话');
         $notes = $this->optionalText($data, 'notes', 2000, '备注');
+        $sortOrder = $this->optionalSortOrder($data['sort_order'] ?? null);
         $typeId = $this->requireType($this->requiredInt($data['crew_type_id'] ?? null, '工种'));
 
         // The form never re-displays the stored number, so a blank field on edit
@@ -122,9 +128,9 @@ final class CrewDirectoryService
                 'INSERT INTO Labor_Crews
                     (project_id, crew_type_id, crew_name, leader_name, leader_phone, wechat_id,
                      id_card_number_encrypted, id_card_fingerprint, emergency_contact_name,
-                     emergency_contact_phone, notes, is_active)
+                     emergency_contact_phone, notes, sort_order, is_active)
                  VALUES (:project_id, :type_id, :crew_name, :leader_name, :leader_phone, :wechat_id,
-                         :id_card, :fingerprint, :emergency_name, :emergency_phone, :notes, 1)'
+                         :id_card, :fingerprint, :emergency_name, :emergency_phone, :notes, :sort_order, 1)'
             );
         } else {
             $this->requireCrewInProject($projectId, $crewId);
@@ -132,7 +138,7 @@ final class CrewDirectoryService
                  SET crew_type_id = :type_id, crew_name = :crew_name, leader_name = :leader_name,
                      leader_phone = :leader_phone, wechat_id = :wechat_id,
                      emergency_contact_name = :emergency_name, emergency_contact_phone = :emergency_phone,
-                     notes = :notes';
+                     notes = :notes, sort_order = :sort_order';
             if (!$keepExisting) {
                 $sql .= ', id_card_number_encrypted = :id_card, id_card_fingerprint = :fingerprint';
             }
@@ -150,6 +156,7 @@ final class CrewDirectoryService
             'emergency_name' => $emergencyName,
             'emergency_phone' => $emergencyPhone,
             'notes' => $notes,
+            'sort_order' => $sortOrder,
         ];
         if ($crewId === null) {
             $params['id_card'] = $encrypted;
@@ -235,6 +242,29 @@ final class CrewDirectoryService
 
         $delete = $this->db->prepare('DELETE FROM Labor_Crew_Types WHERE crew_type_id = :id');
         $delete->execute(['id' => $typeId]);
+    }
+
+    /**
+     * Rows for the Excel export: craft type, crew name, leader name, phone and
+     * remarks. Identity numbers and WeChat ids are never part of the exported
+     * file, and archived crews are excluded by design. Rows use the same manual
+     * order as the on-screen list.
+     *
+     * @return array<int, array<string, string|null>>
+     */
+    public function exportRows(int $projectId): array
+    {
+        $statement = $this->db->prepare(
+            'SELECT t.type_name, c.crew_name, c.leader_name, c.leader_phone, c.notes
+             FROM Labor_Crews c
+             JOIN Labor_Crew_Types t ON t.crew_type_id = c.crew_type_id
+             WHERE c.project_id = :project_id AND c.is_active = 1
+             ORDER BY CASE WHEN c.sort_order = 0 THEN 1 ELSE 0 END, c.sort_order,
+                     t.sort_order, t.type_name, c.crew_name, c.crew_id'
+        );
+        $statement->execute(['project_id' => $projectId]);
+
+        return $statement->fetchAll();
     }
 
     public function countActive(int $projectId): int

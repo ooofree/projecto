@@ -27,9 +27,16 @@ require __DIR__ . '/_nav.php';
         <h1>班组负责人联系方式</h1>
         <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。班组只对本次项目登记，后续任务模块按工种与班组取人。</p>
     </div>
-    <?php if ($canEdit): ?>
-        <button class="button button-primary" type="button" data-dialog-open="crew-create-dialog">登记班组</button>
-    <?php endif; ?>
+    <div class="project-list-actions">
+        <?php if ($canEdit): ?>
+            <button class="button button-primary" type="button" data-dialog-open="crew-create-dialog">登记班组</button>
+        <?php endif; ?>
+        <form method="post" action="" class="inline-form">
+            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+            <input type="hidden" name="action" value="labor.crew.export">
+            <button class="button button-secondary" type="submit">导出 Excel</button>
+        </form>
+    </div>
 </section>
 <?php if (!$encryptionReady): ?>
     <div class="notice notice-info">服务器未配置数据加密密钥（APP_DATA_KEY），身份证号暂不可保存；其余联系方式不受影响。</div>
@@ -51,6 +58,7 @@ require __DIR__ . '/_nav.php';
                 <option value="">请选择工种</option>
                 <?php foreach ($types as $type): ?><option value="<?= (int) $type['crew_type_id'] ?>"><?= $escape($type['type_name']) ?></option><?php endforeach; ?>
             </select></label>
+            <label>排序<input type="number" name="sort_order" min="0" max="9999" value="0" title="值小者在前"></label>
             <label>负责人姓名<input name="leader_name" maxlength="100" required></label>
             <label>负责人手机号<input name="leader_phone" maxlength="30" required></label>
             <label>微信号<input name="wechat_id" maxlength="100"></label>
@@ -94,6 +102,7 @@ require __DIR__ . '/_nav.php';
                 <strong><?= $escape($crew['crew_name']) ?></strong>
                 <span class="badge badge-neutral"><?= $escape($crew['type_name']) ?></span>
                 <span class="muted"><?= $escape($crew['leader_name']) ?> · <?= $escape($crew['leader_phone']) ?></span>
+                <span class="muted">排序 <?= (int) $crew['sort_order'] ?></span>
                 <?php if ((int) $crew['is_active'] !== 1): ?><span class="status-badge">已归档</span><?php endif; ?>
             </summary>
             <form method="post" class="form-grid record-form">
@@ -107,6 +116,7 @@ require __DIR__ . '/_nav.php';
                         <option value="<?= (int) $type['crew_type_id'] ?>" <?= (int) $type['crew_type_id'] === (int) $crew['crew_type_id'] ? 'selected' : '' ?>><?= $escape($type['type_name']) ?></option>
                     <?php endforeach; ?>
                 </select></label>
+                <label>排序<input type="number" name="sort_order" min="0" max="9999" value="<?= (int) $crew['sort_order'] ?>" title="值小者在前" <?= $canEdit ? '' : 'disabled' ?>></label>
                 <label>负责人姓名<input name="leader_name" maxlength="100" value="<?= $escape($crew['leader_name']) ?>" required <?= $canEdit ? '' : 'disabled' ?>></label>
                 <label>负责人手机号<input name="leader_phone" maxlength="30" value="<?= $escape($crew['leader_phone']) ?>" required <?= $canEdit ? '' : 'disabled' ?>></label>
                 <label>微信号<input name="wechat_id" maxlength="100" value="<?= $escape($crew['wechat_id'] ?? '') ?>" <?= $canEdit ? '' : 'disabled' ?>></label>

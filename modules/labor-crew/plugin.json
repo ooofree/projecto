@@ -12,6 +12,7 @@
         "GET labor-crews": "crews",
         "GET labor-crew-types": "types",
         "POST labor.crew.save": "crew.save",
+        "POST labor.crew.export": "crew.export",
         "POST labor.crew.archive": "crew.archive",
         "POST labor.crew.restore": "crew.restore",
         "POST labor.crew_type.save": "type.save",

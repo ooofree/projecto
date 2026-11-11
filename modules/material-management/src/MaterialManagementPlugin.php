@@ -50,6 +50,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'category.delete' => $this->deleteCategory($input),
             'material.save' => $this->saveMaterial($input),
             'material.delete' => $this->deleteMaterial($input),
+            'material.export' => $this->exportMaterials($input),
             'brand.save' => $this->saveBrand($input),
             'brand.delete' => $this->deleteBrand($input),
             'auxiliary.save' => $this->saveAuxiliary($input),
@@ -546,6 +547,78 @@ final class MaterialManagementPlugin implements PluginInterface
     }
 
     /**
+     * Excel export of the current project's material catalogue, optionally
+     * limited to the category selected in the list filter. File name follows the
+     * confirmed pattern 项目名材料_分类名_日期.xlsx (全部 when no category is
+     * selected), so no daily sequence is appended.
+     */
+    private function exportMaterials(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_materials');
+        Support::requirePermission($this->context->db, 'view_projects');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $categoryId = $this->optionalCategoryId($input['category_id'] ?? null);
+        $category = $categoryId === null ? null : $this->catalog->requireCategory($projectId, $categoryId);
+        $materials = $this->catalog->exportRows($projectId, $categoryId);
+
+        $headers = ['序号', '材料代号', '材料名称', '单位', '分类', '规格', '详细说明'];
+        $rows = [];
+        foreach ($materials as $index => $material) {
+            $categoryName = trim((string) ($material['category_name'] ?? ''));
+            $rows[] = [
+                $index + 1,
+                self::exportText($material['material_code'] ?? null),
+                (string) $material['material_name'],
+                (string) $material['unit'],
+                $categoryName === '' ? '未分类' : $categoryName,
+                self::exportText($material['specifications'] ?? null),
+                self::exportText($material['material_description_detailed'] ?? null),
+            ];
+        }
+
+        $projectLabel = Support::safeFileSegment((string) $project['project_name']);
+        if ($projectLabel === '') {
+            $projectLabel = '项目';
+        }
+        $categoryLabel = $category === null
+            ? '全部'
+            : (Support::safeFileSegment((string) $category['category_name']) ?: ('分类' . $categoryId));
+        $fileName = $projectLabel . '材料_' . $categoryLabel . '_' . Support::nowLocal('Ymd') . '.xlsx';
+
+        $body = XlsxWorkbook::build('材料清单', $headers, $rows, [
+            'title' => '📋 ' . $project['project_name'] . '材料清单',
+            'meta' => [
+                '导出时间: ' . Support::nowLocal('Y-m-d H:i:s'),
+                '记录总数: ' . count($rows),
+                '导出范围: ' . ($category === null ? '全部材料' : '分类：' . $category['category_name']),
+            ],
+            // Auto width under-sizes Chinese text; keep the catalogue readable.
+            'fixedWidths' => [
+                0 => 6.0,
+                1 => 16.0,
+                2 => 28.0,
+                3 => 8.0,
+                4 => 14.0,
+                5 => 30.0,
+                6 => 45.0,
+            ],
+        ]);
+        Support::audit(
+            $this->context->db,
+            'material.export',
+            'Exported ' . count($rows) . ' material rows for project ' . $projectId
+                . ($categoryId === null ? ' (all categories).' : ' (category ' . $categoryId . ').')
+        );
+
+        return PluginResponse::download(
+            $fileName,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            $body
+        );
+    }
+
+    /**
      * Adds short-lived signed read URLs to the sample images so the list
      * thumbnails and the Excel export can embed them without exposing the
      * private bucket.
@@ -788,6 +861,23 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::audit($this->context->db, $action, 'Record ' . $id . '.');
         Support::flash($message);
         return PluginResponse::redirect($location);
+    }
+
+    /** Null means "all categories"; anything submitted must be a positive id. */
+    private function optionalCategoryId(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_string($value) && !is_int($value)) {
+            throw new HttpException('材料分类无效。', 422);
+        }
+        $id = filter_var($value, FILTER_VALIDATE_INT);
+        if ($id === false || $id < 1) {
+            throw new HttpException('材料分类无效。', 422);
+        }
+
+        return $id;
     }
 
     private function requiredId(array $input, string $key): int

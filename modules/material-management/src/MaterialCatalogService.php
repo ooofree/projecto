@@ -79,6 +79,53 @@ final class MaterialCatalogService
         ];
     }
 
+    /**
+     * Material rows for the Excel export, optionally narrowed to one category of
+     * the current project (the same category the list page filters by).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function exportRows(int $projectId, ?int $categoryId = null): array
+    {
+        $sql = 'SELECT m.material_id, m.material_code, m.material_name, m.unit,
+                       m.specifications, m.material_description_detailed,
+                       m.category_id, c.category_name
+                FROM Materials m
+                LEFT JOIN Material_Categories c
+                  ON c.category_id = m.category_id AND c.project_id = m.project_id
+                WHERE m.project_id = :project_id';
+        $params = ['project_id' => $projectId];
+        if ($categoryId !== null) {
+            $sql .= ' AND m.category_id = :category_id';
+            $params['category_id'] = $categoryId;
+        }
+        $sql .= ' ORDER BY c.sort_order, c.category_name, m.material_name, m.material_id';
+
+        $statement = $this->db->prepare($sql);
+        $statement->execute($params);
+
+        return $statement->fetchAll();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function requireCategory(int $projectId, int $categoryId): array
+    {
+        $statement = $this->db->prepare(
+            'SELECT category_id, category_name
+             FROM Material_Categories
+             WHERE project_id = :project_id AND category_id = :id'
+        );
+        $statement->execute(['project_id' => $projectId, 'id' => $categoryId]);
+        $category = $statement->fetch();
+        if ($category === false) {
+            throw new HttpException('材料分类不存在或不属于当前项目。', 404);
+        }
+
+        return $category;
+    }
+
     public function brandData(): array
     {
         return $this->db->query(

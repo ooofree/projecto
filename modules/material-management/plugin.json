@@ -23,6 +23,7 @@
         "POST material.category.delete": "category.delete",
         "POST material.save": "material.save",
         "POST material.delete": "material.delete",
+        "POST material.export": "material.export",
         "POST material.brand.save": "brand.save",
         "POST material.brand.delete": "brand.delete",
         "POST material.auxiliary.save": "auxiliary.save",
