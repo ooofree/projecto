@@ -42,7 +42,53 @@ document.addEventListener('click', event => {
     if (event.target.closest('[data-dialog-close]')) {
         event.target.closest('dialog')?.close();
     }
+
+    const copyTrigger = event.target.closest('[data-copy-share]');
+    if (copyTrigger) {
+        const linkField = document.querySelector('[data-share-link]');
+        if (linkField) copyShareLink(copyTrigger, linkField);
+    }
 });
+
+// Copy the public share link. The clipboard API needs a secure context, so
+// fall back to selecting the readonly field (mobile long-press copy works too).
+async function copyShareLink(button, field) {
+    const original = button.textContent;
+    const done = ok => {
+        button.textContent = ok ? '已复制' : '请长按或全选复制';
+        window.setTimeout(() => { button.textContent = original; }, 2000);
+    };
+    try {
+        await navigator.clipboard.writeText(field.value);
+        done(true);
+    } catch {
+        field.focus();
+        field.select();
+        let copied = false;
+        try { copied = document.execCommand('copy'); } catch { copied = false; }
+        done(copied);
+    }
+}
+
+// Public crew share page: live search over the already-rendered cards.
+const shareSearch = document.getElementById('share-search');
+if (shareSearch) {
+    const shareItems = [...document.querySelectorAll('#share-list .share-card')];
+    const shareCount = document.getElementById('share-count');
+    const shareNoMatch = document.getElementById('share-no-match');
+    const filterShare = () => {
+        const query = shareSearch.value.trim().toLocaleLowerCase();
+        let visible = 0;
+        for (const item of shareItems) {
+            const matches = (item.dataset.search ?? '').includes(query);
+            item.hidden = !matches;
+            if (matches) visible++;
+        }
+        if (shareCount) shareCount.textContent = `${visible}${shareCount.dataset.unit ?? ' 个班组'}`;
+        if (shareNoMatch) shareNoMatch.hidden = visible !== 0;
+    };
+    shareSearch.addEventListener('input', filterShare);
+}
 
 document.addEventListener('submit', event => {
     const form = event.target.closest('form[data-confirm]');

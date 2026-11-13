@@ -1,7 +1,7 @@
 {
     "id": "labor.crew",
     "name": "施工班组",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "class": "ProjectO\\Modules\\LaborCrew\\LaborCrewPlugin",
     "enabled": true,
     "requires": [
@@ -11,13 +11,19 @@
     "routes": {
         "GET labor-crews": "crews",
         "GET labor-crew-types": "types",
+        "GET labor-crew-share": "crew.share_public",
         "POST labor.crew.save": "crew.save",
         "POST labor.crew.export": "crew.export",
         "POST labor.crew.archive": "crew.archive",
         "POST labor.crew.restore": "crew.restore",
+        "POST labor.crew.share": "crew.share",
+        "POST labor.crew.share_revoke": "crew.share_revoke",
         "POST labor.crew_type.save": "type.save",
         "POST labor.crew_type.delete": "type.delete"
     },
+    "public_routes": [
+        "GET labor-crew-share"
+    ],
     "migrations": [
         "database/migrations"
     ],
@@ -41,6 +47,11 @@
             "name": "archive_labor_crews",
             "display_name": "归档施工班组",
             "description": "归档或恢复当前项目的班组；归档保留记录与加密信息，不硬删除"
+        },
+        {
+            "name": "share_labor_crews",
+            "display_name": "分享施工班组联系人",
+            "description": "为当前项目开启或停用班组联系人公开分享链接；持有链接者无需登录即可查看在用班组的工种、班组、负责人姓名、电话与备注，并可直接拨号"
         },
         {
             "name": "view_labor_crew_types",

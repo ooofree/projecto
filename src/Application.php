@@ -117,6 +117,20 @@ final class Application
             return;
         }
 
+        // Public share pages are the only GET routes that skip the login gate,
+        // and only when a plugin manifest explicitly declares them public. The
+        // plugin handler still validates its own share token and limits every
+        // read to the project the token was issued for.
+        if ($this->plugins->isPublicRoute('GET', $page)) {
+            Support::setDisplayTimezone(Support::resolveTimezone($this->db));
+            $response = $this->plugins->dispatch('GET', $page, $_GET);
+            if ($response === null) {
+                throw new HttpException('页面不存在。', 404);
+            }
+            $this->respond($response);
+            return;
+        }
+
         Support::requireLogin();
         Support::setDisplayTimezone(Support::resolveTimezone($this->db));
 
@@ -182,7 +196,12 @@ final class Application
         unset($_SESSION['flash']);
 
         $escape = [Support::class, 'escape'];
-        $csrfToken = Support::csrfToken();
+        // The login form needs a CSRF token before any session user exists.
+        // Only the anonymous public share view skips it: minting a token there
+        // would hand every visitor a session credential and start a session
+        // per crawler hit, and that view renders no forms at all.
+        $isPublicShareView = $viewData['publicShareView'] ?? false;
+        $csrfToken = $isPublicShareView === true ? '' : Support::csrfToken();
         $username = (string) ($_SESSION['username'] ?? '');
         $canManagePlatform = isset($_SESSION['user_id'])
             && Support::hasPermission($this->db, 'manage_platform');

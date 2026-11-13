@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 use ProjectO\HttpException;
 use ProjectO\Modules\LaborCrew\CrewDirectoryService;
+use ProjectO\Modules\LaborCrew\CrewShareService;
 use ProjectO\Modules\LaborCrew\LaborCrewPlugin;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginRegistry;
@@ -62,12 +63,14 @@ function crewRenderView(PluginResponse $response): string
     }
 
     $escape = [Support::class, 'escape'];
-    $csrfToken = 'crew-test-token';
-    $username = 'admin';
+    // Mirror Application::render(): the anonymous public share view gets no
+    // CSRF token; every other page (including login) keeps one.
+    $viewData = $response->data;
+    $csrfToken = ($viewData['publicShareView'] ?? false) === true ? '' : 'crew-test-token';
+    $username = isset($_SESSION['user_id']) ? 'admin' : '';
     $canManagePlatform = false;
     $theme = 'light';
     $flash = null;
-    $viewData = $response->data;
     extract($viewData, EXTR_SKIP);
     ob_start();
     require $response->viewPath;
@@ -87,7 +90,7 @@ $db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY, role_name TEXT)');
 $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
 $db->exec('CREATE TABLE Permissions (permission_id INTEGER PRIMARY KEY AUTOINCREMENT, permission_name TEXT UNIQUE, display_name TEXT, description TEXT, module TEXT)');
 $db->exec('CREATE TABLE Role_Permissions (role_id INTEGER, permission_id INTEGER)');
-$db->exec('CREATE TABLE Plugin_States (plugin_id TEXT PRIMARY KEY, is_enabled INTEGER)');
+$db->exec('CREATE TABLE Plugin_States (plugin_id TEXT PRIMARY KEY, is_enabled INTEGER NOT NULL, updated_by INTEGER, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)');
 $db->exec('CREATE TABLE System_Settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_by INTEGER, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)');
 $db->exec("INSERT INTO System_Settings (setting_key, setting_value) VALUES ('timezone', 'Asia/Shanghai'), ('theme', 'light')");
 $db->exec('CREATE TABLE audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, ip_address TEXT, user_agent TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
@@ -112,6 +115,13 @@ crewCheck(
 crewCheck(
     str_contains($mysqlDdl, 'ADD COLUMN `sort_order`'),
     'Crews must gain an editable sort order column through a migration.'
+);
+crewCheck(
+    str_contains($mysqlDdl, 'CREATE TABLE IF NOT EXISTS `Labor_Crew_Shares`')
+        && str_contains($mysqlDdl, 'UNIQUE KEY `uq_crew_share_token` (`token`)')
+        && str_contains($mysqlDdl, 'KEY `idx_crew_share_project_revoked` (`project_id`, `revoked_at`)')
+        && str_contains($mysqlDdl, '`revoked_at` timestamp NULL DEFAULT NULL'),
+    'Share tokens must live in their own table: unique token, per-project lookup, soft revocation.'
 );
 
 // SQLite mirror of the same columns so the service can be exercised without MySQL.
@@ -140,6 +150,15 @@ $db->exec('CREATE TABLE Labor_Crews (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (project_id, id_card_fingerprint)
+)');
+$db->exec('CREATE TABLE Labor_Crew_Shares (
+    share_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES Projects (project_id),
+    token TEXT NOT NULL UNIQUE,
+    created_by INTEGER NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    revoked_at TEXT,
+    revoked_by INTEGER
 )');
 $seedNames = ['土建', '钢筋', '木工', '泥瓦', '混凝土', '脚手架', '防水', '水电安装', '暖通', '消防', '装饰装修', '幕墙', '门窗', '油漆涂料', '拆除'];
 $seedInsert = $db->prepare('INSERT INTO Labor_Crew_Types (type_name, sort_order) VALUES (:name, :sort_order)');
@@ -563,5 +582,154 @@ crewCheck(($registry->dispatch('GET', 'projects', [])?->data['canViewLaborCrews'
 // Manifest wiring: routes registered through the plugin registry.
 $registryRoutes = $registry->dispatch('GET', 'labor-crews', []);
 crewCheck($registryRoutes instanceof PluginResponse, 'Registry must resolve the crew route to the plugin.');
+
+// ---------------------------------------------------------------------------
+// Public share links: opt-in per project, token-only read access, tel: dialling,
+// export-equivalent columns only, revocation kills the link, re-enable rotates.
+// ---------------------------------------------------------------------------
+$shareService = new CrewShareService($db);
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+
+// The toolbar button sits next to the export button and only for share holders.
+$sharePageHtml = crewRenderView($plugin->dispatch('crews', []));
+crewCheck(str_contains($sharePageHtml, 'crew-share-dialog'), 'Share holders must get the share dialog.');
+$exportPos = strpos($sharePageHtml, '导出 Excel');
+$sharePos = strpos($sharePageHtml, '分享链接');
+crewCheck($exportPos !== false && $sharePos !== false && $sharePos > $exportPos, 'The share button must sit after the export button.');
+crewCheck(str_contains($sharePageHtml, '生成分享链接'), 'Inactive share must offer to generate a link.');
+
+// Viewer role (view only) must not see share management.
+$_SESSION['user_id'] = 2;
+$viewerShareHtml = crewRenderView($plugin->dispatch('crews', []));
+crewCheck(!str_contains($viewerShareHtml, 'crew-share-dialog'), 'Users without share permission must not see the share dialog.');
+crewExpectStatus(static function () use ($plugin): void {
+    $plugin->dispatch('crew.share', []);
+}, 403, 'Users without share_labor_crews must not enable sharing.');
+crewExpectStatus(static function () use ($plugin): void {
+    $plugin->dispatch('crew.share_revoke', []);
+}, 403, 'Users without share_labor_crews must not revoke sharing.');
+$_SESSION['user_id'] = 1;
+
+// Enable: token minted, audited without the token, idempotent on repeat.
+$auditBeforeShare = (int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'labor.crew.share'")->fetchColumn();
+$enableRedirect = $plugin->dispatch('crew.share', []);
+crewCheck($enableRedirect->type === 'redirect' && $enableRedirect->location === '?page=labor-crews', 'Enabling a share must return to the crew list.');
+$activeShare = $shareService->activeShare(1);
+crewCheck($activeShare !== null && preg_match('/^[0-9a-f]{32}$/', (string) $activeShare['token']) === 1, 'An active share must carry a 32-hex token.');
+$shareToken = (string) $activeShare['token'];
+$auditAfterShare = (int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'labor.crew.share'")->fetchColumn();
+crewCheck($auditAfterShare === $auditBeforeShare + 1, 'Enabling a share must write one audit entry.');
+$shareAuditDetails = (string) $db->query("SELECT details FROM audit_logs WHERE action = 'labor.crew.share' ORDER BY id DESC LIMIT 1")->fetchColumn();
+crewCheck(!str_contains($shareAuditDetails, $shareToken), 'Audit details must not contain the share token.');
+$plugin->dispatch('crew.share', []);
+crewCheck((string) $shareService->activeShare(1)['token'] === $shareToken, 'Repeated enable must keep the same active token (double-submit safe).');
+
+// The toolbar now shows the active link with copy/preview/revoke controls.
+$activeShareHtml = crewRenderView($plugin->dispatch('crews', []));
+crewCheck(str_contains($activeShareHtml, 'data-share-link'), 'Active share must expose the link field.');
+crewCheck(str_contains($activeShareHtml, $shareToken), 'The link field must contain the token.');
+crewCheck(str_contains($activeShareHtml, '停用分享'), 'Active share must offer revocation.');
+
+// Public page: no session at all, token is the whole authorization.
+$_SESSION = [];
+$publicResponse = $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
+crewCheck($publicResponse->type === 'view', 'Public share must render a view without login.');
+$publicHtml = crewRenderView($publicResponse);
+crewCheck(str_contains($publicHtml, 'Project One'), 'Public page must name the shared project.');
+crewCheck(str_contains($publicHtml, '钢筋一班'), 'Public page must list active crews of the token project.');
+crewCheck(str_contains($publicHtml, 'href="tel:13800138001"'), 'Leader phones must be tel: links for direct dialling.');
+crewCheck(!str_contains($publicHtml, 'href="tel:+8613900139000"'), 'Emergency contact phones must not be published.');
+crewCheck(!str_contains($publicHtml, '李静'), 'Emergency contact names must never appear on the public page.');
+crewCheck(!str_contains($publicHtml, '11010519491231002X'), 'Identity numbers must never appear on the public page.');
+crewCheck(!str_contains($publicHtml, '110105********'), 'Masked identity numbers must not appear either.');
+crewCheck(!str_contains($publicHtml, 'zw-steel'), 'WeChat ids must never appear on the public page.');
+crewCheck(!str_contains($publicHtml, 'Project Two'), 'The public page must not leak other projects.');
+crewCheck(!str_contains($publicHtml, 'crew-share-dialog') && !str_contains($publicHtml, 'csrf_token'), 'The public page must not expose management controls or CSRF tokens.');
+crewCheck(str_contains($publicHtml, 'share-search'), 'Public page must offer live search.');
+
+// Archived crews stay out of the public page; restoring brings them back.
+$shareArchiveId = $service->saveCrew(1, [
+    'crew_type_id' => 5, 'crew_name' => '分享归档班组', 'leader_name' => '归档联系人', 'leader_phone' => '13500135020',
+]);
+$service->archiveCrew(1, $shareArchiveId);
+$publicAfterArchive = crewRenderView($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
+crewCheck(!str_contains($publicAfterArchive, '分享归档班组'), 'Archived crews must not appear on the public page.');
+$service->restoreCrew(1, $shareArchiveId);
+$publicAfterRestore = crewRenderView($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
+crewCheck(str_contains($publicAfterRestore, '分享归档班组'), 'Restored crews must reappear on the public page.');
+$db->exec('DELETE FROM Labor_Crews WHERE crew_id = ' . $shareArchiveId);
+
+// Bad tokens are refused with 404 and never reveal whether a share exists.
+foreach (['', 'nope', str_repeat('0', 32), strtoupper($shareToken), $shareToken . '0', substr($shareToken, 0, 31)] as $badToken) {
+    crewExpectStatus(static function () use ($plugin, $badToken): void {
+        $plugin->dispatch('crew.share_public', ['token' => $badToken]);
+    }, 404, 'Invalid token must be refused: ' . var_export($badToken, true));
+}
+crewExpectStatus(static function () use ($plugin): void {
+    $plugin->dispatch('crew.share_public', []);
+}, 404, 'Missing token must be refused.');
+crewExpectStatus(static function () use ($plugin): void {
+    $plugin->dispatch('crew.share_public', ['token' => ['array']]);
+}, 404, 'Non-string token must be refused.');
+
+// Shares are per project: project 2 gets its own token and its own rows.
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 2];
+$plugin->dispatch('crew.share', []);
+$projectTwoToken = (string) $shareService->activeShare(2)['token'];
+crewCheck($projectTwoToken !== $shareToken, 'Each project must get its own token.');
+$_SESSION = [];
+$projectTwoPublic = crewRenderView($plugin->dispatch('crew.share_public', ['token' => $projectTwoToken]));
+crewCheck(str_contains($projectTwoPublic, 'Project Two'), 'Project 2 token must open project 2.');
+crewCheck(!str_contains($projectTwoPublic, '13800138001'), 'Project 2 public page must not leak project 1 phones.');
+
+// Revocation kills the link immediately; the row is kept, not deleted.
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$revokeRedirect = $plugin->dispatch('crew.share_revoke', []);
+crewCheck($revokeRedirect->type === 'redirect', 'Revoking must return to the crew list.');
+crewCheck($shareService->activeShare(1) === null, 'Revoked share must no longer be active.');
+$revokedRow = $db->query('SELECT revoked_at, revoked_by FROM Labor_Crew_Shares WHERE project_id = 1')->fetch();
+crewCheck($revokedRow !== false && $revokedRow['revoked_at'] !== null, 'Revocation must keep the row with a timestamp (no hard delete).');
+crewCheck((int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'labor.crew.share_revoke'")->fetchColumn() >= 1, 'Revocation must be audited.');
+$_SESSION = [];
+crewExpectStatus(static function () use ($plugin, $shareToken): void {
+    $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
+}, 404, 'A revoked token must stop working immediately.');
+
+// Re-enabling rotates the token: the old link stays dead.
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$plugin->dispatch('crew.share', []);
+$rotatedToken = (string) $shareService->activeShare(1)['token'];
+crewCheck($rotatedToken !== $shareToken, 'Re-enabling must mint a fresh token.');
+$_SESSION = [];
+crewExpectStatus(static function () use ($plugin, $shareToken): void {
+    $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
+}, 404, 'The old token must stay dead after rotation.');
+crewRenderView($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
+
+// Archiving the project stops its public page, like the session context does.
+$db->exec("INSERT INTO project_foundation_archive_records (entity_type, entity_id, project_id, archived_by) VALUES ('project', 1, 1, 1)");
+crewExpectStatus(static function () use ($plugin, $rotatedToken): void {
+    $plugin->dispatch('crew.share_public', ['token' => $rotatedToken]);
+}, 404, 'An archived project must not serve its public page.');
+$db->exec("DELETE FROM project_foundation_archive_records WHERE entity_type = 'project' AND entity_id = 1");
+crewRenderView($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
+
+// Sharing needs a selected project, and the registry marks the route public.
+$_SESSION = ['user_id' => 1, 'username' => 'admin'];
+crewExpectStatus(static function () use ($plugin): void {
+    $plugin->dispatch('crew.share', []);
+}, 409, 'Enabling a share must require a selected project.');
+crewCheck($registry->isPublicRoute('GET', 'labor-crew-share'), 'The share page must be declared public in the manifest.');
+crewCheck(!$registry->isPublicRoute('GET', 'labor-crews'), 'The internal crew page must stay behind login.');
+crewCheck(!$registry->isPublicRoute('POST', 'labor.crew.share'), 'Share management must never be public.');
+$registryPublic = $registry->dispatch('GET', 'labor-crew-share', ['token' => $rotatedToken]);
+crewCheck($registryPublic instanceof PluginResponse, 'Registry must resolve the public share route.');
+
+// Disabled plugin: the public route disappears with it.
+$registry->setEnabled('labor.crew', false);
+$disabledRegistry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
+crewCheck(!$disabledRegistry->isPublicRoute('GET', 'labor-crew-share'), 'A disabled plugin must expose no public route.');
+crewCheck($disabledRegistry->dispatch('GET', 'labor-crew-share', ['token' => $rotatedToken]) === null, 'A disabled plugin must not serve the public page.');
+$registry->setEnabled('labor.crew', true);
 
 echo "labor crew tests passed\n";

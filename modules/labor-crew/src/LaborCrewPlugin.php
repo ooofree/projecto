@@ -23,6 +23,7 @@ use ProjectO\Support;
 final class LaborCrewPlugin implements PluginInterface
 {
     private CrewDirectoryService $directory;
+    private CrewShareService $shares;
     private bool $encryptionReady;
 
     public function __construct(private readonly PluginContext $context)
@@ -30,6 +31,7 @@ final class LaborCrewPlugin implements PluginInterface
         $cipher = FieldCipher::fromEnvironment();
         $this->encryptionReady = $cipher !== null;
         $this->directory = new CrewDirectoryService($context->db, $cipher);
+        $this->shares = new CrewShareService($context->db);
     }
 
     public function dispatch(string $handler, array $input): PluginResponse
@@ -41,6 +43,9 @@ final class LaborCrewPlugin implements PluginInterface
             'crew.export' => $this->exportCrews(),
             'crew.archive' => $this->archiveCrew($input),
             'crew.restore' => $this->restoreCrew($input),
+            'crew.share' => $this->enableShare(),
+            'crew.share_revoke' => $this->revokeShare(),
+            'crew.share_public' => $this->publicSharePage($input),
             'type.save' => $this->saveType($input),
             'type.delete' => $this->deleteType($input),
             default => throw new HttpException('未找到对应操作。', 404),
@@ -84,8 +89,92 @@ final class LaborCrewPlugin implements PluginInterface
             'canViewIdNumbers' => $canViewIdNumbers,
             'canManageTypes' => Support::hasPermission($this->context->db, 'edit_labor_crew_types'),
             'encryptionReady' => $this->encryptionReady,
+            'canShare' => Support::hasPermission($this->context->db, 'share_labor_crews'),
+            'share' => $this->shareState($projectId),
             'nav' => $this->nav(),
         ]);
+    }
+
+    /** Share button state for the toolbar; null when the viewer cannot manage shares. */
+    private function shareState(int $projectId): ?array
+    {
+        if (!Support::hasPermission($this->context->db, 'share_labor_crews')) {
+            return null;
+        }
+        $active = $this->shares->activeShare($projectId);
+        if ($active === null) {
+            return ['enabled' => false, 'url' => null];
+        }
+
+        return ['enabled' => true, 'url' => CrewShareService::publicUrl((string) $active['token'])];
+    }
+
+    /**
+     * Public contact page: no session, no permissions — possession of an active
+     * share token is the whole authorization, and it only ever unlocks the
+     * export-equivalent columns of the token's own project. Identity numbers,
+     * WeChat ids and emergency contacts never leave the authenticated area.
+     */
+    private function publicSharePage(array $input): PluginResponse
+    {
+        $token = $input['token'] ?? null;
+        $project = is_string($token) ? $this->shares->projectForToken($token) : null;
+        if ($project === null) {
+            throw new HttpException('分享链接无效或已停用，请联系分享者获取新链接。', 404);
+        }
+
+        return $this->context->view('share.php', [
+            'title' => '班组联系人',
+            'project' => $project,
+            'crews' => $this->directory->exportRows((int) $project['project_id']),
+            'generatedAt' => Support::nowLocal('Y-m-d H:i'),
+            // Tells the layout to skip CSRF/session minting for anonymous eyes.
+            'publicShareView' => true,
+        ]);
+    }
+
+    private function enableShare(): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_labor_crews');
+        Support::requirePermission($this->context->db, 'share_labor_crews');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+
+        $alreadyActive = $this->shares->activeShare($projectId) !== null;
+        $this->shares->enable($projectId, (int) ($_SESSION['user_id'] ?? 0));
+        // The token itself is a credential: audit records the event, never the link.
+        Support::audit(
+            $this->context->db,
+            'labor.crew.share',
+            'Public crew contact sharing enabled for project ' . $projectId . '.'
+        );
+        Support::flash($alreadyActive
+            ? '分享链接已开启，可直接复制。'
+            : '分享链接已生成：持有链接者无需登录即可查看本项目的班组联系人。');
+
+        return PluginResponse::redirect('?page=labor-crews');
+    }
+
+    private function revokeShare(): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_labor_crews');
+        Support::requirePermission($this->context->db, 'share_labor_crews');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+
+        $revoked = $this->shares->revoke($projectId, (int) ($_SESSION['user_id'] ?? 0));
+        if ($revoked) {
+            Support::audit(
+                $this->context->db,
+                'labor.crew.share_revoke',
+                'Public crew contact sharing disabled for project ' . $projectId . '.'
+            );
+            Support::flash('分享已停用，原链接立即失效；重新分享会生成新链接。');
+        } else {
+            Support::flash('当前没有开启中的分享链接。');
+        }
+
+        return PluginResponse::redirect('?page=labor-crews');
     }
 
     private function typesIndex(): PluginResponse

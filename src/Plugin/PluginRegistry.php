@@ -10,6 +10,7 @@ use RuntimeException;
 final class PluginRegistry
 {
     private array $routes = [];
+    private array $publicRoutes = [];
     private array $permissions = [];
     private array $permissionNames = [];
     private array $migrations = [];
@@ -84,6 +85,19 @@ final class PluginRegistry
                 $this->routes[$route] = [$plugin, $handler];
             }
 
+            // Opt-in public routes: only these GET pages may be served without
+            // a signed-in session. Disabled plugins contribute no routes at
+            // all, so their public pages disappear with the plugin.
+            foreach ($manifest['public_routes'] ?? [] as $route) {
+                if (!is_string($route) || preg_match('/^GET [a-z0-9._-]+$/', $route) !== 1) {
+                    throw new RuntimeException("Plugin {$id} declares an invalid public route.");
+                }
+                if (!isset($this->routes[$route])) {
+                    throw new RuntimeException("Plugin {$id} public route {$route} is not a registered GET route.");
+                }
+                $this->publicRoutes[$route] = true;
+            }
+
             foreach ($manifest['permissions'] ?? [] as $permission) {
                 if (!isset($permission['name'], $permission['display_name'])) {
                     throw new RuntimeException("Plugin {$id} declares an invalid permission.");
@@ -136,6 +150,13 @@ final class PluginRegistry
 
         [$plugin, $handler] = $this->routes[$key];
         return $plugin->dispatch($handler, $input);
+    }
+
+    /** Whether the manifest explicitly exposes this GET route without login. */
+    public function isPublicRoute(string $method, string $route): bool
+    {
+        return strtoupper($method) === 'GET'
+            && isset($this->publicRoutes['GET ' . $route]);
     }
 
     public function permissions(): array
