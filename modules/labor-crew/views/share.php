@@ -1,6 +1,6 @@
 <?php
 /**
- * Standalone static public contact page (grouped tile layout).
+ * Standalone static public contact page (continuous tile grid).
  *
  * Rendered by CrewSharePage into storage/labor-crew-shares/<token>.html and
  * streamed as-is to anonymous visitors. Everything is inline: no external
@@ -8,19 +8,24 @@
  * export-equivalent columns (type_name, crew_name, leader_name, leader_phone,
  * notes); identity numbers, WeChat ids and emergency contacts never appear.
  *
- * Crews are grouped by craft type; the sticky type chips are anchor links that
- * jump straight to the matching group. Each tile is one <a href="tel:"> —
- * tapping anywhere on it dials. Every tile has the same fixed size (long text
- * is truncated) so the grid stays perfectly aligned. Phones always show two
- * columns; three columns start at tablet width (768px) and four at 1100px.
- * Small screens hide the number text and show a phone icon + dial hint.
+ * All crews flow through ONE continuous grid — no per-trade sections, so a
+ * trade with a single crew never leaves an empty slot; the next crews move up.
+ * Tiles are ordered trade by trade (first-appearance order, directory order
+ * inside a trade) and each tile carries its own coloured trade label. The
+ * sticky trade chips are anchor links that jump to the first tile of a trade
+ * and flash-highlight it. Each tile is one <a href="tel:"> — tapping anywhere
+ * on it dials. Every tile has the same fixed size (long text is truncated).
+ * Phones always show two columns; three start at tablet width (768px), four
+ * at 1100px. Small screens hide the number and show a phone icon + dial hint.
  */
 $crews = $crews ?? [];
 $generatedAt = $generatedAt ?? '';
 $timezone = $timezone ?? 'Asia/Shanghai';
 
 // Group by craft type, keeping first-appearance order (which follows the
-// directory's manual sort) and the crew order inside each group.
+// directory's manual sort) and the crew order inside each group. The groups
+// are only used for ordering, chip counts and anchor targets — the rendered
+// grid itself is continuous.
 $groups = [];
 foreach ($crews as $crew) {
     $typeName = (string) $crew['type_name'];
@@ -30,8 +35,8 @@ foreach ($crews as $crew) {
     $groups[$typeName][] = $crew;
 }
 // Construction-site palette: safety amber, blueprint blue, steel teal, brick
-// red, site violet, moss green, signal magenta, crane cyan. Assigned per group
-// so a type keeps one colour across its chip, heading and tiles.
+// red, site violet, moss green, signal magenta, crane cyan. A trade keeps one
+// colour across its chip and its tiles' label/top border.
 $palette = ['#d97706', '#2563eb', '#0d9488', '#dc2626', '#7c3aed', '#65a30d', '#db2777', '#0891b2'];
 $groupColors = [];
 $gi = 0;
@@ -78,28 +83,24 @@ body{margin:0;min-height:100vh;color:var(--text);font-family:system-ui,-apple-sy
 .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .chip .dot{width:9px;height:9px;border-radius:50%;background:var(--tc,#286247)}
 .chip strong{color:var(--muted);font-weight:700}
-.tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 16px}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 14px}
 .search{display:flex;flex:1 1 220px;align-items:center;gap:8px;min-height:44px;padding:0 13px;background:var(--surface);border:1px solid var(--border);border-radius:12px;transition:border-color .14s ease}
 .search:focus-within{border-color:var(--accent)}
 .search svg{flex:0 0 auto;color:var(--muted)}
 .search input{flex:1;min-width:0;min-height:42px;padding:0;border:0;outline:none;background:transparent;font:inherit}
 .count{color:var(--muted);font-size:.82rem;white-space:nowrap}
-.trade{margin:0 0 24px;scroll-margin-top:72px}
-.trade[hidden]{display:none}
-.trade-head{display:flex;align-items:center;gap:9px;margin:0 0 10px;padding:2px 4px;border-radius:8px}
-.trade-head .bar{width:5px;height:20px;border-radius:3px;background:var(--tc)}
-.trade-head h2{margin:0;font-size:1.02rem;letter-spacing:.01em}
-.trade-head .n{color:var(--muted);font-size:.78rem}
-.trade:target .trade-head{animation:target-flash 1.4s ease}
-@keyframes target-flash{0%,55%{background:var(--tc-soft);box-shadow:0 0 0 6px var(--tc-soft)}100%{background:transparent;box-shadow:0 0 0 0 transparent}}
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0;margin:0;list-style:none}
+.tiles li{min-width:0}
 .tiles li[hidden]{display:none}
+.tiles li[id]{scroll-margin-top:76px}
 .tile{position:relative;display:flex;flex-direction:column;height:150px;padding:12px 12px 46px;color:inherit;background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--tc);border-radius:14px;box-shadow:0 5px 16px rgb(34 54 43 / 5%);text-decoration:none;overflow:hidden;transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease;animation:rise .45s both;animation-delay:var(--d,0ms)}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .tile:hover{transform:translateY(-2px);border-color:var(--tc);border-top-color:var(--tc);box-shadow:0 10px 24px rgb(34 54 43 / 12%)}
 .tile:active{transform:scale(.985)}
 .tile:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-.tile-type{align-self:flex-start;padding:2px 9px;color:var(--tc);background:var(--tc-soft);border-radius:999px;font-size:.7rem;font-weight:660;white-space:nowrap}
+.tiles li:target .tile{animation:tile-target 1.6s ease}
+@keyframes tile-target{0%,55%{border-color:var(--tc);box-shadow:0 0 0 3px var(--tc-soft),0 10px 24px rgb(34 54 43 / 16%)}100%{border-color:var(--border);border-top-color:var(--tc);box-shadow:0 5px 16px rgb(34 54 43 / 5%)}}
+.tile-type{align-self:flex-start;max-width:100%;padding:3px 10px;color:var(--tc);background:var(--tc-soft);border-radius:999px;font-size:.72rem;font-weight:680;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile h3{margin:8px 0 0;font-size:1rem;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile-leader{margin:5px 0 0;color:var(--muted);font-size:.84rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile-notes{margin:5px 0 0;color:var(--muted);font-size:.78rem;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
@@ -116,7 +117,7 @@ footer p{margin:0 0 4px}
 .wrap{padding:12px 10px calc(24px + env(safe-area-inset-bottom))}
 .hero{padding:20px 17px 17px;border-radius:16px}
 .trade-nav{margin:12px -10px 12px;padding:8px 10px}
-.trade{scroll-margin-top:64px}
+.tiles li[id]{scroll-margin-top:64px}
 .tiles{gap:9px}
 .tile{height:150px;padding:11px 11px 44px;border-radius:13px}
 .tile h3{font-size:.93rem}
@@ -136,7 +137,7 @@ footer p{margin:0 0 4px}
 @media (prefers-reduced-motion:reduce){
 html{scroll-behavior:auto}
 .tile{animation:none}
-.trade:target .trade-head{animation:none;background:var(--tc-soft)}
+.tiles li:target .tile{animation:none;border-color:var(--tc);box-shadow:0 0 0 3px var(--tc-soft)}
 .tile,.chip{transition:none}
 }
 @media (prefers-color-scheme:dark){
@@ -181,43 +182,38 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
             <span class="count" id="share-count" data-unit=" 个班组" aria-live="polite"><?= count($crews) ?> 个班组</span>
         </div>
         <p class="no-match" id="share-no-match" hidden>没有符合搜索条件的班组。</p>
-        <?php $gi = 0; foreach ($groups as $typeName => $groupCrews): ?>
-            <section class="trade" id="trade-<?= $gi ?>" style="--tc:<?= $groupColors[$typeName] ?>;--tc-soft:<?= $groupColors[$typeName] ?>22" aria-label="<?= $escape($typeName) ?>班组">
-                <div class="trade-head">
-                    <span class="bar" aria-hidden="true"></span>
-                    <h2><?= $escape($typeName) ?></h2>
-                    <span class="n"><?= count($groupCrews) ?> 个班组</span>
-                </div>
-                <ul class="tiles">
-                    <?php foreach ($groupCrews as $crew): ?>
-                        <?php
-                        $phone = (string) $crew['leader_phone'];
-                        // Stored phones are normalised to digits with an optional +;
-                        // strip anything else defensively before building the tel: URI.
-                        $tel = preg_replace('/[^0-9+]/', '', $phone);
-                        $haystack = mb_strtolower(
-                            $crew['crew_name'] . ' ' . $crew['leader_name'] . ' ' . $phone
-                            . ' ' . $crew['type_name'] . ' ' . ($crew['notes'] ?? ''),
-                            'UTF-8'
-                        );
-                        $delay = min($tileIndex * 35, 320);
-                        $tileIndex++;
-                        ?>
-                        <li>
-                            <a class="tile" href="tel:<?= $escape($tel) ?>" data-search="<?= $escape($haystack) ?>" style="--d:<?= $delay ?>ms" aria-label="拨打 <?= $escape($crew['crew_name']) ?> 负责人 <?= $escape($crew['leader_name']) ?> 的电话 <?= $escape($phone) ?>">
-                                <span class="tile-type"><?= $escape($crew['type_name']) ?></span>
-                                <h3 title="<?= $escape($crew['crew_name']) ?>"><?= $escape($crew['crew_name']) ?></h3>
-                                <p class="tile-leader">负责人 · <?= $escape($crew['leader_name']) ?></p>
-                                <?php if (($crew['notes'] ?? '') !== ''): ?>
-                                    <p class="tile-notes" title="<?= $escape($crew['notes']) ?>"><?= $escape($crew['notes']) ?></p>
-                                <?php endif; ?>
-                                <span class="tile-call"><?= $phoneIcon ?><span class="tile-num"><?= $escape($phone) ?></span><span class="tile-hint">拨号</span></span>
-                            </a>
-                        </li>
-                    <?php endforeach; ?>
-                </ul>
-            </section>
-        <?php $gi++; endforeach; ?>
+        <ul class="tiles" id="share-list">
+            <?php $gi = 0; foreach ($groups as $typeName => $groupCrews): ?>
+                <?php foreach ($groupCrews as $ci => $crew): ?>
+                    <?php
+                    $phone = (string) $crew['leader_phone'];
+                    // Stored phones are normalised to digits with an optional +;
+                    // strip anything else defensively before building the tel: URI.
+                    $tel = preg_replace('/[^0-9+]/', '', $phone);
+                    $haystack = mb_strtolower(
+                        $crew['crew_name'] . ' ' . $crew['leader_name'] . ' ' . $phone
+                        . ' ' . $crew['type_name'] . ' ' . ($crew['notes'] ?? ''),
+                        'UTF-8'
+                    );
+                    $delay = min($tileIndex * 35, 320);
+                    $tileIndex++;
+                    // The first tile of each trade is the chip's anchor target.
+                    $anchor = $ci === 0 ? ' id="trade-' . $gi . '"' : '';
+                    ?>
+                    <li<?= $anchor ?> style="--tc:<?= $groupColors[$typeName] ?>;--tc-soft:<?= $groupColors[$typeName] ?>22">
+                        <a class="tile" href="tel:<?= $escape($tel) ?>" data-search="<?= $escape($haystack) ?>" style="--d:<?= $delay ?>ms" aria-label="拨打 <?= $escape($crew['crew_name']) ?> 负责人 <?= $escape($crew['leader_name']) ?> 的电话 <?= $escape($phone) ?>">
+                            <span class="tile-type"><?= $escape($crew['type_name']) ?></span>
+                            <h3 title="<?= $escape($crew['crew_name']) ?>"><?= $escape($crew['crew_name']) ?></h3>
+                            <p class="tile-leader">负责人 · <?= $escape($crew['leader_name']) ?></p>
+                            <?php if (($crew['notes'] ?? '') !== ''): ?>
+                                <p class="tile-notes" title="<?= $escape($crew['notes']) ?>"><?= $escape($crew['notes']) ?></p>
+                            <?php endif; ?>
+                            <span class="tile-call"><?= $phoneIcon ?><span class="tile-num"><?= $escape($phone) ?></span><span class="tile-hint">拨号</span></span>
+                        </a>
+                    </li>
+                <?php endforeach; ?>
+            <?php $gi++; endforeach; ?>
+        </ul>
     <?php endif; ?>
 
     <footer>
@@ -229,21 +225,17 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
 (function () {
     var search = document.getElementById('share-search');
     if (!search) return;
-    var tiles = [].slice.call(document.querySelectorAll('.tile'));
-    var sections = [].slice.call(document.querySelectorAll('.trade'));
+    var items = [].slice.call(document.querySelectorAll('#share-list > li'));
     var count = document.getElementById('share-count');
     var noMatch = document.getElementById('share-no-match');
     function apply() {
         var q = (search.value || '').trim().toLocaleLowerCase();
         var visible = 0;
-        for (var i = 0; i < tiles.length; i++) {
-            var matches = q === '' || (tiles[i].dataset.search || '').indexOf(q) !== -1;
-            tiles[i].parentNode.hidden = !matches;
+        for (var i = 0; i < items.length; i++) {
+            var tile = items[i].querySelector('.tile');
+            var matches = q === '' || ((tile && tile.dataset.search) || '').indexOf(q) !== -1;
+            items[i].hidden = !matches;
             if (matches) visible++;
-        }
-        for (var s = 0; s < sections.length; s++) {
-            var any = sections[s].querySelector('.tiles li:not([hidden])');
-            sections[s].hidden = !any;
         }
         if (count) count.textContent = visible + (count.dataset.unit || ' 个班组');
         if (noMatch) noMatch.hidden = visible !== 0;

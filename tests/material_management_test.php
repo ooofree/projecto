@@ -479,6 +479,43 @@ materialTestExpectStatus(
     404,
     'Material updates must reject IDs from another project.'
 );
+// Duplicate material codes inside one project must fail with a clear business
+// error (409), not an unhandled database exception; other projects stay free
+// to reuse the same code (covered above).
+materialTestExpectStatus(
+    static fn () => $catalog->saveMaterial(1, [
+        'material_code' => 'FL-001',
+        'material_name' => '重复编码新材料',
+        'unit' => 'm2',
+    ]),
+    409,
+    'Creating a material with a code already used in the same project must return 409.'
+);
+$secondMaterialId = $catalog->saveMaterial(1, [
+    'material_code' => 'FL-002',
+    'material_name' => '墙砖',
+    'unit' => 'm2',
+]);
+materialTestExpectStatus(
+    static fn () => $catalog->saveMaterial(1, [
+        'material_id' => (string) $secondMaterialId,
+        'material_code' => 'FL-001',
+        'material_name' => '墙砖',
+        'unit' => 'm2',
+    ]),
+    409,
+    'Renaming a material code onto another material in the same project must return 409.'
+);
+materialTestCheck(
+    $catalog->saveMaterial(1, [
+        'material_id' => (string) $materialId,
+        'material_code' => 'FL-001',
+        'material_name' => '地砖',
+        'unit' => 'm2',
+        'specifications' => '600×600',
+    ]) === $materialId,
+    'Updating a material while keeping its own code must still succeed.'
+);
 
 // Extra project-one categories and materials so the Excel export can be filtered.
 $lightingCategoryId = $catalog->saveCategory(1, ['category_name' => '灯具', 'sort_order' => '20']);
@@ -990,7 +1027,7 @@ materialTestCheck(
         && !str_contains($allMaterialsSheet, '项目二地砖')
         && str_contains($allMaterialsSheet, '<col min="3" max="3" width="28" customWidth="1"/>')
         && str_contains($allMaterialsSheet, '<col min="7" max="7" width="45" customWidth="1"/>')
-        && substr_count($allMaterialsSheet, '<row r=') === 5 + 6,
+        && substr_count($allMaterialsSheet, '<row r=') === 6 + 6,
     'The all-category export must contain every current-project material and no other project rows.'
 );
 $lightingExport = $plugin->dispatch('material.export', ['category_id' => (string) $lightingCategoryId]);

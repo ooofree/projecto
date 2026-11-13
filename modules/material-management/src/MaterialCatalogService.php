@@ -306,15 +306,20 @@ final class MaterialCatalogService
                     (project_id, material_code, material_name, unit, specifications, material_description_detailed, category_id)
                  VALUES (:project_id, :code, :name, :unit, :specifications, :description, :category_id)'
             );
-            $stmt->execute([
-                'project_id' => $projectId,
-                'code' => $code,
-                'name' => $name,
-                'unit' => $unit,
-                'specifications' => $specifications,
-                'description' => $description,
-                'category_id' => $categoryId,
-            ]);
+            try {
+                $stmt->execute([
+                    'project_id' => $projectId,
+                    'code' => $code,
+                    'name' => $name,
+                    'unit' => $unit,
+                    'specifications' => $specifications,
+                    'description' => $description,
+                    'category_id' => $categoryId,
+                ]);
+            } catch (\PDOException $exception) {
+                $this->throwIfDuplicateMaterialCode($exception, $projectId, $code, $id);
+                throw $exception;
+            }
             return (int) $this->db->lastInsertId();
         }
 
@@ -326,16 +331,21 @@ final class MaterialCatalogService
                  category_id = :category_id
              WHERE material_id = :id AND project_id = :project_id'
         );
-        $stmt->execute([
-            'code' => $code,
-            'name' => $name,
-            'unit' => $unit,
-            'specifications' => $specifications,
-            'description' => $description,
-            'category_id' => $categoryId,
-            'id' => $id,
-            'project_id' => $projectId,
-        ]);
+        try {
+            $stmt->execute([
+                'code' => $code,
+                'name' => $name,
+                'unit' => $unit,
+                'specifications' => $specifications,
+                'description' => $description,
+                'category_id' => $categoryId,
+                'id' => $id,
+                'project_id' => $projectId,
+            ]);
+        } catch (\PDOException $exception) {
+            $this->throwIfDuplicateMaterialCode($exception, $projectId, $code, $id);
+            throw $exception;
+        }
         return $id;
     }
 
@@ -950,6 +960,40 @@ final class MaterialCatalogService
         if ($stmt->fetchColumn() === false) {
             throw new HttpException($label . '不存在或不属于当前项目。', 404);
         }
+    }
+
+    /**
+     * Translate the (project_id, material_code) unique-key violation into a
+     * business error, mirroring the labor-crew duplicate-registration style.
+     * Any other database failure is rethrown unchanged by the caller.
+     */
+    private function throwIfDuplicateMaterialCode(\PDOException $exception, int $projectId, ?string $code, ?int $excludeId): void
+    {
+        if ($code === null || (string) $exception->getCode() !== '23000') {
+            return;
+        }
+        $message = $exception->getMessage();
+        $driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $isDuplicate = ($driver === 'mysql' && str_contains($message, 'uq_material_project_code'))
+            || ($driver === 'sqlite' && str_contains($message, 'UNIQUE constraint failed'));
+        if (!$isDuplicate) {
+            return;
+        }
+        $stmt = $this->db->prepare(
+            'SELECT material_name FROM Materials
+             WHERE project_id = :project_id AND material_code = :code
+               AND (:exclude_id IS NULL OR material_id <> :exclude_id)
+             LIMIT 1'
+        );
+        $stmt->execute(['project_id' => $projectId, 'code' => $code, 'exclude_id' => $excludeId]);
+        $existing = $stmt->fetchColumn();
+        if (!is_string($existing) || $existing === '') {
+            return;
+        }
+        throw new HttpException(
+            '材料编码「' . $code . '」已被材料「' . $existing . '」使用，请改用其他编码或直接编辑已有材料。',
+            409
+        );
     }
 
     private function requireProjectMaterial(int $projectId, int $materialId, string $label): void

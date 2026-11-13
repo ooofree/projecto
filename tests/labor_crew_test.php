@@ -660,8 +660,10 @@ crewCheck(file_get_contents(crewShareFilePath($shareToken)) === $publicHtml, 'Th
 crewCheck(!str_contains($publicHtml, '<link rel="stylesheet"') && !str_contains($publicHtml, 'src="assets'), 'The static page must be self-contained (no external CSS/JS).');
 crewCheck(str_contains($publicHtml, 'class="tile" href="tel:'), 'Each tile must be a whole-card tel: link.');
 crewCheck(str_contains($publicHtml, 'tile-num') && str_contains($publicHtml, 'tile-hint'), 'Tiles must carry the number plus the mobile dial hint.');
-crewCheck(str_contains($publicHtml, 'class="trade-nav"') && str_contains($publicHtml, 'href="#trade-0"'), 'Craft-type chips must anchor-navigate to their crew groups.');
-crewCheck(preg_match('/<section class="trade" id="trade-\d+"/', $publicHtml) === 1, 'Crews must be grouped into anchored trade sections.');
+crewCheck(str_contains($publicHtml, 'class="trade-nav"') && str_contains($publicHtml, 'href="#trade-0"'), 'Craft-type chips must anchor-navigate to the first tile of each trade.');
+crewCheck(preg_match('/<li id="trade-\d+"/', $publicHtml) === 1, 'The first tile of each trade must carry the chip anchor id.');
+crewCheck(!str_contains($publicHtml, '<section class="trade"'), 'The grid must be continuous: no per-trade sections that leave empty slots.');
+crewCheck(substr_count($publicHtml, 'class="tile-type"') >= 2, 'Every tile must carry its own trade label.');
 crewCheck(str_contains($publicHtml, 'Project One'), 'Public page must name the shared project.');
 crewCheck(str_contains($publicHtml, '钢筋一班'), 'Public page must list active crews of the token project.');
 crewCheck(str_contains($publicHtml, 'href="tel:13800138001"'), 'Leader phones must be tel: links for direct dialling.');
