@@ -979,13 +979,17 @@ final class MaterialCatalogService
         if (!$isDuplicate) {
             return;
         }
-        $stmt = $this->db->prepare(
-            'SELECT material_name FROM Materials
-             WHERE project_id = :project_id AND material_code = :code
-               AND (:exclude_id IS NULL OR material_id <> :exclude_id)
-             LIMIT 1'
-        );
-        $stmt->execute(['project_id' => $projectId, 'code' => $code, 'exclude_id' => $excludeId]);
+        // Native MySQL prepares reject a named placeholder bound twice, so the
+        // self-exclusion for updates is appended conditionally instead.
+        $sql = 'SELECT material_name FROM Materials
+             WHERE project_id = :project_id AND material_code = :code';
+        $params = ['project_id' => $projectId, 'code' => $code];
+        if ($excludeId !== null) {
+            $sql .= ' AND material_id <> :exclude_id';
+            $params['exclude_id'] = $excludeId;
+        }
+        $stmt = $this->db->prepare($sql . ' LIMIT 1');
+        $stmt->execute($params);
         $existing = $stmt->fetchColumn();
         if (!is_string($existing) || $existing === '') {
             return;
