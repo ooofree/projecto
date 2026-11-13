@@ -825,10 +825,10 @@ final class MaterialManagementPlugin implements PluginInterface
             ],
             'fixedWidths' => [
                 0 => 6.0,
-                1 => 42.0,
+                1 => 30.0,
                 2 => 16.0,
                 3 => 28.0,
-                4 => 22.0,
+                4 => 32.0,
                 5 => 12.0,
                 6 => 8.0,
             ],

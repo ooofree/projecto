@@ -1556,6 +1556,11 @@ materialTestCheck(
         && substr_count($estimateExportSheet, '<row r=') === $estimateRowCount + 6,
     'Estimate export must contain location space, material code, specification and quantity for every record.'
 );
+materialTestCheck(
+    str_contains($estimateExportSheet, '<col min="2" max="2" width="30"')
+        && str_contains($estimateExportSheet, '<col min="5" max="5" width="32"'),
+    'Estimate export must keep the narrowed location column and the widened specification column.'
+);
 $estimateSearchExport = $plugin->dispatch('estimate.export', ['search' => '灯具']);
 $estimateSearchSheet = materialTestXlsxSheet($estimateSearchExport);
 materialTestCheck(
