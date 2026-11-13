@@ -48,11 +48,14 @@ require __DIR__ . '/_nav.php';
         <div class="dialog-heading"><h2>分享班组联系人</h2><button class="button button-quiet" type="button" data-dialog-close>关闭</button></div>
         <?php if (!empty($share['enabled'])): ?>
             <p class="muted">分享已开启：任何人持有下方链接，无需登录即可查看本项目在用班组的工种、班组名称、负责人姓名、电话和备注，点击电话可直接拨号。身份证号、微信号与紧急联系人不会公开。</p>
-            <label class="share-link-field">公开链接
-                <input type="text" readonly value="<?= $escape($share['url']) ?>" data-share-link aria-label="公开分享链接">
-            </label>
+            <div class="share-link-field">
+                <span class="share-link-label" id="crew-share-link-label">公开链接</span>
+                <div class="share-link-box">
+                    <a class="share-link-url" href="<?= $escape($share['url']) ?>" target="_blank" rel="noopener" data-share-link aria-labelledby="crew-share-link-label"><?= $escape($share['url']) ?></a>
+                </div>
+            </div>
             <div class="dialog-actions share-actions">
-                <button class="button button-primary" type="button" data-copy-share>复制链接</button>
+                <button class="button button-primary" type="button" data-copy-share data-share-url="<?= $escape($share['url']) ?>">复制链接</button>
                 <a class="button button-secondary" href="<?= $escape($share['url']) ?>" target="_blank" rel="noopener">打开预览</a>
                 <form method="post" class="inline-form" data-confirm="停用后原链接立即失效，确定停用分享吗？">
                     <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
@@ -60,7 +63,8 @@ require __DIR__ . '/_nav.php';
                     <button class="button button-danger" type="submit">停用分享</button>
                 </form>
             </div>
-            <p class="muted share-hint">停用后如需再次分享，将生成新链接，旧链接不会恢复。</p>
+            <p class="share-feedback" data-share-feedback role="status" aria-live="polite" hidden></p>
+            <p class="muted share-hint">复制后到微信聊天框粘贴发送，对方点击即可打开；也可在微信内打开本页后用右上角「···」转发。停用后如需再次分享，将生成新链接，旧链接不会恢复。</p>
         <?php else: ?>
             <p class="muted">生成公开链接后，外部人员（监理、分包、业主等）无需账号即可查看本项目在用班组的联系人，点击电话可直接拨号。公开内容与导出 Excel 同口径：工种、班组名称、负责人姓名、电话、备注；身份证号、微信号与紧急联系人不会公开。</p>
             <form method="post" class="dialog-actions">

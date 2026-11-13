@@ -571,10 +571,18 @@ body.theme-dark .status-badge.is-neutral { background: rgb(255 255 255 / 8%); co
 @media (max-width: 640px) { .image-meta { grid-template-columns: 1fr; } }
 
 /* Crew share dialog (toolbar next to the Excel export) */
-.share-link-field { display: grid; gap: 7px; margin: 14px 0 4px; font-weight: 620; }
-.share-link-field input { min-height: 43px; font-size: .86rem; color: var(--text-muted); background: var(--surface-muted); }
+.share-link-field { display: grid; gap: 7px; margin: 14px 0 4px; }
+.share-link-label { font-weight: 620; }
+.share-link-box { padding: 11px 13px; background: var(--surface-muted); border: 1px solid var(--border); border-radius: 10px; }
+.share-link-url { display: block; color: var(--accent); font-size: .86rem; line-height: 1.5; word-break: break-all; overflow-wrap: anywhere; text-decoration: none; user-select: all; -webkit-user-select: all; }
+.share-link-url:hover { text-decoration: underline; }
+.share-link-url:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 .share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .share-actions .inline-form { margin: 0; }
+.share-feedback { margin: 10px 0 0; padding: 8px 12px; color: #1d6b45; background: #e9f2ec; border: 1px solid #d9e7dc; border-radius: 9px; font-size: .82rem; }
+.share-feedback.is-warning { color: #946205; background: #fdf0c7; border-color: #f0dfae; }
+body.theme-dark .share-feedback { color: #a9d8b8; background: #2b342e; border-color: var(--border); }
+body.theme-dark .share-feedback.is-warning { color: #ffd97a; background: #3a3325; border-color: var(--border); }
 .share-hint { margin: 10px 0 0; font-size: .8rem; }
 
 /* Public crew contact page (token link, no login) */

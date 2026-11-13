@@ -626,8 +626,14 @@ crewCheck((string) $shareService->activeShare(1)['token'] === $shareToken, 'Repe
 
 // The toolbar now shows the active link with copy/preview/revoke controls.
 $activeShareHtml = crewRenderView($plugin->dispatch('crews', []));
-crewCheck(str_contains($activeShareHtml, 'data-share-link'), 'Active share must expose the link field.');
-crewCheck(str_contains($activeShareHtml, $shareToken), 'The link field must contain the token.');
+crewCheck(str_contains($activeShareHtml, 'data-share-link'), 'Active share must expose the link element.');
+crewCheck(str_contains($activeShareHtml, $shareToken), 'The link element must contain the token.');
+crewCheck(
+    preg_match('/data-copy-share\s+data-share-url="([^"]+)"/', $activeShareHtml, $copyAttr) === 1
+        && html_entity_decode($copyAttr[1], ENT_QUOTES) === CrewShareService::publicUrl($shareToken),
+    'The copy button must carry exactly the public URL as its copy payload.'
+);
+crewCheck(str_contains($activeShareHtml, 'data-share-feedback'), 'The dialog must expose a copy feedback region.');
 crewCheck(str_contains($activeShareHtml, '停用分享'), 'Active share must offer revocation.');
 
 // Public page: no session at all, token is the whole authorization.
