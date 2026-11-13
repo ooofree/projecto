@@ -32,6 +32,12 @@ use ProjectO\Support;
  */
 final class CrewSharePage
 {
+    /**
+     * The static page is a trusted pre-rendered document with inline CSS/JS
+     * and zero external loads: allow inline code, deny every network source.
+     */
+    private const CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
+
     public function __construct(
         private readonly PDO $db,
         private readonly CrewDirectoryService $directory,
@@ -67,7 +73,7 @@ final class CrewSharePage
             // keeps working (the write failure was logged in writePage()).
             $html = $this->renderFallback($project);
             $etag = '"cs-mem-' . sha1($html) . '"';
-            $headers = ['ETag' => $etag, 'Cache-Control' => 'public, no-cache'];
+            $headers = ['ETag' => $etag, 'Cache-Control' => 'public, no-cache', 'Content-Security-Policy' => self::CSP];
             if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
                 return PluginResponse::notModified($headers);
             }
@@ -84,6 +90,11 @@ final class CrewSharePage
             // Revalidate on every use so edits/revocations propagate at once;
             // the ETag keeps that revalidation to a few hundred bytes.
             'Cache-Control' => 'public, no-cache',
+            // MUST travel on 304 responses too: the browser applies the
+            // revalidation response's headers to the cached document, and the
+            // entry script's restrictive CSP would otherwise replace this one
+            // and block the page's inline CSS/JS on every repeat visit.
+            'Content-Security-Policy' => self::CSP,
         ];
         if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
             return PluginResponse::notModified($headers);

@@ -208,14 +208,9 @@ final class Application
         if (!is_string($body) || !is_string($contentType) || preg_match('#^[a-z0-9.+-]+/[a-z0-9.+-]+#i', $contentType) !== 1) {
             throw new HttpException('插件返回了无效的静态内容。', 500);
         }
-        // The static page is a trusted pre-rendered document with inline
-        // CSS/JS and zero external loads. Replace the app-wide CSP (which
-        // forbids inline code) with one scoped to exactly that: inline code
-        // allowed, every network source denied. header() replaces the earlier
-        // same-name policy sent by the entry script.
-        if (str_starts_with(strtolower($contentType), 'text/html')) {
-            header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
-        }
+        // Plugin-provided headers replace the entry script's defaults where
+        // names collide (e.g. the static share page's own CSP, which allows
+        // its inline CSS/JS while denying every network source).
         foreach (($data['headers'] ?? []) as $name => $value) {
             if (is_string($name) && preg_match('/^[A-Za-z0-9-]+$/', $name) === 1 && is_string($value) && preg_match('/[\r\n]/', $value) !== 1) {
                 header($name . ': ' . $value);
