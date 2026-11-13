@@ -183,11 +183,57 @@ final class Application
             return;
         }
 
+        if ($response->type === 'raw') {
+            $this->sendRaw($response->data);
+            return;
+        }
+
+        if ($response->type === 'not_modified') {
+            $this->sendNotModified($response->data['headers'] ?? []);
+            return;
+        }
+
         if ($response->type !== 'view' || $response->viewPath === null) {
             throw new HttpException('插件返回了无效的响应。', 500);
         }
 
         $this->render($response->viewPath, $response->data, true);
+    }
+
+    /** Stream a pre-rendered body (static share page) without layout wrapping. */
+    private function sendRaw(array $data): void
+    {
+        $body = $data['body'] ?? null;
+        $contentType = $data['content_type'] ?? null;
+        if (!is_string($body) || !is_string($contentType) || preg_match('#^[a-z0-9.+-]+/[a-z0-9.+-]+#i', $contentType) !== 1) {
+            throw new HttpException('插件返回了无效的静态内容。', 500);
+        }
+        // The static page is a trusted pre-rendered document with inline
+        // CSS/JS and zero external loads. Replace the app-wide CSP (which
+        // forbids inline code) with one scoped to exactly that: inline code
+        // allowed, every network source denied. header() replaces the earlier
+        // same-name policy sent by the entry script.
+        if (str_starts_with(strtolower($contentType), 'text/html')) {
+            header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'");
+        }
+        foreach (($data['headers'] ?? []) as $name => $value) {
+            if (is_string($name) && preg_match('/^[A-Za-z0-9-]+$/', $name) === 1 && is_string($value) && preg_match('/[\r\n]/', $value) !== 1) {
+                header($name . ': ' . $value);
+            }
+        }
+        header('Content-Type: ' . $contentType);
+        header('Content-Length: ' . strlen($body));
+        echo $body;
+    }
+
+    private function sendNotModified(array $headers): void
+    {
+        http_response_code(304);
+        foreach ($headers as $name => $value) {
+            if (is_string($name) && preg_match('/^[A-Za-z0-9-]+$/', $name) === 1 && is_string($value) && preg_match('/[\r\n]/', $value) !== 1) {
+                header($name . ': ' . $value);
+            }
+        }
     }
 
     private function render(string $view, array $viewData = [], bool $isAbsolutePath = false): void

@@ -89,6 +89,17 @@ final class CrewShareService
         }
     }
 
+    /** Every active share across projects (used to refresh static pages). */
+    public function allActiveShares(): array
+    {
+        return $this->db->query(
+            'SELECT share_id, project_id, token, created_by, created_at
+             FROM Labor_Crew_Shares
+             WHERE revoked_at IS NULL
+             ORDER BY share_id'
+        )->fetchAll();
+    }
+
     /** Disable sharing; the row is kept with revoked_at set. Idempotent. */
     public function revoke(int $projectId, int $userId): bool
     {

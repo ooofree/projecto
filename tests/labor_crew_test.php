@@ -78,6 +78,20 @@ function crewRenderView(PluginResponse $response): string
     return (string) ob_get_clean();
 }
 
+function crewPublicHtml(PluginResponse $response): string
+{
+    if ($response->type !== 'raw') {
+        throw new RuntimeException('Expected a raw static share response, got ' . $response->type . '.');
+    }
+
+    return (string) ($response->data['body'] ?? '');
+}
+
+function crewShareFilePath(string $token): string
+{
+    return dirname(__DIR__) . '/storage/labor-crew-shares/' . $token . '.html';
+}
+
 $db = new PDO('sqlite::memory:', options: [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -639,8 +653,13 @@ crewCheck(str_contains($activeShareHtml, '停用分享'), 'Active share must off
 // Public page: no session at all, token is the whole authorization.
 $_SESSION = [];
 $publicResponse = $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
-crewCheck($publicResponse->type === 'view', 'Public share must render a view without login.');
-$publicHtml = crewRenderView($publicResponse);
+crewCheck($publicResponse->type === 'raw', 'Public share must serve a pre-rendered static page without login.');
+$publicHtml = crewPublicHtml($publicResponse);
+crewCheck(is_file(crewShareFilePath($shareToken)), 'Enabling a share must write the static page file.');
+crewCheck(file_get_contents(crewShareFilePath($shareToken)) === $publicHtml, 'The served body must be exactly the static file content.');
+crewCheck(!str_contains($publicHtml, '<link rel="stylesheet"') && !str_contains($publicHtml, 'src="assets'), 'The static page must be self-contained (no external CSS/JS).');
+crewCheck(str_contains($publicHtml, 'class="tile" href="tel:'), 'Each tile must be a whole-card tel: link.');
+crewCheck(str_contains($publicHtml, 'tile-num') && str_contains($publicHtml, 'tile-hint'), 'Tiles must carry the number plus the mobile dial hint.');
 crewCheck(str_contains($publicHtml, 'Project One'), 'Public page must name the shared project.');
 crewCheck(str_contains($publicHtml, '钢筋一班'), 'Public page must list active crews of the token project.');
 crewCheck(str_contains($publicHtml, 'href="tel:13800138001"'), 'Leader phones must be tel: links for direct dialling.');
@@ -654,14 +673,20 @@ crewCheck(!str_contains($publicHtml, 'crew-share-dialog') && !str_contains($publ
 crewCheck(str_contains($publicHtml, 'share-search'), 'Public page must offer live search.');
 
 // Archived crews stay out of the public page; restoring brings them back.
+// Use the real controller actions: they are the mutation paths that carry the
+// static-page regeneration hooks (direct service calls bypass the plugin).
 $shareArchiveId = $service->saveCrew(1, [
     'crew_type_id' => 5, 'crew_name' => '分享归档班组', 'leader_name' => '归档联系人', 'leader_phone' => '13500135020',
 ]);
-$service->archiveCrew(1, $shareArchiveId);
-$publicAfterArchive = crewRenderView($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$plugin->dispatch('crew.archive', ['crew_id' => (string) $shareArchiveId]);
+$_SESSION = [];
+$publicAfterArchive = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
 crewCheck(!str_contains($publicAfterArchive, '分享归档班组'), 'Archived crews must not appear on the public page.');
-$service->restoreCrew(1, $shareArchiveId);
-$publicAfterRestore = crewRenderView($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$plugin->dispatch('crew.restore', ['crew_id' => (string) $shareArchiveId]);
+$_SESSION = [];
+$publicAfterRestore = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
 crewCheck(str_contains($publicAfterRestore, '分享归档班组'), 'Restored crews must reappear on the public page.');
 $db->exec('DELETE FROM Labor_Crews WHERE crew_id = ' . $shareArchiveId);
 
@@ -684,7 +709,7 @@ $plugin->dispatch('crew.share', []);
 $projectTwoToken = (string) $shareService->activeShare(2)['token'];
 crewCheck($projectTwoToken !== $shareToken, 'Each project must get its own token.');
 $_SESSION = [];
-$projectTwoPublic = crewRenderView($plugin->dispatch('crew.share_public', ['token' => $projectTwoToken]));
+$projectTwoPublic = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $projectTwoToken]));
 crewCheck(str_contains($projectTwoPublic, 'Project Two'), 'Project 2 token must open project 2.');
 crewCheck(!str_contains($projectTwoPublic, '13800138001'), 'Project 2 public page must not leak project 1 phones.');
 
@@ -696,6 +721,7 @@ crewCheck($shareService->activeShare(1) === null, 'Revoked share must no longer 
 $revokedRow = $db->query('SELECT revoked_at, revoked_by FROM Labor_Crew_Shares WHERE project_id = 1')->fetch();
 crewCheck($revokedRow !== false && $revokedRow['revoked_at'] !== null, 'Revocation must keep the row with a timestamp (no hard delete).');
 crewCheck((int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'labor.crew.share_revoke'")->fetchColumn() >= 1, 'Revocation must be audited.');
+crewCheck(!is_file(crewShareFilePath($shareToken)), 'Revocation must delete the static page file.');
 $_SESSION = [];
 crewExpectStatus(static function () use ($plugin, $shareToken): void {
     $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
@@ -710,15 +736,16 @@ $_SESSION = [];
 crewExpectStatus(static function () use ($plugin, $shareToken): void {
     $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
 }, 404, 'The old token must stay dead after rotation.');
-crewRenderView($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
+crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
 
 // Archiving the project stops its public page, like the session context does.
 $db->exec("INSERT INTO project_foundation_archive_records (entity_type, entity_id, project_id, archived_by) VALUES ('project', 1, 1, 1)");
 crewExpectStatus(static function () use ($plugin, $rotatedToken): void {
     $plugin->dispatch('crew.share_public', ['token' => $rotatedToken]);
 }, 404, 'An archived project must not serve its public page.');
+crewCheck(!is_file(crewShareFilePath($rotatedToken)), 'Archiving the project must remove the stale static file.');
 $db->exec("DELETE FROM project_foundation_archive_records WHERE entity_type = 'project' AND entity_id = 1");
-crewRenderView($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
+crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
 
 // Sharing needs a selected project, and the registry marks the route public.
 $_SESSION = ['user_id' => 1, 'username' => 'admin'];
@@ -737,5 +764,75 @@ $disabledRegistry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
 crewCheck(!$disabledRegistry->isPublicRoute('GET', 'labor-crew-share'), 'A disabled plugin must expose no public route.');
 crewCheck($disabledRegistry->dispatch('GET', 'labor-crew-share', ['token' => $rotatedToken]) === null, 'A disabled plugin must not serve the public page.');
 $registry->setEnabled('labor.crew', true);
+
+// ---------------------------------------------------------------------------
+// Static page lifecycle: auto-update on every mutation, 304 revalidation,
+// lazy regeneration for legacy shares, cross-project craft-type refresh.
+// ---------------------------------------------------------------------------
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$staticToken = (string) $shareService->activeShare(1)['token'];
+$staticPath = crewShareFilePath($staticToken);
+crewCheck(is_file($staticPath), 'An active share must have a static file on disk.');
+$staticBefore = file_get_contents($staticPath);
+
+// Editing a crew regenerates the file without any visit to the public route.
+$staticCrewId = $service->saveCrew(1, [
+    'crew_type_id' => 2, 'crew_name' => '静态同步班组', 'leader_name' => '同步甲',
+    'leader_phone' => '13600001111', 'notes' => '同步前备注',
+]);
+$plugin->dispatch('crew.save', [
+    'crew_id' => $staticCrewId, 'crew_type_id' => 2, 'crew_name' => '静态同步班组',
+    'leader_name' => '同步甲', 'leader_phone' => '13600002222', 'notes' => '同步后备注',
+]);
+$staticAfter = file_get_contents($staticPath);
+crewCheck($staticAfter !== $staticBefore, 'Saving a crew must rewrite the static file.');
+crewCheck(str_contains($staticAfter, '13600002222') && !str_contains($staticAfter, '13600001111'), 'The static file must carry the updated phone, not the old one.');
+crewCheck(str_contains($staticAfter, '同步后备注'), 'The static file must carry the updated notes.');
+
+// Conditional request: unchanged page answers 304 with no body.
+$_SESSION = [];
+$firstServe = $plugin->dispatch('crew.share_public', ['token' => $staticToken]);
+$etag = (string) ($firstServe->data['headers']['ETag'] ?? '');
+crewCheck($etag !== '', 'Static responses must carry an ETag.');
+$_SERVER['HTTP_IF_NONE_MATCH'] = $etag;
+$notModified = $plugin->dispatch('crew.share_public', ['token' => $staticToken]);
+crewCheck($notModified->type === 'not_modified', 'Matching If-None-Match must return 304.');
+unset($_SERVER['HTTP_IF_NONE_MATCH']);
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+
+// Archiving a crew removes it from the static file; restoring brings it back.
+$plugin->dispatch('crew.archive', ['crew_id' => (string) $staticCrewId]);
+crewCheck(!str_contains((string) file_get_contents($staticPath), '静态同步班组'), 'Archiving a crew must update the static file.');
+$plugin->dispatch('crew.restore', ['crew_id' => (string) $staticCrewId]);
+crewCheck(str_contains((string) file_get_contents($staticPath), '静态同步班组'), 'Restoring a crew must update the static file.');
+$db->exec('DELETE FROM Labor_Crews WHERE crew_id = ' . $staticCrewId);
+$plugin->dispatch('crew.save', ['crew_type_id' => 2, 'crew_name' => '占位触发', 'leader_name' => '触发', 'leader_phone' => '13600003333']);
+$db->exec("DELETE FROM Labor_Crews WHERE crew_name = '占位触发'");
+
+// Renaming a craft type refreshes every project's static page.
+$staticTypeId = $service->saveType(['type_name' => '静态工种旧名', 'sort_order' => 500]);
+$plugin->dispatch('crew.save', [
+    'crew_type_id' => (string) $staticTypeId, 'crew_name' => '工种改名班组', 'leader_name' => '改名', 'leader_phone' => '13600004444',
+]);
+crewCheck(str_contains((string) file_get_contents($staticPath), '静态工种旧名'), 'New craft type must reach the static page.');
+$plugin->dispatch('type.save', ['crew_type_id' => (string) $staticTypeId, 'type_name' => '静态工种新名']);
+crewCheck(str_contains((string) file_get_contents($staticPath), '静态工种新名'), 'Renaming a craft type must refresh the static page.');
+crewCheck(is_file(crewShareFilePath($projectTwoToken)), 'Project 2 share keeps its own static file.');
+$db->exec("DELETE FROM Labor_Crews WHERE crew_name = '工种改名班组'");
+$service->deleteType($staticTypeId);
+
+// A share without a file (created before static pages) regenerates lazily.
+@unlink($staticPath);
+$_SESSION = [];
+$lazyHtml = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $staticToken]));
+crewCheck(is_file($staticPath), 'A missing static file must be regenerated on first visit.');
+crewCheck(str_contains($lazyHtml, '钢筋一班'), 'Lazily regenerated page must contain current crews.');
+
+// Cleanup: revoke the remaining shares so no test artifacts stay on disk.
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$plugin->dispatch('crew.share_revoke', []);
+$_SESSION['active_project_id'] = 2;
+$plugin->dispatch('crew.share_revoke', []);
+crewCheck(!is_file(crewShareFilePath($staticToken)) && !is_file(crewShareFilePath($projectTwoToken)), 'Revoking must remove every static artifact.');
 
 echo "labor crew tests passed\n";

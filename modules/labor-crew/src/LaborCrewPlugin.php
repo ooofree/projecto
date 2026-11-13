@@ -24,6 +24,7 @@ final class LaborCrewPlugin implements PluginInterface
 {
     private CrewDirectoryService $directory;
     private CrewShareService $shares;
+    private CrewSharePage $sharePages;
     private bool $encryptionReady;
 
     public function __construct(private readonly PluginContext $context)
@@ -32,6 +33,7 @@ final class LaborCrewPlugin implements PluginInterface
         $this->encryptionReady = $cipher !== null;
         $this->directory = new CrewDirectoryService($context->db, $cipher);
         $this->shares = new CrewShareService($context->db);
+        $this->sharePages = new CrewSharePage($context->db, $this->directory, $this->shares);
     }
 
     public function dispatch(string $handler, array $input): PluginResponse
@@ -112,25 +114,20 @@ final class LaborCrewPlugin implements PluginInterface
     /**
      * Public contact page: no session, no permissions — possession of an active
      * share token is the whole authorization, and it only ever unlocks the
-     * export-equivalent columns of the token's own project. Identity numbers,
+     * export-equivalent columns of the token's own project. The response is a
+     * pre-rendered static HTML file (inline CSS/JS, zero external requests);
+     * CrewSharePage keeps it in sync with every data change. Identity numbers,
      * WeChat ids and emergency contacts never leave the authenticated area.
      */
     private function publicSharePage(array $input): PluginResponse
     {
         $token = $input['token'] ?? null;
-        $project = is_string($token) ? $this->shares->projectForToken($token) : null;
-        if ($project === null) {
-            throw new HttpException('分享链接无效或已停用，请联系分享者获取新链接。', 404);
-        }
+        $ifNoneMatch = $_SERVER['HTTP_IF_NONE_MATCH'] ?? null;
 
-        return $this->context->view('share.php', [
-            'title' => '班组联系人',
-            'project' => $project,
-            'crews' => $this->directory->exportRows((int) $project['project_id']),
-            'generatedAt' => Support::nowLocal('Y-m-d H:i'),
-            // Tells the layout to skip CSRF/session minting for anonymous eyes.
-            'publicShareView' => true,
-        ]);
+        return $this->sharePages->serve(
+            is_string($token) ? $token : '',
+            is_string($ifNoneMatch) ? $ifNoneMatch : null
+        );
     }
 
     private function enableShare(): PluginResponse
@@ -142,6 +139,7 @@ final class LaborCrewPlugin implements PluginInterface
 
         $alreadyActive = $this->shares->activeShare($projectId) !== null;
         $this->shares->enable($projectId, (int) ($_SESSION['user_id'] ?? 0));
+        $this->sharePages->refresh($projectId);
         // The token itself is a credential: audit records the event, never the link.
         Support::audit(
             $this->context->db,
@@ -163,6 +161,7 @@ final class LaborCrewPlugin implements PluginInterface
         $projectId = (int) $project['project_id'];
 
         $revoked = $this->shares->revoke($projectId, (int) ($_SESSION['user_id'] ?? 0));
+        $this->sharePages->removeForProject($projectId);
         if ($revoked) {
             Support::audit(
                 $this->context->db,
@@ -208,6 +207,7 @@ final class LaborCrewPlugin implements PluginInterface
         // Audit stores the crew name only: never the identity number, its
         // ciphertext or its fingerprint.
         Support::audit($this->context->db, 'labor.crew.save', 'Crew ' . $crewId . ' (' . $name . ') in project ' . $projectId . '.');
+        $this->sharePages->refresh($projectId);
         Support::flash('班组「' . $name . '」已保存。');
 
         // Return to the same view the form came from, otherwise editing an
@@ -302,6 +302,7 @@ final class LaborCrewPlugin implements PluginInterface
         $crewId = $this->requiredId($input['crew_id'] ?? null);
         $this->directory->archiveCrew((int) $project['project_id'], $crewId);
         Support::audit($this->context->db, 'labor.crew.archive', 'Crew ' . $crewId . ' archived in project ' . (int) $project['project_id'] . '.');
+        $this->sharePages->refresh((int) $project['project_id']);
         Support::flash('班组已归档，记录保留，可在「已归档」中恢复。');
 
         return PluginResponse::redirect('?page=labor-crews');
@@ -315,6 +316,7 @@ final class LaborCrewPlugin implements PluginInterface
         $crewId = $this->requiredId($input['crew_id'] ?? null);
         $this->directory->restoreCrew((int) $project['project_id'], $crewId);
         Support::audit($this->context->db, 'labor.crew.restore', 'Crew ' . $crewId . ' restored in project ' . (int) $project['project_id'] . '.');
+        $this->sharePages->refresh((int) $project['project_id']);
         Support::flash('班组已恢复为在用。');
 
         return PluginResponse::redirect('?page=labor-crews');
@@ -326,6 +328,8 @@ final class LaborCrewPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'edit_labor_crew_types');
         $typeId = $this->directory->saveType($input);
         Support::audit($this->context->db, 'labor.crew_type.save', 'Type ' . $typeId . '.');
+        // Craft-type names appear on every project's public page.
+        $this->sharePages->refreshAll();
         Support::flash('工种已保存。');
 
         return PluginResponse::redirect('?page=labor-crew-types');
@@ -338,6 +342,7 @@ final class LaborCrewPlugin implements PluginInterface
         $typeId = $this->requiredId($input['crew_type_id'] ?? null);
         $this->directory->deleteType($typeId);
         Support::audit($this->context->db, 'labor.crew_type.delete', 'Type ' . $typeId . '.');
+        $this->sharePages->refreshAll();
         Support::flash('工种已删除。');
 
         return PluginResponse::redirect('?page=labor-crew-types');

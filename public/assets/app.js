@@ -131,25 +131,8 @@ function setShareFeedback(node, message, isWarning) {
     node.hidden = false;
 }
 
-// Public crew share page: live search over the already-rendered cards.
-const shareSearch = document.getElementById('share-search');
-if (shareSearch) {
-    const shareItems = [...document.querySelectorAll('#share-list .share-card')];
-    const shareCount = document.getElementById('share-count');
-    const shareNoMatch = document.getElementById('share-no-match');
-    const filterShare = () => {
-        const query = shareSearch.value.trim().toLocaleLowerCase();
-        let visible = 0;
-        for (const item of shareItems) {
-            const matches = (item.dataset.search ?? '').includes(query);
-            item.hidden = !matches;
-            if (matches) visible++;
-        }
-        if (shareCount) shareCount.textContent = `${visible}${shareCount.dataset.unit ?? ' 个班组'}`;
-        if (shareNoMatch) shareNoMatch.hidden = visible !== 0;
-    };
-    shareSearch.addEventListener('input', filterShare);
-}
+// The public share page is a standalone static file with its own inline
+// search/filter script; nothing here serves it anymore.
 
 document.addEventListener('submit', event => {
     const form = event.target.closest('form[data-confirm]');

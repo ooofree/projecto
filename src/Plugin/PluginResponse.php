@@ -43,4 +43,23 @@ final class PluginResponse
             'body' => $body,
         ]);
     }
+
+    /**
+     * Pre-rendered body served verbatim (e.g. the static public share page).
+     * Extra headers (ETag, Cache-Control, Last-Modified) travel in data.
+     */
+    public static function raw(string $body, string $contentType, array $headers = []): self
+    {
+        return new self('raw', [
+            'body' => $body,
+            'content_type' => $contentType,
+            'headers' => $headers,
+        ]);
+    }
+
+    /** 304 Not Modified for conditional requests against a static resource. */
+    public static function notModified(array $headers = []): self
+    {
+        return new self('not_modified', ['headers' => $headers]);
+    }
 }
