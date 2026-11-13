@@ -148,6 +148,21 @@ final class CrewShareService
      */
     public static function publicUrl(string $token): string
     {
+        return self::baseUrl() . '?page=labor-crew-share&token=' . $token;
+    }
+
+    /**
+     * Absolute URL of the share card thumbnail. Chat clients (WeChat, QQ, …)
+     * fetch og:image themselves, so this route is public but token-gated and
+     * only ever returns a generated picture — never contact rows.
+     */
+    public static function imageUrl(string $token): string
+    {
+        return self::baseUrl() . '?page=labor-crew-share-image&token=' . $token;
+    }
+
+    private static function baseUrl(): string
+    {
         $https = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
         $host = (string) ($_SERVER['HTTP_HOST'] ?? 'localhost');
         // The host header is client input: keep only characters valid in an
@@ -159,6 +174,6 @@ final class CrewShareService
         $base = str_replace('\\', '/', dirname($script));
         $base = ($base === '/' || $base === '.') ? '' : rtrim($base, '/');
 
-        return ($https ? 'https://' : 'http://') . $host . $base . '/?page=labor-crew-share&token=' . $token;
+        return ($https ? 'https://' : 'http://') . $host . $base . '/';
     }
 }

@@ -48,6 +48,7 @@ final class LaborCrewPlugin implements PluginInterface
             'crew.share' => $this->enableShare(),
             'crew.share_revoke' => $this->revokeShare(),
             'crew.share_public' => $this->publicSharePage($input),
+            'crew.share_image' => $this->publicShareImage($input),
             'type.save' => $this->saveType($input),
             'type.delete' => $this->deleteType($input),
             default => throw new HttpException('未找到对应操作。', 404),
@@ -92,23 +93,32 @@ final class LaborCrewPlugin implements PluginInterface
             'canManageTypes' => Support::hasPermission($this->context->db, 'edit_labor_crew_types'),
             'encryptionReady' => $this->encryptionReady,
             'canShare' => Support::hasPermission($this->context->db, 'share_labor_crews'),
-            'share' => $this->shareState($projectId),
+            'share' => $this->shareState($projectId, (string) $project['project_name']),
             'nav' => $this->nav(),
         ]);
     }
 
     /** Share button state for the toolbar; null when the viewer cannot manage shares. */
-    private function shareState(int $projectId): ?array
+    private function shareState(int $projectId, string $projectName): ?array
     {
         if (!Support::hasPermission($this->context->db, 'share_labor_crews')) {
             return null;
         }
         $active = $this->shares->activeShare($projectId);
         if ($active === null) {
-            return ['enabled' => false, 'url' => null];
+            return ['enabled' => false, 'url' => null, 'title' => null, 'description' => null, 'imageUrl' => null];
         }
 
-        return ['enabled' => true, 'url' => CrewShareService::publicUrl((string) $active['token'])];
+        $token = (string) $active['token'];
+        $meta = $this->sharePages->cardMeta(['project_name' => $projectName], $this->directory->exportRows($projectId));
+
+        return [
+            'enabled' => true,
+            'url' => CrewShareService::publicUrl($token),
+            'title' => $meta['title'],
+            'description' => $meta['description'],
+            'imageUrl' => CrewShareImage::isSupported() ? CrewShareService::imageUrl($token) : null,
+        ];
     }
 
     /**
@@ -125,6 +135,21 @@ final class LaborCrewPlugin implements PluginInterface
         $ifNoneMatch = $_SERVER['HTTP_IF_NONE_MATCH'] ?? null;
 
         return $this->sharePages->serve(
+            is_string($token) ? $token : '',
+            is_string($ifNoneMatch) ? $ifNoneMatch : null
+        );
+    }
+
+    /**
+     * Share-card thumbnail for chat clients. Public and token-gated like the
+     * page itself; returns only a generated picture with counts, never rows.
+     */
+    private function publicShareImage(array $input): PluginResponse
+    {
+        $token = $input['token'] ?? null;
+        $ifNoneMatch = $_SERVER['HTTP_IF_NONE_MATCH'] ?? null;
+
+        return $this->sharePages->serveImage(
             is_string($token) ? $token : '',
             is_string($ifNoneMatch) ? $ifNoneMatch : null
         );

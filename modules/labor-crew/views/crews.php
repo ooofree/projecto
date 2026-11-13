@@ -54,8 +54,20 @@ require __DIR__ . '/_nav.php';
                     <a class="share-link-url" href="<?= $escape($share['url']) ?>" target="_blank" rel="noopener" data-share-link aria-labelledby="crew-share-link-label"><?= $escape($share['url']) ?></a>
                 </div>
             </div>
+            <?php if (!empty($share['title'])): ?>
+                <div class="share-card-preview" aria-label="分享卡片预览">
+                    <?php if (!empty($share['imageUrl'])): ?>
+                        <img class="share-card-thumb" src="<?= $escape($share['imageUrl']) ?>" alt="分享卡片缩略图" width="64" height="64" loading="lazy">
+                    <?php endif; ?>
+                    <div class="share-card-text">
+                        <strong><?= $escape($share['title']) ?></strong>
+                        <span><?= $escape($share['description'] ?? '') ?></span>
+                    </div>
+                </div>
+            <?php endif; ?>
             <div class="dialog-actions share-actions">
-                <button class="button button-primary" type="button" data-copy-share data-share-url="<?= $escape($share['url']) ?>">复制链接</button>
+                <button class="button button-primary" type="button" data-copy-share data-share-mode="card" data-share-url="<?= $escape($share['url']) ?>" data-share-title="<?= $escape($share['title'] ?? '') ?>" data-share-desc="<?= $escape($share['description'] ?? '') ?>">复制标题+链接</button>
+                <button class="button button-secondary" type="button" data-copy-share data-share-mode="link" data-share-url="<?= $escape($share['url']) ?>">仅复制链接</button>
                 <a class="button button-secondary" href="<?= $escape($share['url']) ?>" target="_blank" rel="noopener">打开预览</a>
                 <form method="post" class="inline-form" data-confirm="停用后原链接立即失效，确定停用分享吗？">
                     <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
@@ -64,7 +76,7 @@ require __DIR__ . '/_nav.php';
                 </form>
             </div>
             <p class="share-feedback" data-share-feedback role="status" aria-live="polite" hidden></p>
-            <p class="muted share-hint">复制后到微信聊天框粘贴发送，对方点击即可打开；也可在微信内打开本页后用右上角「···」转发。停用后如需再次分享，将生成新链接，旧链接不会恢复。</p>
+            <p class="muted share-hint">推荐用「复制标题+链接」：消息里会带项目名和班组数量，不再是裸链接。在微信内打开本页后用右上角「···」转发，会显示上方卡片样式（标题、摘要、缩略图）。停用后如需再次分享，将生成新链接，旧链接不会恢复。</p>
         <?php else: ?>
             <p class="muted">生成公开链接后，外部人员（监理、分包、业主等）无需账号即可查看本项目在用班组的联系人，点击电话可直接拨号。公开内容与导出 Excel 同口径：工种、班组名称、负责人姓名、电话、备注；身份证号、微信号与紧急联系人不会公开。</p>
             <form method="post" class="dialog-actions">

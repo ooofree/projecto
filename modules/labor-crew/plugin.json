@@ -12,6 +12,7 @@
         "GET labor-crews": "crews",
         "GET labor-crew-types": "types",
         "GET labor-crew-share": "crew.share_public",
+        "GET labor-crew-share-image": "crew.share_image",
         "POST labor.crew.save": "crew.save",
         "POST labor.crew.export": "crew.export",
         "POST labor.crew.archive": "crew.archive",
@@ -22,7 +23,8 @@
         "POST labor.crew_type.delete": "type.delete"
     },
     "public_routes": [
-        "GET labor-crew-share"
+        "GET labor-crew-share",
+        "GET labor-crew-share-image"
     ],
     "migrations": [
         "database/migrations"

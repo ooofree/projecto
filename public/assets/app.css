@@ -577,6 +577,11 @@ body.theme-dark .status-badge.is-neutral { background: rgb(255 255 255 / 8%); co
 .share-link-url { display: block; color: var(--accent); font-size: .86rem; line-height: 1.5; word-break: break-all; overflow-wrap: anywhere; text-decoration: none; user-select: all; -webkit-user-select: all; }
 .share-link-url:hover { text-decoration: underline; }
 .share-link-url:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.share-card-preview { display: flex; align-items: center; gap: 12px; padding: 11px 13px; margin: 12px 0 4px; background: var(--surface-muted); border: 1px solid var(--border); border-radius: 12px; }
+.share-card-thumb { flex: 0 0 auto; width: 64px; height: 64px; border-radius: 9px; object-fit: cover; border: 1px solid var(--border); background: var(--surface); }
+.share-card-text { display: grid; gap: 3px; min-width: 0; }
+.share-card-text strong { font-size: .9rem; line-height: 1.4; overflow-wrap: anywhere; }
+.share-card-text span { color: var(--text-muted); font-size: .78rem; line-height: 1.45; overflow-wrap: anywhere; }
 .share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .share-actions .inline-form { margin: 0; }
 .share-feedback { margin: 10px 0 0; padding: 8px 12px; color: #1d6b45; background: #e9f2ec; border: 1px solid #d9e7dc; border-radius: 9px; font-size: .82rem; }

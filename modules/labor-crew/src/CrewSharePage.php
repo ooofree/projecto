@@ -36,7 +36,7 @@ final class CrewSharePage
      * The static page is a trusted pre-rendered document with inline CSS/JS
      * and zero external loads: allow inline code, deny every network source.
      */
-    private const CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
+    private const CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
 
     public function __construct(
         private readonly PDO $db,
@@ -71,7 +71,7 @@ final class CrewSharePage
         if (!is_file($path)) {
             // Storage unwritable: serve the same HTML from memory so sharing
             // keeps working (the write failure was logged in writePage()).
-            $html = $this->renderFallback($project);
+            $html = $this->renderFallback($project, $token);
             $etag = '"cs-mem-' . sha1($html) . '"';
             $headers = ['ETag' => $etag, 'Cache-Control' => 'public, no-cache', 'Content-Security-Policy' => self::CSP];
             if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
@@ -152,7 +152,9 @@ final class CrewSharePage
 
     private function writePage(string $token, array $project): void
     {
-        $html = $this->render($project, $this->directory->exportRows((int) $project['project_id']));
+        $rows = $this->directory->exportRows((int) $project['project_id']);
+        $html = $this->render($project, $rows, $token);
+        $this->writeImage($token, $project, $rows);
         $path = $this->pathForToken($token);
         $directory = dirname($path);
         if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
@@ -178,9 +180,101 @@ final class CrewSharePage
      * Render the standalone page. If the file could not be written, serve()
      * still needs content: render on demand as a resilient fallback.
      */
-    public function renderFallback(array $project): string
+    public function renderFallback(array $project, string $token = ''): string
     {
-        return $this->render($project, $this->directory->exportRows((int) $project['project_id']));
+        return $this->render($project, $this->directory->exportRows((int) $project['project_id']), $token);
+    }
+
+    /**
+     * Serve the share-card thumbnail. Same token gate as the page; the payload
+     * is a generated picture with counts only, never contact rows.
+     */
+    public function serveImage(string $token, ?string $ifNoneMatch): PluginResponse
+    {
+        if (preg_match('/^[0-9a-f]{32}$/', $token) !== 1) {
+            throw new HttpException('分享链接无效或已停用。', 404);
+        }
+        $project = $this->shares->projectForToken($token);
+        if ($project === null) {
+            $this->removeFile($token);
+            throw new HttpException('分享链接无效或已停用。', 404);
+        }
+
+        $path = $this->imagePathForToken($token);
+        if (!is_file($path)) {
+            $this->writeImage($token, $project, $this->directory->exportRows((int) $project['project_id']));
+        }
+        if (!is_file($path)) {
+            // No GD/font on this host: there is simply no thumbnail to serve.
+            throw new HttpException('分享缩略图不可用。', 404);
+        }
+
+        $bytes = file_get_contents($path);
+        if ($bytes === false) {
+            throw new HttpException('分享缩略图暂时无法读取。', 500);
+        }
+        $etag = '"csimg-' . sha1($bytes) . '"';
+        $headers = [
+            'ETag' => $etag,
+            // Chat crawlers may keep the card art; the token is the secret and
+            // the picture carries no personal data.
+            'Cache-Control' => 'public, max-age=86400',
+            'X-Content-Type-Options' => 'nosniff',
+        ];
+        if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
+            return PluginResponse::notModified($headers);
+        }
+
+        // raw() keeps these exact headers; inline() would override them with
+        // the private-image policy used for sample photos.
+        return PluginResponse::raw($bytes, 'image/png', $headers);
+    }
+
+    /** Title/description used by chat link cards and the copy-with-title action. */
+    public function cardMeta(array $project, array $rows): array
+    {
+        $trades = [];
+        foreach ($rows as $row) {
+            $trades[(string) $row['type_name']] = true;
+        }
+        $names = array_keys($trades);
+        $shown = array_slice($names, 0, 4);
+        $tradeText = implode('、', $shown);
+        if (count($names) > count($shown)) {
+            $tradeText .= '等';
+        }
+        $projectName = (string) ($project['project_name'] ?? '');
+
+        return [
+            'title' => $projectName . ' · 班组联系人',
+            'description' => count($rows) . ' 个在用班组 · ' . count($names) . ' 个工种'
+                . ($tradeText !== '' ? '（' . $tradeText . '）' : '')
+                . '，点击卡片即可直接拨号。',
+            'crewCount' => count($rows),
+            'tradeCount' => count($names),
+        ];
+    }
+
+    private function writeImage(string $token, array $project, array $rows): void
+    {
+        if (!CrewShareImage::isSupported()) {
+            return;
+        }
+        $meta = $this->cardMeta($project, $rows);
+        $bytes = CrewShareImage::render($project, $meta['crewCount'], $meta['tradeCount']);
+        if ($bytes === null) {
+            return;
+        }
+        $path = $this->imagePathForToken($token);
+        $directory = dirname($path);
+        if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
+            return;
+        }
+        $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
+        if (@file_put_contents($tmp, $bytes) === false || !@rename($tmp, $path)) {
+            @unlink($tmp);
+            error_log('labor.crew: unable to write share card image for project ' . (int) $project['project_id']);
+        }
     }
 
     private function pathForToken(string $token): string
@@ -190,19 +284,25 @@ final class CrewSharePage
         return dirname(__DIR__, 3) . '/storage/labor-crew-shares/' . $token . '.html';
     }
 
+    private function imagePathForToken(string $token): string
+    {
+        return dirname(__DIR__, 3) . '/storage/labor-crew-shares/' . $token . '.png';
+    }
+
     private function removeFile(string $token): void
     {
         if (preg_match('/^[0-9a-f]{32}$/', $token) !== 1) {
             return;
         }
-        $path = $this->pathForToken($token);
-        if (is_file($path)) {
-            @unlink($path);
+        foreach ([$this->pathForToken($token), $this->imagePathForToken($token)] as $path) {
+            if (is_file($path)) {
+                @unlink($path);
+            }
         }
     }
 
     /** @param array<int, array<string, string|null>> $rows */
-    private function render(array $project, array $rows): string
+    private function render(array $project, array $rows, string $token = ''): string
     {
         // Public visitors get the system default timezone, never the personal
         // zone of whichever admin happened to trigger the regeneration.
@@ -220,10 +320,24 @@ final class CrewSharePage
         $escape = [Support::class, 'escape'];
         $crews = $rows;
         $layoutVersion = $this->layoutVersion();
+        $cardMeta = $this->cardMeta($project, $rows);
+        $shareUrl = $token !== '' ? CrewShareService::publicUrl($token) : '';
+        $imageUrl = $token !== '' && CrewShareImage::isSupported() ? CrewShareService::imageUrl($token) : '';
+        $siteName = $this->platformName();
         ob_start();
         require dirname(__DIR__) . '/views/share.php';
 
         return (string) ob_get_clean();
+    }
+
+    /** Platform name for og:site_name; falls back to the product default. */
+    private function platformName(): string
+    {
+        $statement = $this->db->prepare("SELECT setting_value FROM System_Settings WHERE setting_key = 'platform_name'");
+        $statement->execute();
+        $value = $statement->fetchColumn();
+
+        return is_string($value) && trim($value) !== '' ? trim($value) : 'Project O';
     }
 
     /**

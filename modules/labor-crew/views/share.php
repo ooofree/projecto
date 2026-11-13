@@ -54,8 +54,41 @@ $tileIndex = 0;
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#123527">
 <meta name="format-detection" content="telephone=no">
+<?php
+// Link-card metadata. WeChat/QQ and other chat clients build the preview card
+// from these when the link is shared or opened in their in-app browser.
+$cardTitle = (string) ($cardMeta['title'] ?? ($project['project_name'] . ' · 班组联系人'));
+$cardDescription = (string) ($cardMeta['description'] ?? '');
+$cardSiteName = (string) ($siteName ?? 'Project O');
+?>
+<title><?= $escape($cardTitle) ?></title>
+<meta name="description" content="<?= $escape($cardDescription) ?>">
+<meta itemprop="name" content="<?= $escape($cardTitle) ?>">
+<meta itemprop="description" content="<?= $escape($cardDescription) ?>">
+<?php if (($imageUrl ?? '') !== ''): ?>
+<meta itemprop="image" content="<?= $escape($imageUrl) ?>">
+<?php endif; ?>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="<?= $escape($cardSiteName) ?>">
+<meta property="og:title" content="<?= $escape($cardTitle) ?>">
+<meta property="og:description" content="<?= $escape($cardDescription) ?>">
+<?php if (($shareUrl ?? '') !== ''): ?>
+<meta property="og:url" content="<?= $escape($shareUrl) ?>">
+<?php endif; ?>
+<?php if (($imageUrl ?? '') !== ''): ?>
+<meta property="og:image" content="<?= $escape($imageUrl) ?>">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="600">
+<meta property="og:image:height" content="600">
+<meta property="og:image:alt" content="<?= $escape($cardTitle) ?>">
+<?php endif; ?>
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="<?= $escape($cardTitle) ?>">
+<meta name="twitter:description" content="<?= $escape($cardDescription) ?>">
+<?php if (($imageUrl ?? '') !== ''): ?>
+<meta name="twitter:image" content="<?= $escape($imageUrl) ?>">
+<?php endif; ?>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23286247'/%3E%3Cpath fill='%23fff' d='M8.6 11.8a10.5 10.5 0 0 0 4.6 4.6l1.5-1.5a.7.7 0 0 1 .7-.2c.8.3 1.6.4 2.5.4a.7.7 0 0 1 .7.7v2.4a.7.7 0 0 1-.7.7C11.6 18.9 5.1 12.4 5.1 4.5a.7.7 0 0 1 .7-.7h2.4a.7.7 0 0 1 .7.7c0 .9.1 1.7.4 2.5a.7.7 0 0 1-.2.7l-1.5 1.5Z'/%3E%3C/svg%3E">
-<title><?= $escape($project['project_name']) ?>班组联系人</title>
 <style>
 :root{color-scheme:light;--page:#f4f6f4;--surface:#fff;--muted:#64716a;--text:#1f2a24;--border:#e2e8e3;--accent:#286247;--accent-soft:#e9f2ec;--nav-bg:rgba(244,246,244,.92)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -76,12 +109,30 @@ body{margin:0;min-height:100vh;color:var(--text);font-family:system-ui,-apple-sy
 .trade-nav{position:sticky;top:0;z-index:20;margin:14px -14px 14px;padding:9px 14px;background:var(--nav-bg);border-bottom:1px solid var(--border);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .chips{display:flex;flex-wrap:wrap;gap:7px;padding:2px;list-style:none;margin:0}
 .chips li{display:flex;min-width:0;max-width:100%}
+.chips li[hidden]{display:none}
+/* Expanded lists stay inside a capped, scrollable well so a long trade list can
+   never take over a small screen; the toggle below it stays put. */
+.chips.is-expanded{max-height:min(26vh,190px);overflow-y:auto;overscroll-behavior:contain;padding-right:6px;scrollbar-width:thin;scrollbar-color:var(--accent) transparent}
+.chips.is-expanded::-webkit-scrollbar{width:6px}
+.chips.is-expanded::-webkit-scrollbar-track{background:transparent}
+.chips.is-expanded::-webkit-scrollbar-thumb{background:var(--accent);border:0;border-radius:999px}
+.chips.is-expanded::-webkit-scrollbar-thumb:hover{background:#347855}
+
 .chip{flex:0 1 auto;min-width:0;max-width:100%;display:inline-flex;align-items:center;gap:6px;padding:7px 13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;font-size:.8rem;font-weight:640;text-decoration:none;transition:border-color .14s ease,transform .14s ease,box-shadow .14s ease}
 .chip .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chip:hover{border-color:var(--tc,#286247);transform:translateY(-1px);box-shadow:0 4px 10px rgb(34 54 43 / 8%)}
 .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Touch taps must not leave a sticky hover ring behind: only real pointers get
+   the lift/hover treatment. */
+@media (hover:hover) and (pointer:fine){
+.chip:hover{border-color:var(--tc,#286247);transform:translateY(-1px);box-shadow:0 4px 10px rgb(34 54 43 / 8%)}
+}
 .chip .dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--tc,#286247)}
 .chip strong{flex:0 0 auto;color:var(--muted);font-weight:700}
+.chip[aria-current="true"]{color:#fff;background:var(--tc,#286247);border-color:var(--tc,#286247);box-shadow:0 4px 12px rgb(34 54 43 / 18%)}
+.chip[aria-current="true"] strong{color:rgb(255 255 255 / 82%)}
+.chip[aria-current="true"] .dot{background:#fff}
+.chip-toggle{color:var(--accent);background:var(--accent-soft);border-color:transparent;font-weight:700;cursor:pointer}
+.chip-toggle:hover{border-color:var(--accent)}
 .tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 14px}
 .search{display:flex;flex:1 1 220px;align-items:center;gap:8px;min-height:44px;padding:0 13px;background:var(--surface);border:1px solid var(--border);border-radius:12px;transition:border-color .14s ease}
 .search:focus-within{border-color:var(--accent)}
@@ -94,8 +145,10 @@ body{margin:0;min-height:100vh;color:var(--text);font-family:system-ui,-apple-sy
 .tiles li[id]{scroll-margin-top:var(--nav-h,76px)}
 .tile{position:relative;display:flex;flex-direction:column;height:150px;padding:12px 12px 46px;color:inherit;background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--tc);border-radius:14px;box-shadow:0 5px 16px rgb(34 54 43 / 5%);text-decoration:none;overflow:hidden;transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease;animation:rise .45s both;animation-delay:var(--d,0ms)}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media (hover:hover) and (pointer:fine){
 .tile:hover{transform:translateY(-2px);border-color:var(--tc);border-top-color:var(--tc);box-shadow:0 10px 24px rgb(34 54 43 / 12%)}
-.tile:active{transform:scale(.985)}
+}
+.tile:active{transform:scale(.985);border-color:var(--tc)}
 .tile:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .tiles li:target .tile{animation:tile-target 1.6s ease}
 @keyframes tile-target{0%,55%{border-color:var(--tc);box-shadow:0 0 0 3px var(--tc-soft),0 10px 24px rgb(34 54 43 / 16%)}100%{border-color:var(--border);border-top-color:var(--tc);box-shadow:0 5px 16px rgb(34 54 43 / 5%)}}
@@ -167,11 +220,12 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
     <?php else: ?>
         <?php if (count($groups) > 1): ?>
             <nav class="trade-nav" aria-label="按工种导航">
-                <ul class="chips">
+                <ul class="chips" id="trade-chips">
                     <li><a class="chip" href="#top"><span class="name">全部</span><strong><?= count($crews) ?></strong></a></li>
                     <?php $gi = 0; foreach ($groups as $typeName => $groupCrews): ?>
                         <li><a class="chip" href="#trade-<?= $gi ?>" style="--tc:<?= $groupColors[$typeName] ?>"><span class="dot" aria-hidden="true"></span><span class="name" title="<?= $escape($typeName) ?>"><?= $escape($typeName) ?></span><strong><?= count($groupCrews) ?></strong></a></li>
                     <?php $gi++; endforeach; ?>
+                    <li id="chips-toggle-item" hidden><button type="button" class="chip chip-toggle" id="chips-toggle" aria-expanded="false" aria-controls="trade-chips"></button></li>
                 </ul>
             </nav>
         <?php endif; ?>
@@ -201,7 +255,7 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
                     // The first tile of each trade is the chip's anchor target.
                     $anchor = $ci === 0 ? ' id="trade-' . $gi . '"' : '';
                     ?>
-                    <li<?= $anchor ?> style="--tc:<?= $groupColors[$typeName] ?>;--tc-soft:<?= $groupColors[$typeName] ?>22">
+                    <li<?= $anchor ?> data-type="<?= $escape($typeName) ?>" style="--tc:<?= $groupColors[$typeName] ?>;--tc-soft:<?= $groupColors[$typeName] ?>22">
                         <a class="tile" href="tel:<?= $escape($tel) ?>" data-search="<?= $escape($haystack) ?>" style="--d:<?= $delay ?>ms" aria-label="拨打 <?= $escape($crew['crew_name']) ?> 负责人 <?= $escape($crew['leader_name']) ?> 的电话 <?= $escape($phone) ?>">
                             <span class="tile-type"><?= $escape($crew['type_name']) ?></span>
                             <h3 title="<?= $escape($crew['crew_name']) ?>"><?= $escape($crew['crew_name']) ?></h3>
@@ -228,16 +282,131 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
     // not a constant. Measure it and publish it as --nav-h: anchor jumps then
     // land just below the sticky bar on every viewport and after any resize.
     var nav = document.querySelector('.trade-nav');
+    var chipList = document.getElementById('trade-chips');
+    var toggleItem = document.getElementById('chips-toggle-item');
+    var toggle = document.getElementById('chips-toggle');
+    var chipItems = chipList ? [].slice.call(chipList.children).filter(function (li) { return li !== toggleItem; }) : [];
+    var expanded = false;
+    // Narrow screens get at most two chip rows so a long trade list cannot eat
+    // a quarter of the screen; the rest stay one tap away behind the toggle.
+    var MAX_ROWS = 2;
+
     function syncNavHeight() {
         var h = nav ? Math.ceil(nav.getBoundingClientRect().height) : 0;
         document.documentElement.style.setProperty('--nav-h', (h + 14) + 'px');
     }
-    syncNavHeight();
-    window.addEventListener('resize', syncNavHeight);
-    window.addEventListener('orientationchange', syncNavHeight);
-    if (nav && window.ResizeObserver) {
-        new ResizeObserver(syncNavHeight).observe(nav);
+
+    function layoutChips() {
+        if (!chipItems.length) { syncNavHeight(); return; }
+        for (var i = 0; i < chipItems.length; i++) chipItems[i].hidden = false;
+        if (toggleItem) toggleItem.hidden = true;
+        if (chipList) chipList.classList.remove('is-expanded');
+        if (expanded) {
+            if (chipList) chipList.classList.add('is-expanded');
+            if (toggle) toggle.textContent = '收起 ▴';
+            syncNavHeight();
+            return;
+        }
+
+        // Measure natural rows, then keep only the first MAX_ROWS so the bar
+        // stays compact; everything else is one tap away behind the toggle.
+        var rows = [];
+        for (var j = 0; j < chipItems.length; j++) {
+            var top = Math.round(chipItems[j].getBoundingClientRect().top);
+            if (rows.indexOf(top) === -1) rows.push(top);
+        }
+        if (rows.length <= MAX_ROWS) { syncNavHeight(); return; }
+
+        // Show the toggle inside the flow, then hide overflow rows plus any chip
+        // that would push the toggle onto an extra row.
+        if (toggleItem) toggleItem.hidden = false;
+        if (toggle) toggle.textContent = '更多工种 ▾';
+        var toggleWidth = toggleItem ? toggleItem.getBoundingClientRect().width + 7 : 0;
+        var limit = (chipList ? chipList.getBoundingClientRect().right : window.innerWidth) - toggleWidth;
+        var lastRowTop = rows[MAX_ROWS - 1];
+        var hiddenCount = 0;
+        for (var k = 0; k < chipItems.length; k++) {
+            var rect = chipItems[k].getBoundingClientRect();
+            var rowIndex = rows.indexOf(Math.round(rect.top));
+            if (rowIndex >= MAX_ROWS || (rowIndex === MAX_ROWS - 1 && rect.right > limit)) {
+                chipItems[k].hidden = true;
+                hiddenCount++;
+            }
+        }
+        if (toggle) toggle.textContent = '更多工种 ' + hiddenCount + ' ▾';
+        syncNavHeight();
     }
+
+    function refresh() { layoutChips(); }
+    refresh();
+    window.addEventListener('resize', refresh);
+    window.addEventListener('orientationchange', refresh);
+    if (nav && window.ResizeObserver) {
+        // Height changes come from our own layout, so only react to width.
+        var lastWidth = nav.getBoundingClientRect().width;
+        new ResizeObserver(function () {
+            var w = nav.getBoundingClientRect().width;
+            if (Math.abs(w - lastWidth) > 1) { lastWidth = w; layoutChips(); }
+            else syncNavHeight();
+        }).observe(nav);
+    }
+    if (toggle) {
+        toggle.addEventListener('click', function () {
+            expanded = !expanded;
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            for (var i = 0; i < chipItems.length; i++) chipItems[i].hidden = false;
+            if (expanded) {
+                chipList.classList.add('is-expanded');
+                chipList.scrollTop = 0;
+                toggle.textContent = '收起 ▴';
+                syncNavHeight();
+            } else {
+                chipList.classList.remove('is-expanded');
+                layoutChips();
+            }
+        });
+    }
+
+    // After a touch/pen tap the chip would keep focus (and its focus ring on
+    // some engines) while the reader is looking at tiles. Drop it for non-keyboard
+    // activation only, so keyboard users keep their visible focus.
+    if (chipList) {
+        chipList.addEventListener('click', function (event) {
+            var chip = event.target.closest ? event.target.closest('.chip') : null;
+            if (!chip) return;
+            var keyboard = event.detail === 0;
+            if (!keyboard && typeof chip.blur === 'function') chip.blur();
+        });
+    }
+
+    // Highlight the trade the reader is currently looking at.
+    var tradeItems = [].slice.call(document.querySelectorAll('#share-list > li[data-type]'));
+    var tradeChips = chipItems.filter(function (li) { return li.querySelector('.chip[href^="#trade-"]'); });
+    function syncActiveChip() {
+        if (!tradeItems.length || !tradeChips.length) return;
+        var line = (nav ? nav.getBoundingClientRect().bottom : 0) + 24;
+        var current = null;
+        for (var i = 0; i < tradeItems.length; i++) {
+            if (tradeItems[i].hidden) continue;
+            if (tradeItems[i].getBoundingClientRect().top <= line) current = tradeItems[i];
+            else break;
+        }
+        var type = current ? current.dataset.type : null;
+        for (var j = 0; j < tradeChips.length; j++) {
+            var chip = tradeChips[j].querySelector('.chip');
+            var label = chip.querySelector('.name');
+            var isOn = type !== null && label && label.textContent === type;
+            if (isOn) chip.setAttribute('aria-current', 'true');
+            else chip.removeAttribute('aria-current');
+        }
+    }
+    var ticking = false;
+    window.addEventListener('scroll', function () {
+        if (ticking) return;
+        ticking = true;
+        window.requestAnimationFrame(function () { ticking = false; syncActiveChip(); });
+    }, { passive: true });
+    syncActiveChip();
 
     var search = document.getElementById('share-search');
     if (!search) return;
@@ -255,6 +424,7 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
         }
         if (count) count.textContent = visible + (count.dataset.unit || ' 个班组');
         if (noMatch) noMatch.hidden = visible !== 0;
+        syncActiveChip();
     }
     search.addEventListener('input', apply);
 })();

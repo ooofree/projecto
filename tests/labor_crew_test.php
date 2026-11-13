@@ -643,9 +643,9 @@ $activeShareHtml = crewRenderView($plugin->dispatch('crews', []));
 crewCheck(str_contains($activeShareHtml, 'data-share-link'), 'Active share must expose the link element.');
 crewCheck(str_contains($activeShareHtml, $shareToken), 'The link element must contain the token.');
 crewCheck(
-    preg_match('/data-copy-share\s+data-share-url="([^"]+)"/', $activeShareHtml, $copyAttr) === 1
-        && html_entity_decode($copyAttr[1], ENT_QUOTES) === CrewShareService::publicUrl($shareToken),
-    'The copy button must carry exactly the public URL as its copy payload.'
+    preg_match_all('/data-share-url="([^"]+)"/', $activeShareHtml, $copyAttrs) >= 1
+        && html_entity_decode($copyAttrs[1][0], ENT_QUOTES) === CrewShareService::publicUrl($shareToken),
+    'Every copy button must carry exactly the public URL as its copy payload.'
 );
 crewCheck(str_contains($activeShareHtml, 'data-share-feedback'), 'The dialog must expose a copy feedback region.');
 crewCheck(str_contains($activeShareHtml, '停用分享'), 'Active share must offer revocation.');
@@ -668,6 +668,17 @@ crewCheck(str_contains($publicHtml, '.chips{display:flex;flex-wrap:wrap'), 'Trad
 crewCheck(str_contains($publicHtml, 'class="name"'), 'Chip labels must be individually truncatable so long trade names cannot overflow.');
 crewCheck(str_contains($publicHtml, '--nav-h') && str_contains($publicHtml, 'ResizeObserver'), 'Anchor offset must follow the measured nav height across viewports.');
 crewCheck(preg_match('/data-layout="[0-9a-f]{12}"/', $publicHtml) === 1, 'Static pages must stamp the template version they were rendered with.');
+
+// Chat link-card metadata: title, summary and a fetchable thumbnail.
+crewCheck(preg_match('/<meta property="og:title" content="([^"]*)"/', $publicHtml, $ogTitle) === 1
+    && str_contains(html_entity_decode($ogTitle[1], ENT_QUOTES), 'Project One'), 'og:title must name the shared project.');
+crewCheck(preg_match('/<meta property="og:description" content="([^"]*)"/', $publicHtml, $ogDesc) === 1
+    && str_contains(html_entity_decode($ogDesc[1], ENT_QUOTES), '个在用班组'), 'og:description must summarise crew counts.');
+crewCheck(preg_match('/<meta property="og:image" content="([^"]+)"/', $publicHtml, $ogImage) === 1
+    && str_contains(html_entity_decode($ogImage[1], ENT_QUOTES), 'page=labor-crew-share-image&token=' . $shareToken), 'og:image must point at the token-gated thumbnail route.');
+crewCheck(!str_contains((string) ($ogDesc[1] ?? ''), '13800138001'), 'Card summary must not contain phone numbers.');
+crewCheck(str_contains($publicHtml, 'name="description"') && str_contains($publicHtml, 'itemprop="name"'), 'Plain description/itemprop metadata must be present for other crawlers.');
+crewCheck($registry->isPublicRoute('GET', 'labor-crew-share-image'), 'The thumbnail route must be public so chat crawlers can fetch it.');
 crewCheck(str_contains($publicHtml, 'Project One'), 'Public page must name the shared project.');
 crewCheck(str_contains($publicHtml, '钢筋一班'), 'Public page must list active crews of the token project.');
 crewCheck(str_contains($publicHtml, 'href="tel:13800138001"'), 'Leader phones must be tel: links for direct dialling.');
@@ -835,6 +846,32 @@ $_SESSION = [];
 $lazyHtml = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $staticToken]));
 crewCheck(is_file($staticPath), 'A missing static file must be regenerated on first visit.');
 crewCheck(str_contains($lazyHtml, '钢筋一班'), 'Lazily regenerated page must contain current crews.');
+
+// Thumbnail route: token-gated PNG, and it disappears with the share.
+if (ProjectO\Modules\LaborCrew\CrewShareImage::isSupported()) {
+    $imageResponse = $plugin->dispatch('crew.share_image', ['token' => $staticToken]);
+    crewCheck($imageResponse->type === 'raw', 'Thumbnail must be served as a raw image response.');
+    crewCheck(($imageResponse->data['content_type'] ?? '') === 'image/png', 'Thumbnail must be a PNG.');
+    crewCheck(str_contains((string) ($imageResponse->data['headers']['Cache-Control'] ?? ''), 'public'), 'Thumbnail must be publicly cacheable so chat crawlers can reuse it.');
+    $png = (string) ($imageResponse->data['body'] ?? '');
+    crewCheck(str_starts_with($png, "\x89PNG\r\n\x1a\n"), 'Thumbnail bytes must be a real PNG.');
+    $dimensions = @getimagesizefromstring($png);
+    crewCheck(is_array($dimensions) && $dimensions[0] === 600 && $dimensions[1] === 600, 'Thumbnail must be a 600x600 square card.');
+    crewCheck(is_file(dirname(__DIR__) . '/storage/labor-crew-shares/' . $staticToken . '.png'), 'Thumbnail must be cached next to the static page.');
+    crewExpectStatus(static function () use ($plugin): void {
+        $plugin->dispatch('crew.share_image', ['token' => str_repeat('0', 32)]);
+    }, 404, 'Unknown token must not yield a thumbnail.');
+}
+
+// The share dialog offers a titled copy so chat messages are not bare links.
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$cardDialogHtml = crewRenderView($plugin->dispatch('crews', []));
+crewCheck(str_contains($cardDialogHtml, 'data-share-mode="card"') && str_contains($cardDialogHtml, '复制标题+链接'), 'Dialog must offer copying title plus link.');
+crewCheck(str_contains($cardDialogHtml, 'data-share-mode="link"'), 'Dialog must still offer copying the bare link.');
+crewCheck(preg_match('/data-share-title="([^"]+)"/', $cardDialogHtml, $cardTitleAttr) === 1
+    && str_contains(html_entity_decode($cardTitleAttr[1], ENT_QUOTES), 'Project One'), 'Copy payload title must name the project.');
+crewCheck(str_contains($cardDialogHtml, 'share-card-preview'), 'Dialog must preview the chat card.');
+$_SESSION = [];
 
 // A layout upgrade must invalidate files rendered by the previous template, so
 // existing links pick up new markup without any contact-data change.

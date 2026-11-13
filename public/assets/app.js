@@ -67,22 +67,33 @@ async function copyShareLink(button) {
         return;
     }
 
+    // Card mode puts the project title and a one-line summary above the URL so
+    // the chat message is informative even where no link preview is generated.
+    const withTitle = button.dataset.shareMode === 'card';
+    const title = String(button.dataset.shareTitle || '').trim();
+    const desc = String(button.dataset.shareDesc || '').trim();
+    const payload = withTitle && title !== ''
+        ? title + (desc !== '' ? '\n' + desc : '') + '\n' + url
+        : url;
+
     let copied = false;
     if (navigator.clipboard && window.isSecureContext) {
         try {
-            await navigator.clipboard.writeText(url);
+            await navigator.clipboard.writeText(payload);
             copied = true;
         } catch {
             copied = false;
         }
     }
-    if (!copied) copied = legacyCopyShareUrl(url, button.closest('dialog') ?? document.body);
+    if (!copied) copied = legacyCopyShareUrl(payload, button.closest('dialog') ?? document.body);
 
     const original = button.dataset.shareLabel || button.textContent;
     button.dataset.shareLabel = original;
     if (copied) {
         button.textContent = '已复制 ✓';
-        setShareFeedback(feedback, '链接已复制，去微信粘贴发送即可。', false);
+        setShareFeedback(feedback, withTitle && title !== ''
+            ? '标题和链接已复制，去微信粘贴发送即可。'
+            : '链接已复制，去微信粘贴发送即可。', false);
     } else {
         // Honest fallback: select the visible URL so a long-press / Ctrl+C
         // copies exactly the link. Never claim success we cannot verify.
