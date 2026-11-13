@@ -777,7 +777,8 @@ final class MaterialManagementPlugin implements PluginInterface
     /**
      * Excel export of the current project's estimate records, narrowed to the
      * page's search box when a keyword is submitted. Columns cover the location
-     * space, the material code and the quantity (plus name/unit for usability).
+     * space, the material code, specification and the quantity (plus name/unit
+     * for usability).
      * File name follows 材料测算明细_项目名_日期_当天序号.xlsx.
      */
     private function exportEstimates(array $input): PluginResponse
@@ -796,7 +797,7 @@ final class MaterialManagementPlugin implements PluginInterface
             ));
         }
 
-        $headers = ['序号', '位置空间', '材料编号', '材料名称', '测算数量', '单位'];
+        $headers = ['序号', '位置空间', '材料编号', '材料名称', '规格', '测算数量', '单位'];
         $rows = [];
         foreach ($records as $index => $record) {
             $rows[] = [
@@ -804,6 +805,7 @@ final class MaterialManagementPlugin implements PluginInterface
                 $this->estimateSpaceLabel($record),
                 self::exportText($record['material_code'] ?? null),
                 (string) $record['material_name'],
+                self::exportText($record['specifications'] ?? null),
                 (float) $record['estimated_quantity'],
                 (string) $record['unit'],
             ];
@@ -826,8 +828,9 @@ final class MaterialManagementPlugin implements PluginInterface
                 1 => 42.0,
                 2 => 16.0,
                 3 => 28.0,
-                4 => 12.0,
-                5 => 8.0,
+                4 => 22.0,
+                5 => 12.0,
+                6 => 8.0,
             ],
         ]);
         Support::audit(

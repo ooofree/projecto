@@ -469,7 +469,7 @@ final class ProjectMaterialService
                     e.material_id, e.estimated_quantity, e.remarks,
                     b.building_number, b.building_name, f.floor_number, f.floor_name,
                     r.room_number, m.material_code, m.material_name, m.unit,
-                    m.category_id, c.category_name
+                    m.specifications, m.category_id, c.category_name
              FROM Initial_Cost_Estimate_Detail e
              JOIN Buildings b ON b.building_id = e.building_id
              JOIN Materials m ON m.material_id = e.material_id AND m.project_id = b.project_id

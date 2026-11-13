@@ -1547,17 +1547,21 @@ $estimateRowCount = count($projectMaterials->estimateData(1));
 materialTestCheck(
     str_contains($estimateExportSheet, '位置空间')
         && str_contains($estimateExportSheet, '材料编号')
+        && str_contains($estimateExportSheet, '规格')
+        && str_contains($estimateExportSheet, '600×600')
+        && str_contains($estimateExportSheet, '9W 暖光')
         && str_contains($estimateExportSheet, '测算数量')
         && str_contains($estimateExportSheet, 'A栋已更新 · 1F · 首层')
         && str_contains($estimateExportSheet, '12.3456')
         && substr_count($estimateExportSheet, '<row r=') === $estimateRowCount + 6,
-    'Estimate export must contain location space, material code and quantity for every record.'
+    'Estimate export must contain location space, material code, specification and quantity for every record.'
 );
 $estimateSearchExport = $plugin->dispatch('estimate.export', ['search' => '灯具']);
 $estimateSearchSheet = materialTestXlsxSheet($estimateSearchExport);
 materialTestCheck(
     str_contains($estimateSearchSheet, 'DG-001')
         && str_contains($estimateSearchSheet, '筒灯')
+        && str_contains($estimateSearchSheet, '9W 暖光')
         && !str_contains($estimateSearchSheet, 'FL-001')
         && !str_contains($estimateSearchSheet, '地砖')
         && str_contains($estimateSearchSheet, '导出范围: 搜索「灯具」匹配的测算记录'),
