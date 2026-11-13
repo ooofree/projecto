@@ -84,7 +84,12 @@ final class ProjectSpaceService
 
             $rooms = $this->db->prepare(
                 'SELECT r.room_id, r.floor_id, r.room_number, r.room_type, r.room_area,
-                        r.room_height, r.room_status, f.floor_number
+                        r.room_height, r.room_status, f.floor_number,
+                        EXISTS (
+                            SELECT 1 FROM project_foundation_archive_records x
+                            WHERE x.entity_type = \'room\' AND x.entity_id = r.room_id
+                              AND x.project_id = :archived_project_id
+                        ) AS is_archived
                  FROM Rooms r
                  JOIN Building_Floors f
                    ON f.floor_id = r.floor_id AND f.building_id = r.building_id
@@ -101,7 +106,7 @@ final class ProjectSpaceService
                     . '
                  ORDER BY f.floor_number, r.room_number, r.room_id'
             );
-            $roomParams = ['building_id' => $buildingId];
+            $roomParams = ['building_id' => $buildingId, 'archived_project_id' => $projectId];
             if (!$includeArchived) {
                 $roomParams['project_id'] = $projectId;
                 $roomParams['floor_project_id'] = $projectId;

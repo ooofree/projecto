@@ -98,6 +98,39 @@ $db->exec("INSERT INTO Sample_Location_Map VALUES (1, 50, 'area', 15)");
 $spaces = new ProjectSpaceService($db);
 $listed = $spaces->list(1);
 spaceTestCheck(count($listed) === 1 && count($listed[0]['rooms']) === 1, 'Spaces should be listed only for their project.');
+$escape = [ProjectO\Support::class, 'escape'];
+$renderSpacesView = static function (array $buildings, bool $archivedView) use ($escape): string {
+    $currentProject = ['project_name' => 'Test project'];
+    $canManage = true;
+    $csrfToken = 'test-token';
+    $title = '项目空间';
+    $theme = 'light';
+    $username = 'tester';
+    $canManagePlatform = false;
+    $flash = null;
+    ob_start();
+    require dirname(__DIR__) . '/modules/project-foundation/views/spaces.php';
+    return (string) ob_get_clean();
+};
+set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
+try {
+    $currentSpacesHtml = $renderSpacesView($listed, false);
+    spaceTestCheck(
+        str_contains($currentSpacesHtml, '新增房间') && str_contains($currentSpacesHtml, 'value="101"'),
+        'The current-space view should render rooms returned by the service.'
+    );
+    $renderSpacesView($listed, true);
+} finally {
+    restore_error_handler();
+}
+
+spaceTestCheck(
+    array_key_exists('is_archived', $listed[0]['rooms'][0])
+        && (int) $listed[0]['rooms'][0]['is_archived'] === 0,
+    'Active room rows should expose an is_archived flag for the space view.'
+);
 spaceTestCheck(
     $spaces->deleteOrArchive(1, 'building', 10, 7) === 'archived',
     'A building with children should be archived and retained.'
@@ -133,6 +166,11 @@ spaceTestCheck(
     $spaces->deleteOrArchive(1, 'area', 12, 7) === 'archived'
         && $spaces->deleteOrArchive(1, 'room', 13, 7) === 'archived',
     'Area and room mappings should be retained by archiving their referenced entities.'
+);
+$archivedRooms = $spaces->list(1, true)[0]['rooms'];
+spaceTestCheck(
+    count($archivedRooms) === 1 && (int) $archivedRooms[0]['is_archived'] === 1,
+    'Archived room rows should report is_archived in the archive view.'
 );
 $activeMappings = $spaces->list(1)[0]['area_rooms'];
 $archivedMappings = $spaces->list(1, true)[0]['area_rooms'];
