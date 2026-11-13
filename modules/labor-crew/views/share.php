@@ -48,7 +48,7 @@ $phoneIcon = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
 $tileIndex = 0;
 ?>
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-layout="<?= $escape($layoutVersion ?? '') ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -66,7 +66,7 @@ body{margin:0;min-height:100vh;color:var(--text);font-family:system-ui,-apple-sy
 ::-webkit-scrollbar-thumb{background:#286247;border-radius:6px;border:2px solid #e2e8e3}
 ::-webkit-scrollbar-thumb:hover{background:#347855}
 .wrap{width:min(1080px,100%);margin:0 auto;padding:16px 14px calc(30px + env(safe-area-inset-bottom))}
-.hero{position:relative;overflow:hidden;padding:26px 22px 22px;color:#f2f8f3;background:linear-gradient(135deg,#123527 0%,#1d5038 45%,#2b6a4b 78%,#1f5d52 100%);border-radius:20px;box-shadow:0 18px 40px rgb(18 53 39 / 25%);scroll-margin-top:70px}
+.hero{position:relative;overflow:hidden;padding:26px 22px 22px;color:#f2f8f3;background:linear-gradient(135deg,#123527 0%,#1d5038 45%,#2b6a4b 78%,#1f5d52 100%);border-radius:20px;box-shadow:0 18px 40px rgb(18 53 39 / 25%);scroll-margin-top:var(--nav-h,76px)}
 .hero::before{position:absolute;inset:0;background-image:linear-gradient(rgb(255 255 255 / 5%) 1px,transparent 1px),linear-gradient(90deg,rgb(255 255 255 / 5%) 1px,transparent 1px);background-size:26px 26px;content:"";pointer-events:none}
 .hero::after{position:absolute;top:-110px;right:4%;width:240px;height:240px;border:1px solid rgb(255 255 255 / 10%);border-radius:50%;box-shadow:0 0 0 28px rgb(255 255 255 / 4%),0 0 0 56px rgb(255 255 255 / 3%);content:"";pointer-events:none}
 .hero .eyebrow{position:relative;z-index:1;margin:0 0 6px;color:#a9cbb6;font-size:.7rem;font-weight:650;letter-spacing:.12em}
@@ -74,15 +74,14 @@ body{margin:0;min-height:100vh;color:var(--text);font-family:system-ui,-apple-sy
 .hero .sub{position:relative;z-index:1;margin:0;color:#d7e7db;font-size:.86rem}
 .hero .sub strong{color:#fff}
 .trade-nav{position:sticky;top:0;z-index:20;margin:14px -14px 14px;padding:9px 14px;background:var(--nav-bg);border-bottom:1px solid var(--border);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
-.chips{display:flex;gap:8px;overflow-x:auto;padding:2px;list-style:none;margin:0;scrollbar-width:thin;scrollbar-color:#286247 transparent}
-.chips::-webkit-scrollbar{height:4px}
-.chips::-webkit-scrollbar-track{background:transparent}
-.chips::-webkit-scrollbar-thumb{background:#9db8a8;border:0}
-.chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:7px;padding:7px 13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;font-size:.8rem;font-weight:640;text-decoration:none;white-space:nowrap;transition:border-color .14s ease,transform .14s ease,box-shadow .14s ease}
+.chips{display:flex;flex-wrap:wrap;gap:7px;padding:2px;list-style:none;margin:0}
+.chips li{display:flex;min-width:0;max-width:100%}
+.chip{flex:0 1 auto;min-width:0;max-width:100%;display:inline-flex;align-items:center;gap:6px;padding:7px 13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;font-size:.8rem;font-weight:640;text-decoration:none;transition:border-color .14s ease,transform .14s ease,box-shadow .14s ease}
+.chip .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip:hover{border-color:var(--tc,#286247);transform:translateY(-1px);box-shadow:0 4px 10px rgb(34 54 43 / 8%)}
 .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.chip .dot{width:9px;height:9px;border-radius:50%;background:var(--tc,#286247)}
-.chip strong{color:var(--muted);font-weight:700}
+.chip .dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--tc,#286247)}
+.chip strong{flex:0 0 auto;color:var(--muted);font-weight:700}
 .tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 14px}
 .search{display:flex;flex:1 1 220px;align-items:center;gap:8px;min-height:44px;padding:0 13px;background:var(--surface);border:1px solid var(--border);border-radius:12px;transition:border-color .14s ease}
 .search:focus-within{border-color:var(--accent)}
@@ -92,7 +91,7 @@ body{margin:0;min-height:100vh;color:var(--text);font-family:system-ui,-apple-sy
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0;margin:0;list-style:none}
 .tiles li{min-width:0}
 .tiles li[hidden]{display:none}
-.tiles li[id]{scroll-margin-top:76px}
+.tiles li[id]{scroll-margin-top:var(--nav-h,76px)}
 .tile{position:relative;display:flex;flex-direction:column;height:150px;padding:12px 12px 46px;color:inherit;background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--tc);border-radius:14px;box-shadow:0 5px 16px rgb(34 54 43 / 5%);text-decoration:none;overflow:hidden;transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease;animation:rise .45s both;animation-delay:var(--d,0ms)}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .tile:hover{transform:translateY(-2px);border-color:var(--tc);border-top-color:var(--tc);box-shadow:0 10px 24px rgb(34 54 43 / 12%)}
@@ -117,7 +116,9 @@ footer p{margin:0 0 4px}
 .wrap{padding:12px 10px calc(24px + env(safe-area-inset-bottom))}
 .hero{padding:20px 17px 17px;border-radius:16px}
 .trade-nav{margin:12px -10px 12px;padding:8px 10px}
-.tiles li[id]{scroll-margin-top:64px}
+.chips{gap:6px}
+.chip{padding:6px 11px;font-size:.76rem}
+.chip .dot{width:8px;height:8px}
 .tiles{gap:9px}
 .tile{height:150px;padding:11px 11px 44px;border-radius:13px}
 .tile h3{font-size:.93rem}
@@ -167,9 +168,9 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
         <?php if (count($groups) > 1): ?>
             <nav class="trade-nav" aria-label="按工种导航">
                 <ul class="chips">
-                    <li><a class="chip" href="#top">全部 <strong><?= count($crews) ?></strong></a></li>
+                    <li><a class="chip" href="#top"><span class="name">全部</span><strong><?= count($crews) ?></strong></a></li>
                     <?php $gi = 0; foreach ($groups as $typeName => $groupCrews): ?>
-                        <li><a class="chip" href="#trade-<?= $gi ?>" style="--tc:<?= $groupColors[$typeName] ?>"><span class="dot" aria-hidden="true"></span><?= $escape($typeName) ?> <strong><?= count($groupCrews) ?></strong></a></li>
+                        <li><a class="chip" href="#trade-<?= $gi ?>" style="--tc:<?= $groupColors[$typeName] ?>"><span class="dot" aria-hidden="true"></span><span class="name" title="<?= $escape($typeName) ?>"><?= $escape($typeName) ?></span><strong><?= count($groupCrews) ?></strong></a></li>
                     <?php $gi++; endforeach; ?>
                 </ul>
             </nav>
@@ -223,6 +224,21 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
 </div>
 <script>
 (function () {
+    // The trade nav wraps to as many rows as the screen needs, so its height is
+    // not a constant. Measure it and publish it as --nav-h: anchor jumps then
+    // land just below the sticky bar on every viewport and after any resize.
+    var nav = document.querySelector('.trade-nav');
+    function syncNavHeight() {
+        var h = nav ? Math.ceil(nav.getBoundingClientRect().height) : 0;
+        document.documentElement.style.setProperty('--nav-h', (h + 14) + 'px');
+    }
+    syncNavHeight();
+    window.addEventListener('resize', syncNavHeight);
+    window.addEventListener('orientationchange', syncNavHeight);
+    if (nav && window.ResizeObserver) {
+        new ResizeObserver(syncNavHeight).observe(nav);
+    }
+
     var search = document.getElementById('share-search');
     if (!search) return;
     var items = [].slice.call(document.querySelectorAll('#share-list > li'));

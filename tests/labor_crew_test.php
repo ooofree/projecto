@@ -664,6 +664,10 @@ crewCheck(str_contains($publicHtml, 'class="trade-nav"') && str_contains($public
 crewCheck(preg_match('/<li id="trade-\d+"/', $publicHtml) === 1, 'The first tile of each trade must carry the chip anchor id.');
 crewCheck(!str_contains($publicHtml, '<section class="trade"'), 'The grid must be continuous: no per-trade sections that leave empty slots.');
 crewCheck(substr_count($publicHtml, 'class="tile-type"') >= 2, 'Every tile must carry its own trade label.');
+crewCheck(str_contains($publicHtml, '.chips{display:flex;flex-wrap:wrap'), 'Trade chips must wrap to fit narrow screens instead of scrolling sideways.');
+crewCheck(str_contains($publicHtml, 'class="name"'), 'Chip labels must be individually truncatable so long trade names cannot overflow.');
+crewCheck(str_contains($publicHtml, '--nav-h') && str_contains($publicHtml, 'ResizeObserver'), 'Anchor offset must follow the measured nav height across viewports.');
+crewCheck(preg_match('/data-layout="[0-9a-f]{12}"/', $publicHtml) === 1, 'Static pages must stamp the template version they were rendered with.');
 crewCheck(str_contains($publicHtml, 'Project One'), 'Public page must name the shared project.');
 crewCheck(str_contains($publicHtml, '钢筋一班'), 'Public page must list active crews of the token project.');
 crewCheck(str_contains($publicHtml, 'href="tel:13800138001"'), 'Leader phones must be tel: links for direct dialling.');
@@ -831,6 +835,14 @@ $_SESSION = [];
 $lazyHtml = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $staticToken]));
 crewCheck(is_file($staticPath), 'A missing static file must be regenerated on first visit.');
 crewCheck(str_contains($lazyHtml, '钢筋一班'), 'Lazily regenerated page must contain current crews.');
+
+// A layout upgrade must invalidate files rendered by the previous template, so
+// existing links pick up new markup without any contact-data change.
+$staleHtml = preg_replace('/data-layout="[0-9a-f]{12}"/', 'data-layout="000000000000"', (string) file_get_contents($staticPath));
+file_put_contents($staticPath, $staleHtml);
+$upgradedHtml = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $staticToken]));
+crewCheck(!str_contains($upgradedHtml, 'data-layout="000000000000"'), 'A page from an older template must be regenerated on the next request.');
+crewCheck((string) file_get_contents($staticPath) === $upgradedHtml, 'The regenerated file must be published to disk.');
 
 // Cleanup: revoke the remaining shares so no test artifacts stay on disk.
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];

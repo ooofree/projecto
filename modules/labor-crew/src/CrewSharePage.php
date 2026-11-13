@@ -64,7 +64,7 @@ final class CrewSharePage
         }
 
         $path = $this->pathForToken($token);
-        if (!is_file($path)) {
+        if ($this->needsRebuild($path)) {
             $this->writePage($token, $project);
         }
 
@@ -83,7 +83,7 @@ final class CrewSharePage
 
         $mtime = (int) filemtime($path);
         $size = (int) filesize($path);
-        $etag = '"cs-' . sha1($token . ':' . $mtime . ':' . $size) . '"';
+        $etag = '"cs-' . sha1($token . ':' . $mtime . ':' . $size . ':' . $this->layoutVersion()) . '"';
         $headers = [
             'ETag' => $etag,
             'Last-Modified' => gmdate('D, d M Y H:i:s', $mtime) . ' GMT',
@@ -219,9 +219,40 @@ final class CrewSharePage
 
         $escape = [Support::class, 'escape'];
         $crews = $rows;
+        $layoutVersion = $this->layoutVersion();
         ob_start();
         require dirname(__DIR__) . '/views/share.php';
 
         return (string) ob_get_clean();
+    }
+
+    /**
+     * Fingerprint of the page template. Editing the layout therefore invalidates
+     * every already-generated file, so existing share links pick up the new
+     * markup on their next request without anyone touching the contact data.
+     */
+    private function layoutVersion(): string
+    {
+        $template = dirname(__DIR__) . '/views/share.php';
+        $mtime = @filemtime($template);
+        $size = @filesize($template);
+
+        return substr(sha1(($mtime === false ? 0 : $mtime) . ':' . ($size === false ? 0 : $size)), 0, 12);
+    }
+
+    /** Missing file, or a file rendered by an older template, must be rebuilt. */
+    private function needsRebuild(string $path): bool
+    {
+        if (!is_file($path)) {
+            return true;
+        }
+        $handle = @fopen($path, 'rb');
+        if ($handle === false) {
+            return true;
+        }
+        $head = (string) fread($handle, 1024);
+        fclose($handle);
+
+        return !str_contains($head, 'data-layout="' . $this->layoutVersion() . '"');
     }
 }
