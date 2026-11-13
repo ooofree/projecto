@@ -121,7 +121,23 @@ try {
         str_contains($currentSpacesHtml, '新增房间') && str_contains($currentSpacesHtml, 'value="101"'),
         'The current-space view should render rooms returned by the service.'
     );
-    $renderSpacesView($listed, true);
+    spaceTestCheck(
+        str_contains($currentSpacesHtml, 'space-tree')
+            && str_contains($currentSpacesHtml, 'data-dialog-open="space-floor-create-10"')
+            && str_contains($currentSpacesHtml, 'data-dialog-open="space-room-create-11"')
+            && str_contains($currentSpacesHtml, 'id="space-room-edit-13"')
+            && str_contains($currentSpacesHtml, 'id="space-floor-edit-11"'),
+        'The spaces view should render a building/floor/room tree with in-node add and dialog edit.'
+    );
+    spaceTestCheck(
+        !str_contains($currentSpacesHtml, '施工区域') && !str_contains($currentSpacesHtml, 'space-area'),
+        'Construction areas are task-organization data and should not appear in the space ledger.'
+    );
+    $archivedSpacesHtml = $renderSpacesView($listed, true);
+    spaceTestCheck(
+        !str_contains($archivedSpacesHtml, '<dialog '),
+        'The archive view should stay read-only and render no edit dialogs.'
+    );
 } finally {
     restore_error_handler();
 }

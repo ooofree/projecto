@@ -361,7 +361,7 @@ final class MaterialCatalogService
                 'sql' => 'SELECT COUNT(*) FROM Initial_Cost_Estimate_Detail e
                           JOIN Buildings b ON b.building_id = e.building_id
                           WHERE b.project_id = :project_id AND e.material_id = :id',
-                'message' => '该材料已用于材料估算明细，不能删除。',
+                'message' => '该材料已用于材料测算明细，不能删除。',
             ],
             [
                 'sql' => 'SELECT COUNT(*) FROM Material_Samples WHERE project_id = :project_id AND material_id = :id',

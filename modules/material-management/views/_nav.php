@@ -8,5 +8,5 @@
     <?php if ($nav['quotations']): ?><a class="button button-secondary" href="?page=quotations">报价</a><?php endif; ?>
     <?php if ($nav['tenders']): ?><a class="button button-secondary" href="?page=tender-list">招标清单</a><?php endif; ?>
     <?php if ($nav['samples']): ?><a class="button button-secondary" href="?page=samples">样品跟踪</a><?php endif; ?>
-    <?php if ($nav['estimates']): ?><a class="button button-secondary" href="?page=estimates">估算明细</a><?php endif; ?>
+    <?php if ($nav['estimates']): ?><a class="button button-secondary" href="?page=estimates">测算明细</a><?php endif; ?>
 </nav>

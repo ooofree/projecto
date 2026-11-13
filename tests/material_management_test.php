@@ -675,6 +675,13 @@ $estimateId = $projectMaterials->saveEstimate(1, [
     'remarks' => '首层试算',
 ]);
 materialTestCheck((string) $projectMaterials->estimateData(1)[0]['estimated_quantity'] === '12.3456', 'Estimate quantities must preserve decimal precision without cost calculations.');
+$estimateRows = $projectMaterials->estimateData(1);
+materialTestCheck(
+    (string) $estimateRows[0]['floor_name'] === '首层'
+        && array_key_exists('category_name', $estimateRows[0])
+        && array_key_exists('category_id', $estimateRows[0]),
+    'Estimate rows must expose floor names and material category fields for record grouping and labels.'
+);
 $secondBuildingId = $spaceService->save(2, ['type' => 'building', 'number' => 'B', 'name' => 'B 栋']);
 materialTestExpectStatus(
     static fn () => $projectMaterials->saveEstimate(1, [
@@ -940,6 +947,17 @@ materialTestCheck(
     'Sample export must be reachable through the application POST route.'
 );
 materialTestCheck($samplePage->type === 'view' && is_file((string) $samplePage->viewPath), 'Sample tracking should resolve its plugin view.');
+$categorizedMaterialId = (int) $db->query("SELECT material_id FROM Materials WHERE project_id = 1 AND material_code = 'DG-001'")->fetchColumn();
+$projectMaterials->saveEstimate(1, [
+    'building_id' => (string) $buildingId,
+    'material_id' => (string) $categorizedMaterialId,
+    'estimated_quantity' => '2',
+    'remarks' => '灯具测算',
+]);
+materialTestCheck(
+    (string) $projectMaterials->estimateData(1)[0]['category_name'] === '灯具',
+    'Estimate rows must resolve the material category through the project-scoped category table.'
+);
 $estimatePage = $plugin->dispatch('estimates', []);
 materialTestCheck($estimatePage->type === 'view' && is_file((string) $estimatePage->viewPath), 'Material estimates should resolve their plugin view.');
 $tenderPage = $plugin->dispatch('tender-list', []);
@@ -948,7 +966,7 @@ foreach ([
     [$materialPage, '材料管理'],
     [$plugin->dispatch('quotations', []), '材料报价'],
     [$samplePage, '样品跟踪'],
-    [$estimatePage, '材料估算明细'],
+    [$estimatePage, '材料测算明细'],
     [$tenderPage, '招标清单'],
 ] as [$pageResponse, $expectedHeading]) {
     materialTestCheck(
@@ -956,6 +974,31 @@ foreach ([
         "Material-management page should render its expected heading: {$expectedHeading}."
     );
 }
+$estimateHtml = renderMaterialTestView($estimatePage);
+materialTestCheck(
+    str_contains($estimateHtml, '快速录入')
+        && str_contains($estimateHtml, 'data-estimate-add')
+        && str_contains($estimateHtml, 'data-combo')
+        && str_contains($estimateHtml, 'data-combo-select')
+        && str_contains($estimateHtml, 'data-estimate-filter')
+        && str_contains($estimateHtml, 'data-ledger-group')
+        && str_contains($estimateHtml, 'A · A栋已更新')
+        && str_contains($estimateHtml, '1F · 首层')
+        && str_contains($estimateHtml, 'href="?page=estimates&amp;group=category"'),
+    'Estimates page must render the quick-entry material picker and group records by building and floor.'
+);
+$categoryEstimatePage = $plugin->dispatch('estimates', ['group' => 'category']);
+materialTestCheck(
+    $categoryEstimatePage->type === 'view'
+        && ($categoryEstimatePage->data['group'] ?? '') === 'category',
+    'The estimates page must accept a material-category grouping mode.'
+);
+$categoryEstimateHtml = renderMaterialTestView($categoryEstimatePage);
+materialTestCheck(
+    str_contains($categoryEstimateHtml, 'class="ledger-group-title">灯具<')
+        && str_contains($categoryEstimateHtml, 'href="?page=estimates&amp;group=space"'),
+    'Category grouping must show material categories and link back to space grouping.'
+);
 $tenderHtml = renderMaterialTestView($tenderPage);
 materialTestCheck(
     str_contains($tenderHtml, 'CNY - 人民币')
@@ -1489,6 +1532,97 @@ materialTestExpectStatus(
     static fn () => $plugin->dispatch('sample.export', []),
     403,
     'Sample export must enforce server-side feature permissions.'
+);
+
+// Estimate record export: columns, search parity, permissions, route, audit.
+$estimateExport = $plugin->dispatch('estimate.export', []);
+materialTestCheck(
+    $estimateExport->type === 'download'
+        && ($estimateExport->data['content_type'] ?? '') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        && preg_match('/^材料测算明细_Project One_\d{8}_\d+\.xlsx$/u', (string) ($estimateExport->data['filename'] ?? '')) === 1,
+    'Estimate export should download an .xlsx named 材料测算明细_项目名_日期_当天序号.'
+);
+$estimateExportSheet = materialTestXlsxSheet($estimateExport);
+$estimateRowCount = count($projectMaterials->estimateData(1));
+materialTestCheck(
+    str_contains($estimateExportSheet, '位置空间')
+        && str_contains($estimateExportSheet, '材料编号')
+        && str_contains($estimateExportSheet, '测算数量')
+        && str_contains($estimateExportSheet, 'A栋已更新 · 1F · 首层')
+        && str_contains($estimateExportSheet, '12.3456')
+        && substr_count($estimateExportSheet, '<row r=') === $estimateRowCount + 6,
+    'Estimate export must contain location space, material code and quantity for every record.'
+);
+$estimateSearchExport = $plugin->dispatch('estimate.export', ['search' => '灯具']);
+$estimateSearchSheet = materialTestXlsxSheet($estimateSearchExport);
+materialTestCheck(
+    str_contains($estimateSearchSheet, 'DG-001')
+        && str_contains($estimateSearchSheet, '筒灯')
+        && !str_contains($estimateSearchSheet, 'FL-001')
+        && !str_contains($estimateSearchSheet, '地砖')
+        && str_contains($estimateSearchSheet, '导出范围: 搜索「灯具」匹配的测算记录'),
+    'Estimate export must follow the page search keyword and report the filtered scope.'
+);
+$estimateCaseExport = $plugin->dispatch('estimate.export', ['search' => '  灯具  ']);
+materialTestCheck(
+    materialTestXlsxSheet($estimateCaseExport) === $estimateSearchSheet,
+    'Estimate export search must normalise whitespace/case exactly like the page filter.'
+);
+$estimateNoMatchExport = $plugin->dispatch('estimate.export', ['search' => '不存在的关键词xyz']);
+materialTestCheck(
+    substr_count(materialTestXlsxSheet($estimateNoMatchExport), '<row r=') === 6
+        && str_contains(materialTestXlsxSheet($estimateNoMatchExport), '记录总数: 0'),
+    'Estimate export with no matching records must produce an empty, well-formed workbook.'
+);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('estimate.export', ['search' => str_repeat('测', 201)]),
+    422,
+    'Estimate export must reject over-long search keywords.'
+);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('estimate.export', ['search' => ['数组']]),
+    422,
+    'Estimate export must reject non-string search keywords.'
+);
+$registryEstimateExport = $registry->dispatch('POST', 'material.estimate.export', []);
+materialTestCheck(
+    $registryEstimateExport instanceof PluginResponse && $registryEstimateExport->type === 'download',
+    'Estimate export must be registered as a plugin route in its manifest.'
+);
+$estimateAuditCount = (int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'material.estimate.export'")->fetchColumn();
+materialTestCheck($estimateAuditCount >= 4, 'Estimate exports must write audit entries.');
+$estimateExportHtml = renderMaterialTestView($plugin->dispatch('estimates', []));
+materialTestCheck(
+    str_contains($estimateExportHtml, 'id="estimate-export-form"')
+        && str_contains($estimateExportHtml, 'value="material.estimate.export"')
+        && str_contains($estimateExportHtml, 'name="search" form="estimate-export-form"')
+        && str_contains($estimateExportHtml, '>导出 Excel</button>'),
+    'Estimates page must render the export button beside the grouping buttons and bind the search field to it.'
+);
+$otherProjectEstimateExport = $plugin->dispatch('estimate.export', []);
+$_SESSION['active_project_id'] = 2;
+$projectTwoEstimateExport = $plugin->dispatch('estimate.export', []);
+materialTestCheck(
+    !str_contains(materialTestXlsxSheet($projectTwoEstimateExport), '首层试算')
+        && str_contains(materialTestXlsxSheet($projectTwoEstimateExport), '记录总数: 0'),
+    'Estimate export must only include records of the current project.'
+);
+$_SESSION['active_project_id'] = 1;
+unset($_SESSION['active_project_id']);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('estimate.export', []),
+    409,
+    'Estimate export must require a current project.'
+);
+$_SESSION['active_project_id'] = 1;
+$db->exec(
+    "DELETE FROM Role_Permissions
+     WHERE permission_id = (SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_estimates')"
+);
+materialTestExpectStatus(
+    static fn () => $plugin->dispatch('estimate.export', []),
+    403,
+    'Estimate export must enforce server-side feature permissions.'
 );
 
 echo "Material management tests passed.\n";

@@ -106,7 +106,7 @@ require __DIR__ . '/_nav.php';
 
 <?php if ($canEdit): ?>
     <details class="disclosure" id="new-material">
-        <summary>新增材料<span class="muted">登记主数据后，可在报价、样品和估算中引用</span></summary>
+        <summary>新增材料<span class="muted">登记主数据后，可在报价、样品和测算中引用</span></summary>
         <div class="disclosure-content">
             <form method="post" action="" class="form-grid record-form">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">

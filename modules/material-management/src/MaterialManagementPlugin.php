@@ -44,7 +44,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'supplier-materials' => $this->supplierMaterialsIndex(),
             'quotations' => $this->quotationsIndex(),
             'samples' => $this->samplesIndex(),
-            'estimates' => $this->estimatesIndex(),
+            'estimates' => $this->estimatesIndex($input),
             'tender-list' => $this->tenderListIndex(),
             'category.save' => $this->saveCategory($input),
             'category.delete' => $this->deleteCategory($input),
@@ -70,6 +70,7 @@ final class MaterialManagementPlugin implements PluginInterface
             'sample.export' => $this->exportSamples($input),
             'estimate.save' => $this->saveEstimate($input),
             'estimate.delete' => $this->deleteEstimate($input),
+            'estimate.export' => $this->exportEstimates($input),
             'tender.save' => $this->saveTenderItem($input),
             'tender.delete' => $this->deleteTenderItem($input),
             default => throw new HttpException('未找到对应操作。', 404),
@@ -191,18 +192,20 @@ final class MaterialManagementPlugin implements PluginInterface
         ]);
     }
 
-    private function estimatesIndex(): PluginResponse
+    private function estimatesIndex(array $input): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_material_estimates');
         Support::requirePermission($this->context->db, 'view_projects');
         Support::requirePermission($this->context->db, 'view_materials');
         $project = $this->context->requireCurrentProject();
         $projectId = (int) $project['project_id'];
+        $group = ($input['group'] ?? '') === 'category' ? 'category' : 'space';
         return $this->context->view('estimates.php', [
-            'title' => '材料估算明细',
+            'title' => '材料测算明细',
             'currentProject' => $project,
             'estimates' => $this->projectMaterials->estimateData($projectId),
             'choices' => $this->projectMaterials->estimateChoices($projectId),
+            'group' => $group,
             'canEdit' => Support::hasPermission($this->context->db, 'edit_material_estimates'),
             'nav' => $this->nav(),
         ]);
@@ -757,7 +760,7 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'edit_material_estimates');
         $project = $this->context->requireCurrentProject();
         $id = $this->projectMaterials->saveEstimate((int) $project['project_id'], $input);
-        return $this->complete('material.estimate.save', '材料估算明细已保存。', $id, '?page=estimates');
+        return $this->complete('material.estimate.save', '材料测算明细已保存。', $id, '?page=estimates');
     }
 
     private function deleteEstimate(array $input): PluginResponse
@@ -768,7 +771,137 @@ final class MaterialManagementPlugin implements PluginInterface
         $project = $this->context->requireCurrentProject();
         $id = $this->requiredId($input, 'estimate_detail_id');
         $this->projectMaterials->deleteEstimate((int) $project['project_id'], $id);
-        return $this->complete('material.estimate.delete', '材料估算明细已删除。', $id, '?page=estimates');
+        return $this->complete('material.estimate.delete', '材料测算明细已删除。', $id, '?page=estimates');
+    }
+
+    /**
+     * Excel export of the current project's estimate records, narrowed to the
+     * page's search box when a keyword is submitted. Columns cover the location
+     * space, the material code and the quantity (plus name/unit for usability).
+     * File name follows 材料测算明细_项目名_日期_当天序号.xlsx.
+     */
+    private function exportEstimates(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_material_estimates');
+        Support::requirePermission($this->context->db, 'view_projects');
+        Support::requirePermission($this->context->db, 'view_materials');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $search = $this->estimateSearchKeyword($input['search'] ?? null);
+        $records = $this->projectMaterials->estimateData($projectId);
+        if ($search !== '') {
+            $records = array_values(array_filter(
+                $records,
+                fn (array $record): bool => str_contains($this->estimateSearchText($record), $search)
+            ));
+        }
+
+        $headers = ['序号', '位置空间', '材料编号', '材料名称', '测算数量', '单位'];
+        $rows = [];
+        foreach ($records as $index => $record) {
+            $rows[] = [
+                $index + 1,
+                $this->estimateSpaceLabel($record),
+                self::exportText($record['material_code'] ?? null),
+                (string) $record['material_name'],
+                (float) $record['estimated_quantity'],
+                (string) $record['unit'],
+            ];
+        }
+
+        $exportDay = Support::nowLocal('Ymd');
+        $exportSequence = Support::nextDailySequence($this->context->db, 'material.estimate.export_sequence', $exportDay);
+        $projectLabel = Support::safeFileSegment((string) $project['project_name']) ?: '项目';
+        $fileName = '材料测算明细_' . $projectLabel . '_' . $exportDay . '_' . $exportSequence . '.xlsx';
+
+        $body = XlsxWorkbook::build('材料测算明细', $headers, $rows, [
+            'title' => '📐 ' . $project['project_name'] . '材料测算明细',
+            'meta' => [
+                '导出时间: ' . Support::nowLocal('Y-m-d H:i:s'),
+                '记录总数: ' . count($rows),
+                '导出范围: ' . ($search === '' ? '全部测算记录（最近 500 条内）' : '搜索「' . $search . '」匹配的测算记录'),
+            ],
+            'fixedWidths' => [
+                0 => 6.0,
+                1 => 42.0,
+                2 => 16.0,
+                3 => 28.0,
+                4 => 12.0,
+                5 => 8.0,
+            ],
+        ]);
+        Support::audit(
+            $this->context->db,
+            'material.estimate.export',
+            'Exported ' . count($rows) . ' estimate rows for project ' . $projectId
+                . ($search === '' ? ' (all records).' : ' (search filter applied).')
+        );
+
+        return PluginResponse::download(
+            $fileName,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            $body
+        );
+    }
+
+    /**
+     * Normalises the export keyword exactly like the page search box
+     * (app.js: lowercase, collapse whitespace, trim) so both filter the same
+     * records. Over-long input is rejected instead of silently truncated.
+     */
+    private function estimateSearchKeyword(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+        if (!is_string($value)) {
+            throw new HttpException('搜索关键词无效。', 422);
+        }
+        $text = trim((string) preg_replace('/\s+/u', ' ', $value));
+        if (mb_strlen($text, 'UTF-8') > 200) {
+            throw new HttpException('搜索关键词不能超过 200 个字符。', 422);
+        }
+        return mb_strtolower($text, 'UTF-8');
+    }
+
+    /**
+     * Server-side mirror of the estimates view $searchText closure: the same
+     * fields in the same order, lowercased and joined with single spaces.
+     *
+     * @param array<string, mixed> $record
+     */
+    private function estimateSearchText(array $record): string
+    {
+        $parts = [
+            (string) ($record['material_code'] ?? ''),
+            (string) $record['material_name'],
+            (string) ($record['category_name'] ?? ''),
+            (string) $record['building_number'],
+            (string) $record['building_name'],
+            (string) ($record['floor_number'] ?? ''),
+            (string) ($record['room_number'] ?? ''),
+            (string) ($record['remarks'] ?? ''),
+        ];
+        $parts = array_values(array_filter($parts, static fn (string $part): bool => $part !== ''));
+        return mb_strtolower(implode(' ', $parts), 'UTF-8');
+    }
+
+    /**
+     * Location label matching the page record header: building name (or
+     * number) · floor · room, with the same 未指定 fallbacks.
+     *
+     * @param array<string, mixed> $record
+     */
+    private function estimateSpaceLabel(array $record): string
+    {
+        $building = trim((string) ($record['building_name'] ?? '')) !== ''
+            ? (string) $record['building_name']
+            : (string) $record['building_number'];
+        $floor = ($record['floor_number'] ?? '') !== ''
+            ? trim($record['floor_number'] . ' · ' . ($record['floor_name'] ?? ''), ' ·')
+            : '未指定楼层';
+        $room = ($record['room_number'] ?? '') !== '' ? (string) $record['room_number'] : '未指定房间';
+        return $building . ' · ' . $floor . ' · ' . $room;
     }
 
     private function saveTenderItem(array $input): PluginResponse

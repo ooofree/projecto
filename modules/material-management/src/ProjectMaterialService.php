@@ -467,11 +467,14 @@ final class ProjectMaterialService
         $stmt = $this->db->prepare(
             'SELECT e.estimate_detail_id, e.building_id, e.floor_id, e.room_id,
                     e.material_id, e.estimated_quantity, e.remarks,
-                    b.building_number, b.building_name, f.floor_number,
-                    r.room_number, m.material_code, m.material_name, m.unit
+                    b.building_number, b.building_name, f.floor_number, f.floor_name,
+                    r.room_number, m.material_code, m.material_name, m.unit,
+                    m.category_id, c.category_name
              FROM Initial_Cost_Estimate_Detail e
              JOIN Buildings b ON b.building_id = e.building_id
              JOIN Materials m ON m.material_id = e.material_id AND m.project_id = b.project_id
+             LEFT JOIN Material_Categories c
+               ON c.category_id = m.category_id AND c.project_id = m.project_id
              LEFT JOIN Building_Floors f ON f.floor_id = e.floor_id AND f.building_id = e.building_id
              LEFT JOIN Rooms r
                ON r.room_id = e.room_id AND r.floor_id = e.floor_id AND r.building_id = e.building_id
@@ -553,12 +556,12 @@ final class ProjectMaterialService
 
     public function saveEstimate(int $projectId, array $data): int
     {
-        $id = $this->optionalId($data['estimate_detail_id'] ?? null, '估算明细');
+        $id = $this->optionalId($data['estimate_detail_id'] ?? null, '测算明细');
         $buildingId = $this->requiredId($data['building_id'] ?? null, '楼栋');
         $floorId = $this->optionalId($data['floor_id'] ?? null, '楼层');
         $roomId = $this->optionalId($data['room_id'] ?? null, '房间');
         $materialId = $this->requiredId($data['material_id'] ?? null, '材料');
-        $quantity = $this->decimal($data['estimated_quantity'] ?? '0', 8, 4, '估算数量');
+        $quantity = $this->decimal($data['estimated_quantity'] ?? '0', 8, 4, '测算数量');
         $remarks = $this->optionalText($data['remarks'] ?? null, 20000, '备注');
         $this->requireProjectBuilding($projectId, $buildingId);
         if ($floorId !== null) {
@@ -616,7 +619,7 @@ final class ProjectMaterialService
         );
         $stmt->execute(['id' => $estimateId]);
         if ($stmt->rowCount() !== 1) {
-            throw new HttpException('估算明细不存在或不属于当前项目。', 404);
+            throw new HttpException('测算明细不存在或不属于当前项目。', 404);
         }
     }
 
@@ -766,7 +769,7 @@ final class ProjectMaterialService
         );
         $stmt->execute(['id' => $estimateId, 'project_id' => $projectId]);
         if ($stmt->fetchColumn() === false) {
-            throw new HttpException('估算明细不存在或不属于当前项目。', 404);
+            throw new HttpException('测算明细不存在或不属于当前项目。', 404);
         }
     }
 

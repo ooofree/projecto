@@ -67,7 +67,7 @@ ob_start();
                     <a class="quick-link" href="?page=quotations"><span class="quick-link-icon" aria-hidden="true">＄</span><span>材料报价</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
                 <?php endif; ?>
                 <?php if ($canViewEstimates): ?>
-                    <a class="quick-link" href="?page=estimates"><span class="quick-link-icon" aria-hidden="true">▤</span><span>材料估算</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
+                    <a class="quick-link" href="?page=estimates"><span class="quick-link-icon" aria-hidden="true">▤</span><span>材料测算</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
                 <?php endif; ?>
                 <?php if ($canViewSamples): ?>
                     <a class="quick-link" href="?page=samples"><span class="quick-link-icon" aria-hidden="true">◇</span><span>样品跟踪</span><span class="quick-link-arrow" aria-hidden="true">→</span></a>

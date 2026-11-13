@@ -42,6 +42,7 @@
         "POST material.sample.export": "sample.export",
         "POST material.estimate.save": "estimate.save",
         "POST material.estimate.delete": "estimate.delete",
+        "POST material.estimate.export": "estimate.export",
         "POST material.tender.save": "tender.save",
         "POST material.tender.delete": "tender.delete"
     },
@@ -52,7 +53,7 @@
         {
             "name": "view_materials",
             "display_name": "查看材料",
-            "description": "查看当前项目的材料管理和材料估算所用材料"
+            "description": "查看当前项目的材料管理和材料测算所用材料"
         },
         {
             "name": "edit_materials",
@@ -136,13 +137,13 @@
         },
         {
             "name": "view_material_estimates",
-            "display_name": "查看材料估算明细",
+            "display_name": "查看材料测算明细",
             "description": "查看当前项目按空间归属的材料数量和备注"
         },
         {
             "name": "edit_material_estimates",
-            "display_name": "编辑材料估算明细",
-            "description": "维护当前项目材料估算数量和备注"
+            "display_name": "编辑材料测算明细",
+            "description": "维护当前项目材料测算数量和备注"
         },
         {
             "name": "view_tenders",
