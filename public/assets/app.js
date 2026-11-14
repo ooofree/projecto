@@ -59,58 +59,112 @@ async function copyShareLink(button) {
     const dialog = button.closest('dialog') ?? document;
     const field = dialog.querySelector('[data-share-link]');
     const feedback = dialog.querySelector('[data-share-feedback]');
-    // The data attribute is the single source of truth; the visible anchor is
-    // display only. Trim so no stray whitespace ever rides along.
-    const url = String(button.dataset.shareUrl || (field ? field.textContent : '')).trim();
-    if (!/^https?:\/\/\S+$/.test(url)) {
-        setShareFeedback(feedback, '链接无效，请关闭后重新打开分享。', true);
+    const original = button.dataset.shareLabel || button.textContent;
+    button.dataset.shareLabel = original;
+
+    // Resolve the URL defensively. Older cached copies of this script read
+    // `field.value`, which is undefined on an <a> and used to put the literal
+    // text "undefined" on the clipboard. Every candidate is validated, and
+    // nothing is ever written unless it is a real http(s) URL.
+    const candidates = [
+        button.dataset.shareUrl,
+        button.getAttribute('data-share-url'),
+        field ? field.getAttribute('href') : null,
+        field ? field.textContent : null,
+        dialog.querySelector('[data-share-url]')?.getAttribute('data-share-url'),
+    ];
+    let url = '';
+    for (const candidate of candidates) {
+        if (typeof candidate !== 'string') continue;
+        const value = candidate.trim();
+        if (/^https?:\/\/[^\s]+$/i.test(value)) {
+            url = value;
+            break;
+        }
+    }
+    if (url === '') {
+        setShareFeedback(feedback, '没能读到分享链接，请关闭对话框后重新打开「分享链接」。', true);
         return;
     }
 
     // Card mode puts the project title and a one-line summary above the URL so
     // the chat message is informative even where no link preview is generated.
     const withTitle = button.dataset.shareMode === 'card';
-    const title = String(button.dataset.shareTitle || '').trim();
-    const desc = String(button.dataset.shareDesc || '').trim();
+    const title = typeof button.dataset.shareTitle === 'string' ? button.dataset.shareTitle.trim() : '';
+    const desc = typeof button.dataset.shareDesc === 'string' ? button.dataset.shareDesc.trim() : '';
     const payload = withTitle && title !== ''
         ? title + (desc !== '' ? '\n' + desc : '') + '\n' + url
         : url;
-
-    let copied = false;
-    if (navigator.clipboard && window.isSecureContext) {
-        try {
-            await navigator.clipboard.writeText(payload);
-            copied = true;
-        } catch {
-            copied = false;
-        }
+    // Final guard: never let a stringified undefined/null reach the clipboard.
+    if (typeof payload !== 'string' || payload === '' || /\bundefined\b|\bnull\b/.test(payload.split('\n')[0])) {
+        setShareFeedback(feedback, '分享内容异常，已阻止复制，请重新打开「分享链接」。', true);
+        return;
     }
-    if (!copied) copied = legacyCopyShareUrl(payload, button.closest('dialog') ?? document.body);
 
-    const original = button.dataset.shareLabel || button.textContent;
-    button.dataset.shareLabel = original;
+    let copied = await writeClipboardText(payload, button.closest('dialog') ?? document.body);
+
     if (copied) {
         button.textContent = '已复制 ✓';
         setShareFeedback(feedback, withTitle && title !== ''
             ? '标题和链接已复制，去微信粘贴发送即可。'
             : '链接已复制，去微信粘贴发送即可。', false);
     } else {
-        // Honest fallback: select the visible URL so a long-press / Ctrl+C
-        // copies exactly the link. Never claim success we cannot verify.
-        if (field) {
-            const range = document.createRange();
-            range.selectNodeContents(field);
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-        }
+        // Honest fallback: show a selectable field holding the exact payload so
+        // a long-press / Ctrl+C copies it. Never claim unverified success.
+        revealManualCopy(dialog, payload);
         button.textContent = original;
-        setShareFeedback(feedback, '当前浏览器不允许自动复制，链接已选中：长按或按 Ctrl+C 复制后到微信粘贴。', true);
+        setShareFeedback(feedback, '当前浏览器不允许自动复制：下方内容已选中，长按（或按 Ctrl+C）复制后到微信粘贴。', true);
     }
     window.clearTimeout(button._shareCopyTimer);
     button._shareCopyTimer = window.setTimeout(() => {
-        button.textContent = original;
+        button.textContent = button.dataset.shareLabel || original;
     }, 2200);
+}
+
+/**
+ * Write text to the clipboard across browsers, including WeChat's WebView.
+ * Order: async Clipboard API (secure contexts) -> execCommand on a temporary
+ * textarea inside the open dialog (elements outside a modal are inert and
+ * cannot take focus). Returns true only when a copy actually succeeded.
+ */
+async function writeClipboardText(text, host) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            // fall through to the legacy path
+        }
+    }
+    return legacyCopyShareUrl(text, host);
+}
+
+/**
+ * Last resort: put the exact payload in a visible, pre-selected field so the
+ * user can copy it manually. Reuses one node so repeated attempts do not pile
+ * up elements inside the dialog.
+ */
+function revealManualCopy(dialog, payload) {
+    let box = dialog.querySelector('[data-share-manual]');
+    if (!box) {
+        box = document.createElement('textarea');
+        box.setAttribute('data-share-manual', '');
+        box.setAttribute('readonly', '');
+        box.setAttribute('aria-label', '手动复制分享内容');
+        box.rows = 3;
+        box.className = 'share-manual-copy';
+        const anchor = dialog.querySelector('[data-share-feedback]');
+        if (anchor && anchor.parentNode) {
+            anchor.parentNode.insertBefore(box, anchor);
+        } else {
+            dialog.appendChild(box);
+        }
+    }
+    box.value = payload;
+    box.hidden = false;
+    box.focus();
+    box.select();
+    box.setSelectionRange(0, payload.length);
 }
 
 // execCommand fallback for non-secure contexts (http LAN) and older WebViews.

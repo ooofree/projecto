@@ -349,9 +349,30 @@ final class CrewSharePage
         $shareUrl = $token !== '' ? CrewShareService::publicUrl($token) : '';
         $imageUrl = $token !== '' && CrewShareImage::isSupported() ? CrewShareService::imageUrl($token) : '';
         $siteName = $this->platformName();
+
+        // WeChat in-app share card, only when an operator configured a verified
+        // service account. Signing needs the page's absolute URL; when it cannot
+        // be produced the page simply keeps its OG metadata.
+        $wechatConfig = null;
+        if ($shareUrl !== '' && WechatShare::isConfigured()) {
+            try {
+                $wechatConfig = WechatShare::configFor($shareUrl);
+            } catch (\Throwable $exception) {
+                error_log('labor.crew: WeChat share config failed: ' . $exception->getMessage());
+            }
+        }
+
         // frame-ancestors is ignored in <meta>, so the document-level copy omits
         // it; the .htaccess header keeps it for servers with mod_headers.
         $contentSecurityPolicy = str_replace("; frame-ancestors 'none'", '', self::CSP);
+        if ($wechatConfig !== null) {
+            // The SDK is the only external script this page may ever load.
+            $contentSecurityPolicy = str_replace(
+                "script-src 'unsafe-inline'",
+                "script-src 'unsafe-inline' https://res.wx.qq.com https://res2.wx.qq.com",
+                $contentSecurityPolicy
+            );
+        }
         ob_start();
         require dirname(__DIR__) . '/views/share.php';
 

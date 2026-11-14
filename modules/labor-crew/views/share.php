@@ -106,6 +106,9 @@ body{margin:0;min-height:100vh;color:var(--text);font-family:system-ui,-apple-sy
 ::-webkit-scrollbar-thumb{background:#286247;border-radius:6px;border:2px solid #e2e8e3}
 ::-webkit-scrollbar-thumb:hover{background:#347855}
 .wrap{width:min(1080px,100%);margin:0 auto;padding:16px 14px calc(30px + env(safe-area-inset-bottom))}
+/* Parked off-screen but still laid out, so chat crawlers can read it while it
+   never affects the visible page or its scroll size. */
+.wechat-card-image{position:absolute;left:-9999px;top:0;width:600px;height:600px;pointer-events:none}
 .hero{position:relative;overflow:hidden;padding:26px 22px 22px;color:#f2f8f3;background:linear-gradient(135deg,#123527 0%,#1d5038 45%,#2b6a4b 78%,#1f5d52 100%);border-radius:20px;box-shadow:0 18px 40px rgb(18 53 39 / 25%);scroll-margin-top:var(--nav-h,76px)}
 .hero::before{position:absolute;inset:0;background-image:linear-gradient(rgb(255 255 255 / 5%) 1px,transparent 1px),linear-gradient(90deg,rgb(255 255 255 / 5%) 1px,transparent 1px);background-size:26px 26px;content:"";pointer-events:none}
 .hero::after{position:absolute;top:-110px;right:4%;width:240px;height:240px;border:1px solid rgb(255 255 255 / 10%);border-radius:50%;box-shadow:0 0 0 28px rgb(255 255 255 / 4%),0 0 0 56px rgb(255 255 255 / 3%);content:"";pointer-events:none}
@@ -212,6 +215,13 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
 </style>
 </head>
 <body>
+<?php if (($imageUrl ?? '') !== ''): ?>
+<?php /* WeChat's link-preview crawler picks the FIRST image in <body> that is
+         at least 300x300. It must be a real, laid-out <img> (not display:none,
+         which crawlers skip), so it is parked off-screen at full card size.
+         It carries only the project name and counts. */ ?>
+<img class="wechat-card-image" src="<?= $escape($imageUrl) ?>" width="600" height="600" alt="<?= $escape($cardTitle) ?>">
+<?php endif; ?>
 <div class="wrap">
     <header class="hero" id="top">
         <p class="eyebrow">施工班组 · 公开联系页</p>
@@ -436,5 +446,39 @@ body{background:radial-gradient(ellipse at 50% -18%,#2b3830 0,var(--page) 54rem)
     search.addEventListener('input', apply);
 })();
 </script>
+<?php if (is_array($wechatConfig ?? null)): ?>
+<?php /* In-WeChat custom share card. Only emitted when a verified service
+         account is configured; wx.config/wx.ready failures are swallowed so the
+         contact page and dialling never depend on WeChat being reachable. */ ?>
+<script src="https://res.wx.qq.com/open/js/jweixin-1.6.0.js"></script>
+<script>
+(function () {
+    if (typeof wx === 'undefined') return;
+    var card = <?= json_encode([
+        'title' => $cardTitle,
+        'desc' => $cardDescription,
+        'link' => $shareUrl,
+        'imgUrl' => $imageUrl,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    try {
+        wx.config({
+            debug: false,
+            appId: <?= json_encode($wechatConfig['appId']) ?>,
+            timestamp: <?= (int) $wechatConfig['timestamp'] ?>,
+            nonceStr: <?= json_encode($wechatConfig['nonceStr']) ?>,
+            signature: <?= json_encode($wechatConfig['signature']) ?>,
+            jsApiList: ['updateAppMessageShareData', 'updateTimelineShareData']
+        });
+        wx.ready(function () {
+            try {
+                wx.updateAppMessageShareData({ title: card.title, desc: card.desc, link: card.link, imgUrl: card.imgUrl, success: function () {} });
+                wx.updateTimelineShareData({ title: card.title, link: card.link, imgUrl: card.imgUrl, success: function () {} });
+            } catch (e) { /* share stays default; page unaffected */ }
+        });
+        wx.error(function () { /* invalid signature etc: keep default share */ });
+    } catch (e) { /* SDK unavailable: page unaffected */ }
+})();
+</script>
+<?php endif; ?>
 </body>
 </html>

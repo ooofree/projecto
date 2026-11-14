@@ -1,6 +1,24 @@
 <?php
 $platformName = (string) ($platformName ?? 'Project O');
 $brandMark = (string) ($brandMark ?? mb_strtoupper(mb_substr($platformName, 0, 1, 'UTF-8'), 'UTF-8'));
+
+/**
+ * Cache-busting for the shared assets. Chat in-app browsers (WeChat especially)
+ * keep aggressive caches and ignore revalidation, so a stale app.js can run
+ * against fresh markup and misbehave. A content fingerprint in the URL makes
+ * every asset change a new URL, which no cache can serve stale.
+ */
+$assetVersion = static function (string $relative): string {
+    static $cache = [];
+    if (!isset($cache[$relative])) {
+        $path = dirname(__DIR__) . '/public/' . $relative;
+        $mtime = @filemtime($path);
+        $size = @filesize($path);
+        $cache[$relative] = substr(sha1(($mtime === false ? 0 : $mtime) . ':' . ($size === false ? 0 : $size)), 0, 10);
+    }
+
+    return $relative . '?v=' . $cache[$relative];
+};
 ?>
 <!doctype html>
 <html lang="zh-CN">
@@ -8,7 +26,7 @@ $brandMark = (string) ($brandMark ?? mb_strtoupper(mb_substr($platformName, 0, 1
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= $escape($title ?? $platformName) ?> · <?= $escape($platformName) ?></title>
-    <link rel="stylesheet" href="assets/app.css">
+    <link rel="stylesheet" href="<?= $escape($assetVersion('assets/app.css')) ?>">
 </head>
 <body class="theme-<?= $escape($theme) ?>">
 <header class="topbar">
@@ -36,6 +54,6 @@ $brandMark = (string) ($brandMark ?? mb_strtoupper(mb_substr($platformName, 0, 1
     <?php endif; ?>
     <?= $content ?>
 </main>
-<script src="assets/app.js" defer></script>
+<script src="<?= $escape($assetVersion('assets/app.js')) ?>" defer></script>
 </body>
 </html>

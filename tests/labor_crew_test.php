@@ -899,6 +899,25 @@ crewCheck(str_contains($cardDialogHtml, 'data-share-mode="link"'), 'Dialog must 
 crewCheck(preg_match('/data-share-title="([^"]+)"/', $cardDialogHtml, $cardTitleAttr) === 1
     && str_contains(html_entity_decode($cardTitleAttr[1], ENT_QUOTES), 'Project One'), 'Copy payload title must name the project.');
 crewCheck(str_contains($cardDialogHtml, 'share-card-preview'), 'Dialog must preview the chat card.');
+
+// Without WeChat credentials the dialog must be honest (no promised card) and
+// the static page must not load any external SDK.
+crewCheck(!ProjectO\Modules\LaborCrew\WechatShare::isConfigured(), 'WeChat sharing must stay off until credentials are configured.');
+crewCheck(str_contains($cardDialogHtml, 'share-wechat-note') && str_contains($cardDialogHtml, '认证服务号'), 'Dialog must explain WeChat card requirements honestly.');
+crewCheck(!str_contains($cardDialogHtml, '会显示上方卡片样式'), 'Dialog must not promise a card WeChat will downgrade.');
+crewCheck(!str_contains(crewPublicHtml($staticToken), 'res.wx.qq.com'), 'No WeChat SDK may load without credentials.');
+crewCheck(!str_contains(crewPublicHtml($staticToken), 'wx.config'), 'No wx.config may be emitted without credentials.');
+
+// WeChat's crawler needs a real, laid-out >=300px image inside <body>.
+crewCheck(preg_match('/<img class="wechat-card-image"[^>]*width="600"[^>]*height="600"/', crewPublicHtml($staticToken)) === 1, 'The page must expose a 600x600 card image inside the body for chat crawlers.');
+crewCheck(str_contains(crewPublicHtml($staticToken), '.wechat-card-image{position:absolute;left:-9999px'), 'The crawler image must be parked off-screen, not display:none.');
+
+// Asset cache-busting: a stale app.js caused the literal "undefined" copy bug.
+$layoutHtml = (string) file_get_contents(dirname(__DIR__) . '/views/layout.php');
+crewCheck(str_contains($layoutHtml, "\$assetVersion('assets/app.js')") && str_contains($layoutHtml, "\$assetVersion('assets/app.css')"), 'Layout must fingerprint both shared assets.');
+$appJs = (string) file_get_contents(dirname(__DIR__) . '/public/assets/app.js');
+crewCheck(str_contains($appJs, "getAttribute('href')") && str_contains($appJs, 'revealManualCopy'), 'Copy must resolve the URL from multiple sources and offer a manual fallback.');
+crewCheck(str_contains($appJs, '/\\bundefined\\b|\\bnull\\b/'), 'Copy must refuse to write a stringified undefined/null payload.');
 $_SESSION = [];
 
 // A template upgrade is applied by an explicit publish step (installer/CLI),

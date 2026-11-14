@@ -175,6 +175,11 @@ final class LaborCrewPlugin implements PluginInterface
             'title' => $meta['title'],
             'description' => $meta['description'],
             'imageUrl' => CrewShareImage::isSupported() ? CrewShareService::imageUrl($token) : null,
+            // Whether in-WeChat forwarding can render a real card. Requires a
+            // verified service account + JS safe domain, so it is reported
+            // honestly instead of promising a card that WeChat will downgrade.
+            'wechatCard' => WechatShare::isConfigured(),
+            'wechatReason' => WechatShare::disabledReason(),
         ];
     }
 

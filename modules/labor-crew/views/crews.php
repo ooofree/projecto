@@ -76,7 +76,16 @@ require __DIR__ . '/_nav.php';
                 </form>
             </div>
             <p class="share-feedback" data-share-feedback role="status" aria-live="polite" hidden></p>
-            <p class="muted share-hint">推荐用「复制标题+链接」：消息里会带项目名和班组数量，不再是裸链接。在微信内打开本页后用右上角「···」转发，会显示上方卡片样式（标题、摘要、缩略图）。停用后如需再次分享，将生成新链接，旧链接不会恢复。</p>
+            <div class="share-wechat-note">
+                <strong>发到微信怎样才带标题？</strong>
+                <?php if (!empty($share['wechatCard'])): ?>
+                    <p>已接入微信 JS-SDK：在微信内打开公开页，用右上角「···→发送给朋友」，会显示上方卡片（标题、摘要、缩略图）。</p>
+                <?php else: ?>
+                    <p><b>最稳妥：</b>用「复制标题+链接」，粘贴到聊天框发送——消息本身就带项目名和班组数量，不依赖微信生成卡片。</p>
+                    <p>微信对<b>直接粘贴</b>的链接只显示网址，这是微信的规则，不是页面缺少标题。要让「···→发送给朋友」显示卡片，微信官方要求：认证服务号 + 已备案的 JS 接口安全域名（<b>不支持 IP 和端口</b>，所以 <code>localhost</code>／局域网地址无法实现）+ JS-SDK 签名。配好后本页会自动启用。</p>
+                <?php endif; ?>
+            </div>
+            <p class="muted share-hint">停用后如需再次分享，将生成新链接，旧链接不会恢复。</p>
         <?php else: ?>
             <p class="muted">生成公开链接后，外部人员（监理、分包、业主等）无需账号即可查看本项目在用班组的联系人，点击电话可直接拨号。公开内容与导出 Excel 同口径：工种、班组名称、负责人姓名、电话、备注；身份证号、微信号与紧急联系人不会公开。</p>
             <form method="post" class="dialog-actions">
