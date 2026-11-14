@@ -16,6 +16,7 @@ final class PluginRegistry
     private array $migrations = [];
     private array $manifests = [];
     private array $enabledStates = [];
+    private PluginEventBus $eventBus;
 
     public function __construct(
         private readonly PDO $db,
@@ -23,6 +24,7 @@ final class PluginRegistry
         private readonly ?ObjectStorageInterface $objectStorage = null
     )
     {
+        $this->eventBus = new PluginEventBus();
         $this->permissionNames['manage_platform'] = true;
         $manifests = [];
         $states = $db->query('SELECT plugin_id, is_enabled FROM Plugin_States')->fetchAll();
@@ -73,9 +75,28 @@ final class PluginRegistry
                 throw new RuntimeException("Plugin class {$class} could not be loaded.");
             }
 
-            $plugin = new $class(new PluginContext($db, $manifest['directory'], $this->objectStorage));
+            $plugin = new $class(new PluginContext($db, $manifest['directory'], $this->objectStorage, $this->eventBus));
             if (!$plugin instanceof PluginInterface) {
                 throw new RuntimeException("Plugin {$id} must implement PluginInterface.");
+            }
+
+            // "emits" is documentation of the events a plugin announces; the
+            // core validates the shape so manifests stay machine-checkable.
+            foreach ($manifest['emits'] ?? [] as $event) {
+                if (!is_string($event) || preg_match('/^[a-z0-9_.]+$/', $event) !== 1) {
+                    throw new RuntimeException("Plugin {$id} declares an invalid emitted event.");
+                }
+            }
+
+            // Manifest-declared subscriptions keep cross-plugin wiring visible
+            // and auditable: event name => handler on this plugin.
+            foreach ($manifest['subscribes'] ?? [] as $event => $handler) {
+                if (!is_string($event) || $event === '' || !is_string($handler) || $handler === '') {
+                    throw new RuntimeException("Plugin {$id} declares an invalid event subscription.");
+                }
+                $this->eventBus->subscribe($event, static function (array $payload) use ($plugin, $handler): void {
+                    $plugin->dispatch($handler, $payload);
+                });
             }
 
             foreach ($manifest['routes'] ?? [] as $route => $handler) {
@@ -270,6 +291,22 @@ final class PluginRegistry
             'updated_by' => (int) ($_SESSION['user_id'] ?? 0),
         ]);
         $this->enabledStates[$pluginId] = $enabled;
+
+        // Let plugins withdraw or restore public artifacts. Listeners run after
+        // the state is committed; failures are logged, never fatal.
+        $emitted = [];
+        $this->eventBus->emit(
+            $enabled ? 'plugin.enabled' : 'plugin.disabled',
+            ['plugin_id' => $pluginId],
+            $emitted
+        );
+    }
+
+    /** Publish a core-level domain event to subscribed plugins. */
+    public function emit(string $event, array $payload = []): void
+    {
+        $emitted = [];
+        $this->eventBus->emit($event, $payload, $emitted);
     }
 
     private function isEnabled(string $pluginId): bool

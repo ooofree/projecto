@@ -1,7 +1,7 @@
 {
     "id": "labor.crew",
     "name": "施工班组",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "class": "ProjectO\\Modules\\LaborCrew\\LaborCrewPlugin",
     "enabled": true,
     "requires": [
@@ -26,6 +26,13 @@
         "GET labor-crew-share",
         "GET labor-crew-share-image"
     ],
+    "subscribes": {
+        "project.archived": "event.project_archived",
+        "project.deleted": "event.project_deleted",
+        "project.restored": "event.project_restored",
+        "plugin.disabled": "event.plugin_disabled",
+        "plugin.enabled": "event.plugin_enabled"
+    },
     "migrations": [
         "database/migrations"
     ],

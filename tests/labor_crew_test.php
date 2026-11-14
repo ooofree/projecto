@@ -78,18 +78,28 @@ function crewRenderView(PluginResponse $response): string
     return (string) ob_get_clean();
 }
 
-function crewPublicHtml(PluginResponse $response): string
+/**
+ * Read the published static page for a token. The public URL is answered by the
+ * web server, so tests assert against the file on disk, not a PHP response.
+ */
+function crewPublicHtml(string $token): string
 {
-    if ($response->type !== 'raw') {
-        throw new RuntimeException('Expected a raw static share response, got ' . $response->type . '.');
+    $path = crewShareFilePath($token);
+    if (!is_file($path)) {
+        throw new RuntimeException('Expected a published static share page for token ' . $token . '.');
     }
 
-    return (string) ($response->data['body'] ?? '');
+    return (string) file_get_contents($path);
 }
 
 function crewShareFilePath(string $token): string
 {
-    return dirname(__DIR__) . '/storage/labor-crew-shares/' . $token . '.html';
+    return dirname(__DIR__) . '/public/s/' . $token . '.html';
+}
+
+function crewShareImagePath(string $token): string
+{
+    return dirname(__DIR__) . '/public/s/' . $token . '.png';
 }
 
 $db = new PDO('sqlite::memory:', options: [
@@ -602,6 +612,7 @@ crewCheck($registryRoutes instanceof PluginResponse, 'Registry must resolve the 
 // export-equivalent columns only, revocation kills the link, re-enable rotates.
 // ---------------------------------------------------------------------------
 $shareService = new CrewShareService($db);
+$sharePages = new ProjectO\Modules\LaborCrew\CrewSharePage($db, $service, $shareService);
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 
 // The toolbar button sits next to the export button and only for share holders.
@@ -650,13 +661,17 @@ crewCheck(
 crewCheck(str_contains($activeShareHtml, 'data-share-feedback'), 'The dialog must expose a copy feedback region.');
 crewCheck(str_contains($activeShareHtml, '停用分享'), 'Active share must offer revocation.');
 
-// Public page: no session at all, token is the whole authorization.
+// Public page: the share owns a fixed static URL; the legacy route only redirects.
 $_SESSION = [];
 $publicResponse = $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
-crewCheck($publicResponse->type === 'raw', 'Public share must serve a pre-rendered static page without login.');
-$publicHtml = crewPublicHtml($publicResponse);
-crewCheck(is_file(crewShareFilePath($shareToken)), 'Enabling a share must write the static page file.');
-crewCheck(file_get_contents(crewShareFilePath($shareToken)) === $publicHtml, 'The served body must be exactly the static file content.');
+crewCheck($publicResponse->type === 'redirect', 'The legacy share route must redirect to the fixed static address.');
+crewCheck($publicResponse->location === CrewShareService::publicUrl($shareToken), 'The redirect target must be the permanent share URL.');
+crewCheck(preg_match('#/s/[0-9a-f]{32}\.html$#', CrewShareService::publicUrl($shareToken)) === 1, 'The share URL must be a fixed .html path.');
+crewCheck(is_file(crewShareFilePath($shareToken)), 'Enabling a share must publish the static page file.');
+$publicHtml = (string) file_get_contents(crewShareFilePath($shareToken));
+crewCheck(is_file(dirname(__DIR__) . '/public/s/.htaccess'), 'The publish directory must carry its own web-server rules.');
+$shareHtaccess = (string) file_get_contents(dirname(__DIR__) . '/public/s/.htaccess');
+crewCheck(str_contains($shareHtaccess, 'Content-Security-Policy') && str_contains($shareHtaccess, 'no-cache'), 'Static HTML must get CSP and revalidation headers from the web server.');
 crewCheck(!str_contains($publicHtml, '<link rel="stylesheet"') && !str_contains($publicHtml, 'src="assets'), 'The static page must be self-contained (no external CSS/JS).');
 crewCheck(str_contains($publicHtml, 'class="tile" href="tel:'), 'Each tile must be a whole-card tel: link.');
 crewCheck(str_contains($publicHtml, 'tile-num') && str_contains($publicHtml, 'tile-hint'), 'Tiles must carry the number plus the mobile dial hint.');
@@ -675,7 +690,9 @@ crewCheck(preg_match('/<meta property="og:title" content="([^"]*)"/', $publicHtm
 crewCheck(preg_match('/<meta property="og:description" content="([^"]*)"/', $publicHtml, $ogDesc) === 1
     && str_contains(html_entity_decode($ogDesc[1], ENT_QUOTES), '个在用班组'), 'og:description must summarise crew counts.');
 crewCheck(preg_match('/<meta property="og:image" content="([^"]+)"/', $publicHtml, $ogImage) === 1
-    && str_contains(html_entity_decode($ogImage[1], ENT_QUOTES), 'page=labor-crew-share-image&token=' . $shareToken), 'og:image must point at the token-gated thumbnail route.');
+    && html_entity_decode($ogImage[1], ENT_QUOTES) === CrewShareService::imageUrl($shareToken), 'og:image must point at the fixed published thumbnail address.');
+crewCheck(preg_match('/<meta property="og:url" content="([^"]+)"/', $publicHtml, $ogUrl) === 1
+    && html_entity_decode($ogUrl[1], ENT_QUOTES) === CrewShareService::publicUrl($shareToken), 'og:url must be the fixed share address.');
 crewCheck(!str_contains((string) ($ogDesc[1] ?? ''), '13800138001'), 'Card summary must not contain phone numbers.');
 crewCheck(str_contains($publicHtml, 'name="description"') && str_contains($publicHtml, 'itemprop="name"'), 'Plain description/itemprop metadata must be present for other crawlers.');
 crewCheck($registry->isPublicRoute('GET', 'labor-crew-share-image'), 'The thumbnail route must be public so chat crawlers can fetch it.');
@@ -700,12 +717,12 @@ $shareArchiveId = $service->saveCrew(1, [
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 $plugin->dispatch('crew.archive', ['crew_id' => (string) $shareArchiveId]);
 $_SESSION = [];
-$publicAfterArchive = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
+$publicAfterArchive = crewPublicHtml($shareToken);
 crewCheck(!str_contains($publicAfterArchive, '分享归档班组'), 'Archived crews must not appear on the public page.');
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 $plugin->dispatch('crew.restore', ['crew_id' => (string) $shareArchiveId]);
 $_SESSION = [];
-$publicAfterRestore = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $shareToken]));
+$publicAfterRestore = crewPublicHtml($shareToken);
 crewCheck(str_contains($publicAfterRestore, '分享归档班组'), 'Restored crews must reappear on the public page.');
 $db->exec('DELETE FROM Labor_Crews WHERE crew_id = ' . $shareArchiveId);
 
@@ -728,7 +745,7 @@ $plugin->dispatch('crew.share', []);
 $projectTwoToken = (string) $shareService->activeShare(2)['token'];
 crewCheck($projectTwoToken !== $shareToken, 'Each project must get its own token.');
 $_SESSION = [];
-$projectTwoPublic = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $projectTwoToken]));
+$projectTwoPublic = crewPublicHtml($projectTwoToken);
 crewCheck(str_contains($projectTwoPublic, 'Project Two'), 'Project 2 token must open project 2.');
 crewCheck(!str_contains($projectTwoPublic, '13800138001'), 'Project 2 public page must not leak project 1 phones.');
 
@@ -755,16 +772,22 @@ $_SESSION = [];
 crewExpectStatus(static function () use ($plugin, $shareToken): void {
     $plugin->dispatch('crew.share_public', ['token' => $shareToken]);
 }, 404, 'The old token must stay dead after rotation.');
-crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
+crewPublicHtml($rotatedToken);
 
-// Archiving the project stops its public page, like the session context does.
-$db->exec("INSERT INTO project_foundation_archive_records (entity_type, entity_id, project_id, archived_by) VALUES ('project', 1, 1, 1)");
+// Archiving the project must withdraw the published file through the real
+// cross-plugin event (project.foundation emits, labor.crew subscribes) — not
+// through a read-time check, because reads never run PHP anymore.
+$projectRegistry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
+$_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
+$projectRegistry->dispatch('POST', 'project.delete', ['project_id' => '1']);
+crewCheck(!is_file(crewShareFilePath($rotatedToken)), 'Archiving the project must delete the published static file via the event.');
+crewCheck(!is_file(crewShareImagePath($rotatedToken)), 'Archiving the project must delete the published thumbnail too.');
 crewExpectStatus(static function () use ($plugin, $rotatedToken): void {
     $plugin->dispatch('crew.share_public', ['token' => $rotatedToken]);
-}, 404, 'An archived project must not serve its public page.');
-crewCheck(!is_file(crewShareFilePath($rotatedToken)), 'Archiving the project must remove the stale static file.');
-$db->exec("DELETE FROM project_foundation_archive_records WHERE entity_type = 'project' AND entity_id = 1");
-crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $rotatedToken]));
+}, 404, 'An archived project must not resolve its legacy share route.');
+$projectRegistry->dispatch('POST', 'project.restore', ['project_id' => '1']);
+crewCheck(is_file(crewShareFilePath($rotatedToken)), 'Restoring the project must republish the static file via the event.');
+crewCheck(str_contains(crewPublicHtml($rotatedToken), '钢筋一班'), 'The republished page must carry current crews.');
 
 // Sharing needs a selected project, and the registry marks the route public.
 $_SESSION = ['user_id' => 1, 'username' => 'admin'];
@@ -777,12 +800,15 @@ crewCheck(!$registry->isPublicRoute('POST', 'labor.crew.share'), 'Share manageme
 $registryPublic = $registry->dispatch('GET', 'labor-crew-share', ['token' => $rotatedToken]);
 crewCheck($registryPublic instanceof PluginResponse, 'Registry must resolve the public share route.');
 
-// Disabled plugin: the public route disappears with it.
+// Disabled plugin: routes disappear AND the published files are withdrawn,
+// because static files would otherwise stay reachable without PHP.
 $registry->setEnabled('labor.crew', false);
 $disabledRegistry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
 crewCheck(!$disabledRegistry->isPublicRoute('GET', 'labor-crew-share'), 'A disabled plugin must expose no public route.');
 crewCheck($disabledRegistry->dispatch('GET', 'labor-crew-share', ['token' => $rotatedToken]) === null, 'A disabled plugin must not serve the public page.');
+crewCheck(!is_file(crewShareFilePath($rotatedToken)), 'Disabling the plugin must withdraw published static files.');
 $registry->setEnabled('labor.crew', true);
+crewCheck(is_file(crewShareFilePath($rotatedToken)), 'Re-enabling the plugin must republish active shares.');
 
 // ---------------------------------------------------------------------------
 // Static page lifecycle: auto-update on every mutation, 304 revalidation,
@@ -808,15 +834,16 @@ crewCheck($staticAfter !== $staticBefore, 'Saving a crew must rewrite the static
 crewCheck(str_contains($staticAfter, '13600002222') && !str_contains($staticAfter, '13600001111'), 'The static file must carry the updated phone, not the old one.');
 crewCheck(str_contains($staticAfter, '同步后备注'), 'The static file must carry the updated notes.');
 
-// Conditional request: unchanged page answers 304 with no body.
+// Reading must never rewrite the file: the URL is static, only data changes
+// publish. Touch the mtime backwards and confirm a legacy visit leaves it alone.
+$mtimeBefore = (int) filemtime($staticPath);
+touch($staticPath, $mtimeBefore - 500);
+$stampBefore = (int) filemtime($staticPath);
 $_SESSION = [];
-$firstServe = $plugin->dispatch('crew.share_public', ['token' => $staticToken]);
-$etag = (string) ($firstServe->data['headers']['ETag'] ?? '');
-crewCheck($etag !== '', 'Static responses must carry an ETag.');
-$_SERVER['HTTP_IF_NONE_MATCH'] = $etag;
-$notModified = $plugin->dispatch('crew.share_public', ['token' => $staticToken]);
-crewCheck($notModified->type === 'not_modified', 'Matching If-None-Match must return 304.');
-unset($_SERVER['HTTP_IF_NONE_MATCH']);
+$legacyVisit = $plugin->dispatch('crew.share_public', ['token' => $staticToken]);
+crewCheck($legacyVisit->type === 'redirect', 'A legacy visit must only redirect, never render.');
+crewCheck((int) filemtime($staticPath) === $stampBefore, 'Serving a share must not regenerate or touch the static file.');
+crewCheck((string) file_get_contents($staticPath) === $staticAfter, 'Serving a share must not alter the published bytes.');
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 
 // Archiving a crew removes it from the static file; restoring brings it back.
@@ -840,24 +867,25 @@ crewCheck(is_file(crewShareFilePath($projectTwoToken)), 'Project 2 share keeps i
 $db->exec("DELETE FROM Labor_Crews WHERE crew_name = '工种改名班组'");
 $service->deleteType($staticTypeId);
 
-// A share without a file (created before static pages) regenerates lazily.
+// Recovery: a missing file is republished by the legacy route, then redirected.
 @unlink($staticPath);
 $_SESSION = [];
-$lazyHtml = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $staticToken]));
-crewCheck(is_file($staticPath), 'A missing static file must be regenerated on first visit.');
-crewCheck(str_contains($lazyHtml, '钢筋一班'), 'Lazily regenerated page must contain current crews.');
+$recovery = $plugin->dispatch('crew.share_public', ['token' => $staticToken]);
+crewCheck($recovery->type === 'redirect', 'The legacy route must redirect after republishing a missing file.');
+crewCheck(is_file($staticPath), 'A missing static file must be republished by the legacy route.');
+crewCheck(str_contains(crewPublicHtml($staticToken), '钢筋一班'), 'The republished page must contain current crews.');
 
-// Thumbnail route: token-gated PNG, and it disappears with the share.
+// Thumbnail is a published file at a fixed address; legacy route redirects.
 if (ProjectO\Modules\LaborCrew\CrewShareImage::isSupported()) {
     $imageResponse = $plugin->dispatch('crew.share_image', ['token' => $staticToken]);
-    crewCheck($imageResponse->type === 'raw', 'Thumbnail must be served as a raw image response.');
-    crewCheck(($imageResponse->data['content_type'] ?? '') === 'image/png', 'Thumbnail must be a PNG.');
-    crewCheck(str_contains((string) ($imageResponse->data['headers']['Cache-Control'] ?? ''), 'public'), 'Thumbnail must be publicly cacheable so chat crawlers can reuse it.');
-    $png = (string) ($imageResponse->data['body'] ?? '');
+    crewCheck($imageResponse->type === 'redirect', 'The legacy thumbnail route must redirect to the published PNG.');
+    crewCheck($imageResponse->location === CrewShareService::imageUrl($staticToken), 'Thumbnail redirect must target the fixed PNG address.');
+    crewCheck(preg_match('#/s/[0-9a-f]{32}\.png$#', CrewShareService::imageUrl($staticToken)) === 1, 'The thumbnail URL must be a fixed .png path.');
+    crewCheck(is_file(crewShareImagePath($staticToken)), 'Thumbnail must be published next to the static page.');
+    $png = (string) file_get_contents(crewShareImagePath($staticToken));
     crewCheck(str_starts_with($png, "\x89PNG\r\n\x1a\n"), 'Thumbnail bytes must be a real PNG.');
     $dimensions = @getimagesizefromstring($png);
     crewCheck(is_array($dimensions) && $dimensions[0] === 600 && $dimensions[1] === 600, 'Thumbnail must be a 600x600 square card.');
-    crewCheck(is_file(dirname(__DIR__) . '/storage/labor-crew-shares/' . $staticToken . '.png'), 'Thumbnail must be cached next to the static page.');
     crewExpectStatus(static function () use ($plugin): void {
         $plugin->dispatch('crew.share_image', ['token' => str_repeat('0', 32)]);
     }, 404, 'Unknown token must not yield a thumbnail.');
@@ -873,13 +901,16 @@ crewCheck(preg_match('/data-share-title="([^"]+)"/', $cardDialogHtml, $cardTitle
 crewCheck(str_contains($cardDialogHtml, 'share-card-preview'), 'Dialog must preview the chat card.');
 $_SESSION = [];
 
-// A layout upgrade must invalidate files rendered by the previous template, so
-// existing links pick up new markup without any contact-data change.
+// A template upgrade is applied by an explicit publish step (installer/CLI),
+// never by serving: existing fixed URLs get new markup with no data change.
 $staleHtml = preg_replace('/data-layout="[0-9a-f]{12}"/', 'data-layout="000000000000"', (string) file_get_contents($staticPath));
 file_put_contents($staticPath, $staleHtml);
-$upgradedHtml = crewPublicHtml($plugin->dispatch('crew.share_public', ['token' => $staticToken]));
-crewCheck(!str_contains($upgradedHtml, 'data-layout="000000000000"'), 'A page from an older template must be regenerated on the next request.');
-crewCheck((string) file_get_contents($staticPath) === $upgradedHtml, 'The regenerated file must be published to disk.');
+$_SESSION = [];
+$plugin->dispatch('crew.share_public', ['token' => $staticToken]);
+crewCheck(str_contains((string) file_get_contents($staticPath), 'data-layout="000000000000"'), 'Serving must not silently rewrite an older-layout file.');
+$published = $sharePages->publishAll();
+crewCheck($published >= 1, 'publishAll must report the pages it republished.');
+crewCheck(!str_contains(crewPublicHtml($staticToken), 'data-layout="000000000000"'), 'An explicit publish must apply the current template.');
 
 // Cleanup: revoke the remaining shares so no test artifacts stay on disk.
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];

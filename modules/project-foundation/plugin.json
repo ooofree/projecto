@@ -21,6 +21,11 @@
         "POST space.room.map": "space.room.map",
         "POST space.room.unmap": "space.room.unmap"
     },
+    "emits": [
+        "project.archived",
+        "project.deleted",
+        "project.restored"
+    ],
     "migrations": [
         "database/migrations"
     ],

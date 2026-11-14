@@ -146,6 +146,10 @@ try {
     }
     $db->commit();
 
+    // Republish public share pages so existing fixed URLs pick up the current
+    // template after an upgrade. Purely a write step: reads never regenerate.
+    publishStaticShares($db);
+
     $userCount = (int) $db->query('SELECT COUNT(*) FROM `Users`')->fetchColumn();
     if ($userCount > 0) {
         fwrite(STDOUT, "Schema and permissions are ready. Existing users were not changed.\n");
@@ -200,6 +204,36 @@ try {
     }
     fwrite(STDERR, 'Installation failed: ' . $exception->getMessage() . "\n");
     exit(1);
+}
+
+/**
+ * Publish the static share pages through the plugin's own publisher, so the
+ * installer never duplicates rendering rules. Failures are reported but do not
+ * abort an otherwise successful install.
+ */
+function publishStaticShares(PDO $db): void
+{
+    try {
+        $tableExists = $db->query(
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name = 'Labor_Crew_Shares'"
+        )->fetchColumn();
+        if ((int) $tableExists === 0) {
+            return;
+        }
+        $directory = new ProjectO\Modules\LaborCrew\CrewDirectoryService(
+            $db,
+            ProjectO\Security\FieldCipher::fromEnvironment()
+        );
+        $shares = new ProjectO\Modules\LaborCrew\CrewShareService($db);
+        $pages = new ProjectO\Modules\LaborCrew\CrewSharePage($db, $directory, $shares);
+        $count = $pages->publishAll();
+        if ($count > 0) {
+            fwrite(STDOUT, "Published {$count} static share page(s) to public/s.\n");
+        }
+    } catch (Throwable $exception) {
+        fwrite(STDERR, 'Warning: could not publish static share pages: ' . $exception->getMessage() . "\n");
+    }
 }
 
 function prompt(string $message): string

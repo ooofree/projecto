@@ -163,14 +163,15 @@ final class Application
     private function respond(PluginResponse $response): void
     {
         if ($response->type === 'redirect') {
+            $location = $response->location;
             if (
-                $response->location === null
-                || !str_starts_with($response->location, '?')
-                || preg_match('/[\r\n]/', $response->location)
+                $location === null
+                || preg_match('/[\r\n]/', $location) !== 0
+                || !$this->isSafeRedirect($location)
             ) {
                 throw new HttpException('插件返回了无效的跳转地址。', 500);
             }
-            $this->redirect($response->location);
+            $this->redirect($location);
         }
 
         if ($response->type === 'download') {
@@ -198,6 +199,53 @@ final class Application
         }
 
         $this->render($response->viewPath, $response->data, true);
+    }
+
+    /**
+     * Redirect targets must stay inside this application: an in-app query
+     * ("?page=…"), a path under the app's own base directory, or an absolute URL
+     * whose scheme/host/base all match the current request (the static share
+     * publisher needs absolute links for chat clients). Foreign hosts,
+     * protocol-relative "//evil" and backslashes are refused so a plugin can
+     * never turn a response into an open redirect.
+     */
+    private function isSafeRedirect(string $location): bool
+    {
+        if (str_starts_with($location, '?')) {
+            return true;
+        }
+        if (str_contains($location, '\\') || str_starts_with($location, '//')) {
+            return false;
+        }
+
+        $base = self::requestBasePath();
+        if (str_starts_with($location, '/')) {
+            return $base !== '' && ($location === $base || str_starts_with($location, $base . '/'));
+        }
+
+        $parts = parse_url($location);
+        if ($parts === false || !isset($parts['scheme'], $parts['host'], $parts['path'])) {
+            return false;
+        }
+        if (!in_array(strtolower($parts['scheme']), ['http', 'https'], true)) {
+            return false;
+        }
+        $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+        $authority = $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+        if ($host === '' || strcasecmp($authority, $host) !== 0) {
+            return false;
+        }
+
+        return $base !== '' && ($parts['path'] === $base || str_starts_with($parts['path'], $base . '/'));
+    }
+
+    /** The application's own base path, e.g. "/o/public" ("" when at root). */
+    private static function requestBasePath(): string
+    {
+        $script = (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php');
+        $base = str_replace('\\', '/', dirname($script));
+
+        return ($base === '/' || $base === '.' || $base === '') ? '' : rtrim($base, '/');
     }
 
     /** Stream a pre-rendered body (static share page) without layout wrapping. */

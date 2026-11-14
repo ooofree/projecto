@@ -9,26 +9,26 @@ use ProjectO\Plugin\PluginResponse;
 use ProjectO\Support;
 
 /**
- * Pre-rendered static public contact pages.
+ * Pre-rendered static public contact pages served at a fixed URL.
  *
- * The share page is generated as a standalone HTML file (inline CSS/JS, zero
- * external requests) whenever the underlying data changes, and stored OUTSIDE
- * the web root under storage/labor-crew-shares/<token>.html. A public request
- * only validates the token, then streams the file — no crew queries, no
- * rendering, no session. ETag/304 makes repeat visits nearly free.
+ * Each share owns one permanent address — <base>/s/<token>.html — published as
+ * a real file inside public/s/ together with its card thumbnail <token>.png.
+ * Apache serves those bytes directly: no PHP, no session, no database query and
+ * no rendering on read. public/s/.htaccess supplies the page's own CSP and
+ * revalidation headers, so the document behaves identically to the app-served
+ * version.
  *
- * Freshness contract:
- *  - every crew/type mutation inside this plugin regenerates the file;
- *  - enabling a share generates it, revoking deletes it;
- *  - cross-plugin events we cannot hook (project archived/deleted, plugin
- *    disabled) are caught by a single indexed validation query at serve time;
- *    a stale file is then removed and the link 404s. While the plugin is
- *    disabled no crew data can change, so re-enabling never serves stale rows.
- *  - a missing file for a still-valid share is regenerated lazily (this also
- *    upgrades shares created before static pages existed).
+ * Writes happen only when something actually changes:
+ *  - crew create/edit/archive/restore and craft-type edits rebuild the file;
+ *  - enabling a share publishes it, revoking deletes it;
+ *  - project archived/deleted and plugin disabled (core events) delete it,
+ *    project restored / plugin enabled republish it.
  *
- * If the storage directory is not writable the page still works: the render
- * fallback serves the same HTML from memory and the write failure is logged.
+ * The legacy ?page=labor-crew-share&token=… route stays alive as a redirect to
+ * the fixed address, so links already handed out keep working. It is also the
+ * recovery path: if the published file is missing while the share is valid
+ * (e.g. it was created before static publishing existed), it republishes and
+ * redirects. Normal reads never touch this code.
  */
 final class CrewSharePage
 {
@@ -46,8 +46,9 @@ final class CrewSharePage
     }
 
     /**
-     * Serve the public page for a token. Authorization = active share + project
-     * not archived (one indexed query); content = the pre-rendered file.
+     * Legacy entry point: redirect to the fixed static address. Only reached by
+     * old links (or when a published file went missing), never by normal reads
+     * of the static URL, which Apache answers without PHP.
      */
     public function serve(string $token, ?string $ifNoneMatch): PluginResponse
     {
@@ -57,55 +58,19 @@ final class CrewSharePage
 
         $project = $this->shares->projectForToken($token);
         if ($project === null) {
-            // Revoked, archived or unknown: drop any stale file so it can never
-            // be served again, even if a later check were bypassed.
+            // Revoked, archived or unknown: drop any stale artifact so it can
+            // never be served again.
             $this->removeFile($token);
             throw new HttpException('分享链接无效或已停用，请联系分享者获取新链接。', 404);
         }
 
-        $path = $this->pathForToken($token);
-        if ($this->needsRebuild($path)) {
+        if (!is_file($this->pathForToken($token))) {
+            // Recovery/upgrade path for shares published before static files
+            // existed, or after an accidental deletion.
             $this->writePage($token, $project);
         }
 
-        if (!is_file($path)) {
-            // Storage unwritable: serve the same HTML from memory so sharing
-            // keeps working (the write failure was logged in writePage()).
-            $html = $this->renderFallback($project, $token);
-            $etag = '"cs-mem-' . sha1($html) . '"';
-            $headers = ['ETag' => $etag, 'Cache-Control' => 'public, no-cache', 'Content-Security-Policy' => self::CSP];
-            if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
-                return PluginResponse::notModified($headers);
-            }
-
-            return PluginResponse::raw($html, 'text/html; charset=utf-8', $headers);
-        }
-
-        $mtime = (int) filemtime($path);
-        $size = (int) filesize($path);
-        $etag = '"cs-' . sha1($token . ':' . $mtime . ':' . $size . ':' . $this->layoutVersion()) . '"';
-        $headers = [
-            'ETag' => $etag,
-            'Last-Modified' => gmdate('D, d M Y H:i:s', $mtime) . ' GMT',
-            // Revalidate on every use so edits/revocations propagate at once;
-            // the ETag keeps that revalidation to a few hundred bytes.
-            'Cache-Control' => 'public, no-cache',
-            // MUST travel on 304 responses too: the browser applies the
-            // revalidation response's headers to the cached document, and the
-            // entry script's restrictive CSP would otherwise replace this one
-            // and block the page's inline CSS/JS on every repeat visit.
-            'Content-Security-Policy' => self::CSP,
-        ];
-        if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
-            return PluginResponse::notModified($headers);
-        }
-
-        $html = file_get_contents($path);
-        if ($html === false) {
-            throw new HttpException('页面暂时无法读取，请稍后重试。', 500);
-        }
-
-        return PluginResponse::raw($html, 'text/html; charset=utf-8', $headers);
+        return PluginResponse::redirect(CrewShareService::publicUrl($token));
     }
 
     /** Regenerate the static page after any data change in this project. */
@@ -156,16 +121,8 @@ final class CrewSharePage
         $html = $this->render($project, $rows, $token);
         $this->writeImage($token, $project, $rows);
         $path = $this->pathForToken($token);
-        $directory = dirname($path);
-        if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
-            error_log('labor.crew: unable to create static share directory ' . $directory);
-            return; // serve() falls back to the freshly written file check below
-        }
-        // Deny direct HTTP access in deployments where storage/ sits under the
-        // document root; the application reads the file from disk regardless.
-        $htaccess = $directory . '/.htaccess';
-        if (!is_file($htaccess)) {
-            @file_put_contents($htaccess, "Require all denied\n");
+        if (!$this->ensurePublishDirectory()) {
+            return;
         }
 
         // Atomic publish: readers never observe a half-written page.
@@ -173,7 +130,93 @@ final class CrewSharePage
         if (@file_put_contents($tmp, $html) === false || !@rename($tmp, $path)) {
             @unlink($tmp);
             error_log('labor.crew: unable to write static share page for project ' . (int) $project['project_id']);
+            return;
         }
+        // Apache and the CLI user must both be able to replace the file later.
+        $this->shareOwnership($path, false);
+    }
+
+    /**
+     * Create public/s and its .htaccess. The directory is world-readable by
+     * design (that is the point of a static page); the token in the filename is
+     * the secret.
+     *
+     * Publishing happens both from the web server (www-data) and from the CLI
+     * (the deploying user), so the directory is made group-writable and, when
+     * possible, assigned to the web server's group. Without that, whichever
+     * side created the directory would lock the other out of updating it.
+     */
+    private function ensurePublishDirectory(): bool
+    {
+        $directory = $this->publishDirectory();
+        if (!is_dir($directory) && !@mkdir($directory, 0775, true) && !is_dir($directory)) {
+            error_log('labor.crew: unable to create static share directory ' . $directory);
+            return false;
+        }
+        $this->shareOwnership($directory, true);
+
+        $htaccess = $directory . '/.htaccess';
+        $expected = $this->htaccessRules();
+        if (!is_file($htaccess) || @file_get_contents($htaccess) !== $expected) {
+            @file_put_contents($htaccess, $expected);
+            $this->shareOwnership($htaccess, false);
+        }
+
+        return true;
+    }
+
+    /**
+     * Make a published path writable by both the CLI user and the web server.
+     * chgrp only succeeds for a group the current user belongs to, so this is a
+     * best-effort improvement, never a hard requirement; the fallback is that
+     * the creating side keeps ownership and the other side reads only.
+     */
+    private function shareOwnership(string $path, bool $isDirectory): void
+    {
+        @chmod($path, $isDirectory ? 0775 : 0664);
+        foreach (['www-data', 'apache', 'http', 'nginx'] as $group) {
+            $info = function_exists('posix_getgrnam') ? @posix_getgrnam($group) : false;
+            if (is_array($info) && isset($info['gid'])) {
+                @chgrp($path, (int) $info['gid']);
+                break;
+            }
+        }
+        if ($isDirectory) {
+            // setgid so files created later inherit the shared group.
+            @chmod($path, 02775);
+        }
+    }
+
+    /**
+     * Static files carry their own security/cache policy so Apache can answer
+     * without PHP. HTML revalidates every time (edits must show immediately);
+     * the card image may be cached for a day.
+     */
+    private function htaccessRules(): string
+    {
+        return "# Generated by labor.crew — public share pages served directly by the web server.\n"
+            . "Options -Indexes\n"
+            . "<IfModule mod_headers.c>\n"
+            . "  <FilesMatch \"\\.html$\">\n"
+            . "    Header always set Content-Security-Policy \"" . self::CSP . "\"\n"
+            . "    Header always set X-Content-Type-Options \"nosniff\"\n"
+            . "    Header always set Referrer-Policy \"same-origin\"\n"
+            . "    Header always set Cache-Control \"public, no-cache\"\n"
+            . "  </FilesMatch>\n"
+            . "  <FilesMatch \"\\.png$\">\n"
+            . "    Header always set X-Content-Type-Options \"nosniff\"\n"
+            . "    Header always set Cache-Control \"public, max-age=86400\"\n"
+            . "  </FilesMatch>\n"
+            . "</IfModule>\n"
+            . "# Only the published artifacts may be requested.\n"
+            . "<FilesMatch \"^(?!.*\\.(html|png)$)\">\n"
+            . "  Require all denied\n"
+            . "</FilesMatch>\n";
+    }
+
+    private function publishDirectory(): string
+    {
+        return dirname(__DIR__, 3) . '/public/s';
     }
 
     /**
@@ -186,8 +229,8 @@ final class CrewSharePage
     }
 
     /**
-     * Serve the share-card thumbnail. Same token gate as the page; the payload
-     * is a generated picture with counts only, never contact rows.
+     * Legacy thumbnail entry: redirect to the published PNG. Normal card fetches
+     * hit the static file directly and never run PHP.
      */
     public function serveImage(string $token, ?string $ifNoneMatch): PluginResponse
     {
@@ -200,34 +243,15 @@ final class CrewSharePage
             throw new HttpException('分享链接无效或已停用。', 404);
         }
 
-        $path = $this->imagePathForToken($token);
-        if (!is_file($path)) {
+        if (!is_file($this->imagePathForToken($token))) {
             $this->writeImage($token, $project, $this->directory->exportRows((int) $project['project_id']));
         }
-        if (!is_file($path)) {
+        if (!is_file($this->imagePathForToken($token))) {
             // No GD/font on this host: there is simply no thumbnail to serve.
             throw new HttpException('分享缩略图不可用。', 404);
         }
 
-        $bytes = file_get_contents($path);
-        if ($bytes === false) {
-            throw new HttpException('分享缩略图暂时无法读取。', 500);
-        }
-        $etag = '"csimg-' . sha1($bytes) . '"';
-        $headers = [
-            'ETag' => $etag,
-            // Chat crawlers may keep the card art; the token is the secret and
-            // the picture carries no personal data.
-            'Cache-Control' => 'public, max-age=86400',
-            'X-Content-Type-Options' => 'nosniff',
-        ];
-        if ($ifNoneMatch !== null && trim($ifNoneMatch) === $etag) {
-            return PluginResponse::notModified($headers);
-        }
-
-        // raw() keeps these exact headers; inline() would override them with
-        // the private-image policy used for sample photos.
-        return PluginResponse::raw($bytes, 'image/png', $headers);
+        return PluginResponse::redirect(CrewShareService::imageUrl($token));
     }
 
     /** Title/description used by chat link cards and the copy-with-title action. */
@@ -265,28 +289,29 @@ final class CrewSharePage
         if ($bytes === null) {
             return;
         }
-        $path = $this->imagePathForToken($token);
-        $directory = dirname($path);
-        if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
+        if (!$this->ensurePublishDirectory()) {
             return;
         }
+        $path = $this->imagePathForToken($token);
         $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
         if (@file_put_contents($tmp, $bytes) === false || !@rename($tmp, $path)) {
             @unlink($tmp);
             error_log('labor.crew: unable to write share card image for project ' . (int) $project['project_id']);
+            return;
         }
+        $this->shareOwnership($path, false);
     }
 
     private function pathForToken(string $token): string
     {
         // Token format is validated before this is called: 32 hex chars only,
         // so the path can never escape the share directory.
-        return dirname(__DIR__, 3) . '/storage/labor-crew-shares/' . $token . '.html';
+        return $this->publishDirectory() . '/' . $token . '.html';
     }
 
     private function imagePathForToken(string $token): string
     {
-        return dirname(__DIR__, 3) . '/storage/labor-crew-shares/' . $token . '.png';
+        return $this->publishDirectory() . '/' . $token . '.png';
     }
 
     private function removeFile(string $token): void
@@ -324,6 +349,9 @@ final class CrewSharePage
         $shareUrl = $token !== '' ? CrewShareService::publicUrl($token) : '';
         $imageUrl = $token !== '' && CrewShareImage::isSupported() ? CrewShareService::imageUrl($token) : '';
         $siteName = $this->platformName();
+        // frame-ancestors is ignored in <meta>, so the document-level copy omits
+        // it; the .htaccess header keeps it for servers with mod_headers.
+        $contentSecurityPolicy = str_replace("; frame-ancestors 'none'", '', self::CSP);
         ob_start();
         require dirname(__DIR__) . '/views/share.php';
 
@@ -354,19 +382,36 @@ final class CrewSharePage
         return substr(sha1(($mtime === false ? 0 : $mtime) . ':' . ($size === false ? 0 : $size)), 0, 12);
     }
 
-    /** Missing file, or a file rendered by an older template, must be rebuilt. */
-    private function needsRebuild(string $path): bool
+    /**
+     * Republish every active share. Used after a template upgrade or a deploy so
+     * already-shared fixed URLs pick up new markup without any data change.
+     * Returns the number of pages published.
+     */
+    public function publishAll(): int
     {
-        if (!is_file($path)) {
-            return true;
+        $count = 0;
+        foreach ($this->shares->allActiveShares() as $share) {
+            $token = (string) $share['token'];
+            $project = $this->shares->projectForToken($token);
+            if ($project === null) {
+                $this->removeFile($token);
+                continue;
+            }
+            $this->writePage($token, $project);
+            $count++;
         }
-        $handle = @fopen($path, 'rb');
-        if ($handle === false) {
-            return true;
-        }
-        $head = (string) fread($handle, 1024);
-        fclose($handle);
 
-        return !str_contains($head, 'data-layout="' . $this->layoutVersion() . '"');
+        return $count;
+    }
+
+    /** Drop every published artifact (plugin disabled). */
+    public function removeAll(): void
+    {
+        $statement = $this->db->query('SELECT token FROM Labor_Crew_Shares');
+        foreach ($statement->fetchAll(PDO::FETCH_COLUMN) as $token) {
+            if (is_string($token)) {
+                $this->removeFile($token);
+            }
+        }
     }
 }

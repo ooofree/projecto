@@ -15,9 +15,27 @@ final class PluginContext
     public function __construct(
         public readonly PDO $db,
         private readonly string $moduleDirectory,
-        private readonly ?ObjectStorageInterface $objectStorage = null
+        private readonly ?ObjectStorageInterface $objectStorage = null,
+        private readonly ?PluginEventBus $events = null
     ) {
         $this->projectContext = new ProjectContext($db);
+    }
+
+    /**
+     * Announce a domain event to whichever plugins subscribed to it. Silent
+     * no-op when the context was built without a bus (e.g. isolated tests).
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function emit(string $event, array $payload = []): void
+    {
+        $this->events?->emit($event, $payload);
+    }
+
+    /** Subscribe to another plugin's event; no-op without a bus. */
+    public function on(string $event, callable $listener): void
+    {
+        $this->events?->subscribe($event, $listener);
     }
 
     public function currentProject(): ?array

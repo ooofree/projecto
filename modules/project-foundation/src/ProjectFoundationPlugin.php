@@ -234,6 +234,12 @@ final class ProjectFoundationPlugin implements PluginInterface
         if ((int) ($_SESSION['active_project_id'] ?? 0) === $projectId) {
             unset($_SESSION['active_project_id']);
         }
+        // Announce after commit so subscribers (e.g. public share pages) can
+        // withdraw artifacts that must no longer be reachable.
+        $this->context->emit(
+            $result === 'deleted' ? 'project.deleted' : 'project.archived',
+            ['project_id' => $projectId]
+        );
         Support::flash($result === 'deleted' ? '无关联数据的项目已删除。' : '项目含有业务数据，已归档并保留记录。');
 
         return PluginResponse::redirect('?page=projects');
@@ -243,11 +249,13 @@ final class ProjectFoundationPlugin implements PluginInterface
     {
         Support::requirePermission($this->context->db, 'view_projects');
         Support::requirePermission($this->context->db, 'delete_projects');
-        $this->transaction(function () use ($input): void {
+        $projectId = $this->transaction(function () use ($input): int {
             $projectId = $this->requiredId($input, 'project_id', '项目');
             $this->projects->restore($projectId);
             Support::audit($this->context->db, 'project.restore', 'Restored project ' . $projectId . '.');
+            return $projectId;
         });
+        $this->context->emit('project.restored', ['project_id' => $projectId]);
         Support::flash('项目已恢复，请在项目列表中重新进入。');
 
         return PluginResponse::redirect('?page=projects&archived=1');

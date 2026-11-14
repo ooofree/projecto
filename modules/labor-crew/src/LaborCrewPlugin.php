@@ -51,8 +51,65 @@ final class LaborCrewPlugin implements PluginInterface
             'crew.share_image' => $this->publicShareImage($input),
             'type.save' => $this->saveType($input),
             'type.delete' => $this->deleteType($input),
+            // Event handlers (declared in plugin.json "subscribes"). They keep
+            // published static pages consistent with project/plugin lifecycle
+            // without any read-time database check.
+            'event.project_archived' => $this->onProjectWithdrawn($input),
+            'event.project_deleted' => $this->onProjectWithdrawn($input),
+            'event.project_restored' => $this->onProjectRestored($input),
+            'event.plugin_disabled' => $this->onPluginDisabled($input),
+            'event.plugin_enabled' => $this->onPluginEnabled($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
+    }
+
+    /**
+     * A project was archived or deleted: its public page must stop resolving
+     * immediately, so the published files are removed (the share row is kept).
+     */
+    private function onProjectWithdrawn(array $input): PluginResponse
+    {
+        $projectId = (int) ($input['project_id'] ?? 0);
+        if ($projectId > 0) {
+            $this->sharePages->removeForProject($projectId);
+        }
+
+        return PluginResponse::redirect('?page=labor-crews');
+    }
+
+    /** A project came back: republish its still-active share, if any. */
+    private function onProjectRestored(array $input): PluginResponse
+    {
+        $projectId = (int) ($input['project_id'] ?? 0);
+        if ($projectId > 0) {
+            $this->sharePages->refresh($projectId);
+        }
+
+        return PluginResponse::redirect('?page=labor-crews');
+    }
+
+    /**
+     * This plugin was disabled: withdraw every published page. The registry
+     * already refuses to route while disabled, but the static files live outside
+     * PHP's reach and must be removed explicitly.
+     */
+    private function onPluginDisabled(array $input): PluginResponse
+    {
+        if (($input['plugin_id'] ?? null) === 'labor.crew') {
+            $this->sharePages->removeAll();
+        }
+
+        return PluginResponse::redirect('?page=labor-crews');
+    }
+
+    /** Re-enabled: republish active shares (data could not change meanwhile). */
+    private function onPluginEnabled(array $input): PluginResponse
+    {
+        if (($input['plugin_id'] ?? null) === 'labor.crew') {
+            $this->sharePages->publishAll();
+        }
+
+        return PluginResponse::redirect('?page=labor-crews');
     }
 
     private function crewsIndex(array $input): PluginResponse

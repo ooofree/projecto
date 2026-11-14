@@ -2,8 +2,8 @@
 /**
  * Standalone static public contact page (continuous tile grid).
  *
- * Rendered by CrewSharePage into storage/labor-crew-shares/<token>.html and
- * streamed as-is to anonymous visitors. Everything is inline: no external
+ * Rendered by CrewSharePage into public/s/<token>.html and served as-is by the
+ * web server to anonymous visitors. Everything is inline: no external
  * CSS/JS/fonts/images, so the page is a single small request. Receives only
  * export-equivalent columns (type_name, crew_name, leader_name, leader_phone,
  * notes); identity numbers, WeChat ids and emergency contacts never appear.
@@ -54,6 +54,13 @@ $tileIndex = 0;
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#123527">
 <meta name="format-detection" content="telephone=no">
+<?php /* The file is served straight from disk, so the policy travels inside the
+         document as well: this works even where mod_headers is disabled.
+         Inline CSS/JS allowed, every network source denied. */ ?>
+<meta http-equiv="Content-Security-Policy" content="<?= $escape($contentSecurityPolicy ?? "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; form-action 'none'; base-uri 'none'") ?>">
+<meta name="referrer" content="same-origin">
+<?php /* Revalidate so a data change is visible on the next visit. */ ?>
+<meta http-equiv="Cache-Control" content="no-cache">
 <?php
 // Link-card metadata. WeChat/QQ and other chat clients build the preview card
 // from these when the link is shared or opened in their in-app browser.

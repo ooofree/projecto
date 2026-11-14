@@ -143,22 +143,29 @@ final class CrewShareService
     }
 
     /**
-     * Absolute URL of the public page, derived from the current request so the
-     * copied link works behind the same host/proxy the sharer is using.
+     * The share's permanent address: a real static file the web server answers
+     * directly. It never changes while the share is active, so a link handed out
+     * once keeps working and keeps pointing at the same URL after every edit.
      */
     public static function publicUrl(string $token): string
     {
-        return self::baseUrl() . '?page=labor-crew-share&token=' . $token;
+        return self::baseUrl() . 's/' . $token . '.html';
     }
 
     /**
-     * Absolute URL of the share card thumbnail. Chat clients (WeChat, QQ, …)
-     * fetch og:image themselves, so this route is public but token-gated and
-     * only ever returns a generated picture — never contact rows.
+     * Permanent address of the share card thumbnail, published next to the page.
+     * Chat clients (WeChat, QQ, …) fetch og:image themselves; the file contains
+     * only the project name and counts, never contact rows.
      */
     public static function imageUrl(string $token): string
     {
-        return self::baseUrl() . '?page=labor-crew-share-image&token=' . $token;
+        return self::baseUrl() . 's/' . $token . '.png';
+    }
+
+    /** Legacy query-string entry, kept only to redirect old links. */
+    public static function legacyUrl(string $token): string
+    {
+        return self::baseUrl() . '?page=labor-crew-share&token=' . $token;
     }
 
     private static function baseUrl(): string
