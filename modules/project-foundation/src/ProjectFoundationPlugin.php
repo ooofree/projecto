@@ -3,14 +3,16 @@ declare(strict_types=1);
 
 namespace ProjectO\Modules\ProjectFoundation;
 
+use ProjectO\Contracts\ProjectSpaceCatalog;
 use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Plugin\ServicePublisher;
 use ProjectO\Support;
 use Throwable;
 
-final class ProjectFoundationPlugin implements PluginInterface
+final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
 {
     private ProjectService $projects;
     private ProjectSpaceService $spaces;
@@ -19,6 +21,16 @@ final class ProjectFoundationPlugin implements PluginInterface
     {
         $this->projects = new ProjectService($context->db);
         $this->spaces = new ProjectSpaceService($context->db);
+    }
+
+    /** Publish the read-only project space catalogue declared in plugin.json. */
+    public function publishedService(string $contract): object
+    {
+        if ($contract !== ProjectSpaceCatalog::class) {
+            throw new HttpException('未找到对应服务契约。', 404);
+        }
+
+        return $this->spaces;
     }
 
     public function dispatch(string $handler, array $input): PluginResponse

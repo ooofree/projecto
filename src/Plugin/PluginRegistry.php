@@ -17,6 +17,7 @@ final class PluginRegistry
     private array $manifests = [];
     private array $enabledStates = [];
     private PluginEventBus $eventBus;
+    private PluginServiceRegistry $services;
 
     public function __construct(
         private readonly PDO $db,
@@ -25,6 +26,7 @@ final class PluginRegistry
     )
     {
         $this->eventBus = new PluginEventBus();
+        $this->services = new PluginServiceRegistry();
         $this->permissionNames['manage_platform'] = true;
         $manifests = [];
         $states = $db->query('SELECT plugin_id, is_enabled FROM Plugin_States')->fetchAll();
@@ -75,9 +77,46 @@ final class PluginRegistry
                 throw new RuntimeException("Plugin class {$class} could not be loaded.");
             }
 
-            $plugin = new $class(new PluginContext($db, $manifest['directory'], $this->objectStorage, $this->eventBus));
+            // Contract wiring is manifest-declared so cross-plugin access stays
+            // auditable: "uses" lists the core interfaces this plugin consumes.
+            $uses = $manifest['uses'] ?? [];
+            if (!is_array($uses)) {
+                throw new RuntimeException("Plugin {$id} declares an invalid contract list.");
+            }
+            foreach ($uses as $contract) {
+                if (!is_string($contract) || !interface_exists($contract)) {
+                    throw new RuntimeException("Plugin {$id} declares an unknown service contract.");
+                }
+                if (!str_starts_with($contract, 'ProjectO\\Contracts\\')) {
+                    throw new RuntimeException("Plugin {$id} may only use core-owned service contracts.");
+                }
+            }
+            $this->services->declare($id, $uses);
+
+            $plugin = new $class(new PluginContext(
+                $db,
+                $manifest['directory'],
+                $this->objectStorage,
+                $this->eventBus,
+                $this->services->forPlugin($id)
+            ));
             if (!$plugin instanceof PluginInterface) {
                 throw new RuntimeException("Plugin {$id} must implement PluginInterface.");
+            }
+
+            // "provides" publishes this plugin's implementation of a core
+            // contract; the core validates the shape, never the business logic.
+            foreach ($manifest['provides'] ?? [] as $contract) {
+                if (!is_string($contract) || !interface_exists($contract)) {
+                    throw new RuntimeException("Plugin {$id} declares an unknown provided contract.");
+                }
+                if (!str_starts_with($contract, 'ProjectO\\Contracts\\')) {
+                    throw new RuntimeException("Plugin {$id} may only provide core-owned service contracts.");
+                }
+                if (!$plugin instanceof ServicePublisher) {
+                    throw new RuntimeException("Plugin {$id} must implement ServicePublisher to provide contracts.");
+                }
+                $this->services->publish($id, $contract, $plugin->publishedService($contract));
             }
 
             // "emits" is documentation of the events a plugin announces; the

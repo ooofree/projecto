@@ -16,9 +16,44 @@ final class PluginContext
         public readonly PDO $db,
         private readonly string $moduleDirectory,
         private readonly ?ObjectStorageInterface $objectStorage = null,
-        private readonly ?PluginEventBus $events = null
+        private readonly ?PluginEventBus $events = null,
+        private readonly ?ServiceLocator $services = null
     ) {
         $this->projectContext = new ProjectContext($db);
+    }
+
+    /**
+     * Resolve another plugin's published service through a core-owned contract.
+     * The consuming plugin must declare the contract in its manifest "uses".
+     *
+     * @template T of object
+     * @param class-string<T> $contract
+     * @return T
+     */
+    public function service(string $contract): object
+    {
+        if ($this->services === null) {
+            throw new PluginContractException(
+                'Plugin services are unavailable in this context; contract ' . $contract . ' cannot be resolved.'
+            );
+        }
+
+        return $this->services->service($contract);
+    }
+
+    /** Whether a declared contract currently has an enabled provider. */
+    public function hasService(string $contract): bool
+    {
+        if ($this->services === null) {
+            return false;
+        }
+        try {
+            $this->services->service($contract);
+        } catch (PluginContractException) {
+            return false;
+        }
+
+        return true;
     }
 
     /**

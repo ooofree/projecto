@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace ProjectO\Modules\DocumentManagement;
 
+use ProjectO\Contracts\ProjectSpaceCatalog;
 use ProjectO\Export\ExportImage;
 use ProjectO\Export\XlsxWorkbook;
 use ProjectO\HttpException;
@@ -36,9 +37,25 @@ final class DocumentManagementPlugin implements PluginInterface
 
     public function __construct(private readonly PluginContext $context)
     {
-        $this->documents = new DocumentService($context->db);
+        $this->documents = new DocumentService($context->db, $this->spaceCatalog());
         $this->images = new DocumentImageService($context->db);
         $this->imageStorage = $context->objectStorage() ?? new R2ObjectStorage($context->db);
+    }
+
+    /**
+     * The project space catalogue published by project.foundation.
+     *
+     * Returns null when the contract has no enabled provider, so issue records
+     * stay maintainable and the page can explain that space selection is
+     * unavailable instead of failing.
+     */
+    private function spaceCatalog(): ?ProjectSpaceCatalog
+    {
+        if (!$this->context->hasService(ProjectSpaceCatalog::class)) {
+            return null;
+        }
+
+        return $this->context->service(ProjectSpaceCatalog::class);
     }
 
     public function dispatch(string $handler, array $input): PluginResponse
@@ -125,6 +142,8 @@ final class DocumentManagementPlugin implements PluginInterface
             'currentProject' => $project,
             'canManageSettings' => $this->canManageSettings(),
             'issues' => $issues,
+            'locationCatalog' => $this->documents->issueLocationCatalog((int) $project['project_id']),
+            'spaceSelectionReady' => $this->spaceCatalog() !== null,
             'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'canEdit' => $this->canEdit(),
             'canManage' => $canManage,
@@ -643,7 +662,7 @@ final class DocumentManagementPlugin implements PluginInterface
                 self::exportText($issue['description'] ?? null),
                 self::ISSUE_SEVERITY_LABELS[$issue['severity']] ?? (string) $issue['severity'],
                 self::ISSUE_STATUS_LABELS[$status] ?? $status,
-                self::exportText($issue['location'] ?? null),
+                self::exportText($issue['location_name'] ?? null),
                 $this->exportIssueImageCell($issue, $images, $rowNumber, $imageColumn),
                 self::exportText($issue['reported_by_name'] ?? null),
                 Support::formatDateTime($issue['reported_at'] ?? null),

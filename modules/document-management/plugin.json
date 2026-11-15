@@ -8,6 +8,9 @@
         "platform.core",
         "project.foundation"
     ],
+    "uses": [
+        "ProjectO\\Contracts\\ProjectSpaceCatalog"
+    ],
     "routes": {
         "GET documents": "documents",
         "GET issues": "issues",

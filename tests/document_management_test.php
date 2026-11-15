@@ -183,6 +183,54 @@ $db->exec(
      VALUES (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6)'
 );
 
+// Project space tables (project.foundation) so issue locations can be selected
+// from real spaces, including archive and cross-project rejection cases.
+$db->exec(
+    "CREATE TABLE Buildings (
+        building_id INTEGER PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES Projects (project_id),
+        building_number TEXT NOT NULL,
+        building_name TEXT NOT NULL
+    )"
+);
+$db->exec(
+    "CREATE TABLE Building_Floors (
+        floor_id INTEGER PRIMARY KEY,
+        building_id INTEGER NOT NULL REFERENCES Buildings (building_id),
+        floor_number TEXT NOT NULL,
+        floor_name TEXT,
+        usage_type TEXT,
+        UNIQUE (floor_id, building_id)
+    )"
+);
+$db->exec(
+    "CREATE TABLE Construction_Areas (
+        area_id INTEGER PRIMARY KEY,
+        building_id INTEGER NOT NULL REFERENCES Buildings (building_id),
+        area_name TEXT NOT NULL,
+        description TEXT,
+        UNIQUE (area_id, building_id)
+    )"
+);
+$db->exec(
+    "CREATE TABLE Rooms (
+        room_id INTEGER PRIMARY KEY,
+        building_id INTEGER NOT NULL,
+        floor_id INTEGER NOT NULL,
+        room_number TEXT NOT NULL,
+        room_type TEXT,
+        room_area REAL,
+        room_height REAL,
+        room_status TEXT,
+        FOREIGN KEY (floor_id, building_id) REFERENCES Building_Floors (floor_id, building_id),
+        UNIQUE (room_id, building_id, floor_id)
+    )"
+);
+$db->exec("INSERT INTO Buildings (building_id, project_id, building_number, building_name) VALUES (10, 1, 'A', 'Tower A'), (20, 2, 'B', 'Tower B')");
+$db->exec("INSERT INTO Building_Floors (floor_id, building_id, floor_number, floor_name) VALUES (11, 10, '01', 'Ground'), (12, 10, '02', NULL), (21, 20, '01', 'Ground')");
+$db->exec("INSERT INTO Construction_Areas (area_id, building_id, area_name) VALUES (13, 10, 'Lobby'), (23, 20, 'Other lobby')");
+$db->exec("INSERT INTO Rooms (room_id, building_id, floor_id, room_number) VALUES (14, 10, 11, '101'), (15, 10, 12, '201'), (24, 20, 21, '101')");
+
 $db->exec(
     "CREATE TABLE document_issues (
         issue_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +240,11 @@ $db->exec(
         severity TEXT NOT NULL DEFAULT 'medium',
         status TEXT NOT NULL DEFAULT 'open',
         location TEXT,
+        location_type TEXT,
+        location_building_id INTEGER REFERENCES Buildings (building_id),
+        location_floor_id INTEGER REFERENCES Building_Floors (floor_id),
+        location_area_id INTEGER REFERENCES Construction_Areas (area_id),
+        location_room_id INTEGER REFERENCES Rooms (room_id),
         reported_by INTEGER NOT NULL,
         reported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         resolution_result TEXT,
@@ -1469,5 +1522,418 @@ documentTestCheck(
     'Issue exports must embed the first readable image at the fixed height with a link to the image route.'
 );
 $db->exec('DELETE FROM document_issue_images');
+
+// --- Issue location selected from project spaces (2026-11-15) ---
+$spaceCatalog = new \ProjectO\Modules\ProjectFoundation\ProjectSpaceService($db);
+$locatedDocuments = new DocumentService($db, $spaceCatalog);
+
+$catalog = $locatedDocuments->issueLocationCatalog(1);
+$catalogValues = array_column($catalog['options'], 'value');
+documentTestCheck(
+    count($catalog['options']) === 6
+        && in_array('building:10', $catalogValues, true)
+        && in_array('floor:11', $catalogValues, true)
+        && in_array('area:13', $catalogValues, true)
+        && in_array('room:14', $catalogValues, true),
+    'The location catalogue should offer every active space type of the current project.'
+);
+documentTestCheck(
+    !in_array('building:20', $catalogValues, true) && !in_array('room:24', $catalogValues, true),
+    'Space options must never include another project.'
+);
+
+$spaceIssueId = $locatedDocuments->createIssue(1, 1, [
+    'description' => 'Crack reported in room 101',
+    'severity' => 'high',
+    'location' => 'room:14',
+]);
+$spaceIssueRow = $db->query(
+    'SELECT location, location_type, location_building_id, location_floor_id, location_area_id, location_room_id
+     FROM document_issues WHERE issue_id = ' . $spaceIssueId
+)->fetch();
+documentTestCheck(
+    $spaceIssueRow['location'] === null
+        && $spaceIssueRow['location_type'] === 'room'
+        && (int) $spaceIssueRow['location_building_id'] === 10
+        && (int) $spaceIssueRow['location_floor_id'] === 11
+        && $spaceIssueRow['location_area_id'] === null
+        && (int) $spaceIssueRow['location_room_id'] === 14,
+    'Selecting a room must store the structured reference together with its parent chain.'
+);
+$findListedIssue = static function (DocumentService $service, int $projectId, int $wantedId): ?array {
+    foreach ($service->listIssues($projectId) as $listed) {
+        if ((int) $listed['issue_id'] === $wantedId) {
+            return $listed;
+        }
+    }
+    return null;
+};
+$listedSpaceIssue = $findListedIssue($locatedDocuments, 1, $spaceIssueId);
+documentTestCheck(
+    $listedSpaceIssue !== null
+        && $listedSpaceIssue['location_name'] === 'Tower A Ground 101'
+        && $listedSpaceIssue['location_value'] === 'room:14',
+    'Issue lists must resolve the selected space into a readable location name.'
+);
+
+$areaIssueId = $locatedDocuments->createIssue(1, 1, [
+    'description' => 'Area level issue',
+    'location' => 'area:13',
+]);
+documentTestCheck(
+    ($findListedIssue($locatedDocuments, 1, $areaIssueId)['location_name'] ?? '') === 'Tower A Lobby',
+    'Area selections must resolve to building plus area name.'
+);
+$unnamedFloorIssueId = $locatedDocuments->createIssue(1, 1, [
+    'description' => 'Floor without a name',
+    'location' => 'floor:12',
+]);
+documentTestCheck(
+    ($findListedIssue($locatedDocuments, 1, $unnamedFloorIssueId)['location_name'] ?? '') === 'Tower A 02',
+    'A floor without a name must fall back to its floor number.'
+);
+
+// Permission, project and archive boundaries are enforced server-side.
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Cross project space',
+        'location' => 'room:24',
+    ]),
+    404,
+    'Registering an issue must reject spaces that belong to another project.'
+);
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->updateIssue(1, $spaceIssueId, [
+        'description' => 'Cross project space edit',
+        'severity' => 'high',
+        'location' => 'building:20',
+    ]),
+    404,
+    'Editing an issue must reject spaces that belong to another project.'
+);
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Unknown space',
+        'location' => 'room:9999',
+    ]),
+    404,
+    'Unknown space references must be rejected.'
+);
+foreach (['North facade', 'room:0', 'stair:14', 'room:14;DROP'] as $invalidLocation) {
+    documentTestExpectStatus(
+        static fn () => $locatedDocuments->createIssue(1, 1, [
+            'description' => 'Invalid location payload',
+            'location' => $invalidLocation,
+        ]),
+        422,
+        'Free text and malformed space references must be rejected once spaces are available.'
+    );
+}
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Array location payload',
+        'location' => ['room:14'],
+    ]),
+    422,
+    'A non-string location must be rejected.'
+);
+
+// An empty selection clears both the structured reference and the legacy text.
+$locatedDocuments->updateIssue(1, $spaceIssueId, [
+    'description' => 'Crack reported in room 101',
+    'severity' => 'high',
+    'location' => '',
+]);
+$clearedRow = $db->query(
+    'SELECT location, location_type, location_building_id, location_floor_id, location_area_id, location_room_id
+     FROM document_issues WHERE issue_id = ' . $spaceIssueId
+)->fetch();
+documentTestCheck(
+    $clearedRow['location'] === null
+        && $clearedRow['location_type'] === null
+        && $clearedRow['location_building_id'] === null
+        && $clearedRow['location_floor_id'] === null
+        && $clearedRow['location_area_id'] === null
+        && $clearedRow['location_room_id'] === null,
+    'Choosing no location must clear every location column.'
+);
+
+// Historical free-text locations stay readable and are replaced only on re-pick.
+$legacyListed = $findListedIssue($locatedDocuments, 1, $issueId);
+documentTestCheck(
+    $legacyListed !== null
+        && $legacyListed['location_name'] === 'North facade, level 2'
+        && $legacyListed['location_value'] === '',
+    'Legacy free-text locations must keep displaying their original text.'
+);
+$locatedDocuments->updateIssue(1, $issueId, [
+    'description' => 'Updated north facade dimension conflict',
+    'severity' => 'critical',
+    'location' => 'floor:12',
+]);
+$migratedRow = $db->query(
+    'SELECT location, location_type, location_floor_id FROM document_issues WHERE issue_id = ' . $issueId
+)->fetch();
+documentTestCheck(
+    $migratedRow['location'] === null
+        && $migratedRow['location_type'] === 'floor'
+        && (int) $migratedRow['location_floor_id'] === 12,
+    'Re-picking a space must replace the legacy text with the structured reference.'
+);
+
+// End-to-end through the plugin registry and host application.
+$locationRegistry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
+$registryCreate = $locationRegistry->dispatch('POST', 'issue.create', [
+    'description' => 'Registered through the plugin route',
+    'severity' => 'medium',
+    'location' => 'area:13',
+]);
+documentTestCheck(
+    $registryCreate !== null && $registryCreate->type === 'redirect',
+    'The issue.create route must accept a project space selection.'
+);
+documentTestCheck(
+    (int) $db->query(
+        "SELECT location_area_id FROM document_issues WHERE description = 'Registered through the plugin route'"
+    )->fetchColumn() === 13,
+    'The plugin route must persist the selected space.'
+);
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_GET = ['page' => 'issues'];
+ob_start();
+(new Application($db))->run();
+$renderedLocationPage = (string) ob_get_clean();
+documentTestCheck(
+    str_contains($renderedLocationPage, '<select name="location">')
+        && str_contains($renderedLocationPage, '<optgroup label="楼栋">')
+        && str_contains($renderedLocationPage, '<optgroup label="楼层">')
+        && str_contains($renderedLocationPage, '<optgroup label="区域">')
+        && str_contains($renderedLocationPage, '<optgroup label="房间">')
+        && str_contains($renderedLocationPage, 'value="room:14"')
+        && !str_contains($renderedLocationPage, 'value="room:24"')
+        && !str_contains($renderedLocationPage, 'name="location" maxlength="255"'),
+    'The issue forms must offer a grouped project-space dropdown instead of a free-text field.'
+);
+documentTestCheck(
+    str_contains($renderedLocationPage, 'Tower A Lobby'),
+    'The rendered page must show resolved space names.'
+);
+// A record still holding free text must offer to keep it, pre-selected.
+$legacyRenderIssueId = $locatedDocuments->createIssue(1, 1, ['description' => 'Legacy render check']);
+$db->exec("UPDATE document_issues SET location = 'North facade, level 2' WHERE issue_id = " . $legacyRenderIssueId);
+$_GET = ['page' => 'issues'];
+ob_start();
+(new Application($db))->run();
+$renderedLegacyPage = (string) ob_get_clean();
+documentTestCheck(
+    str_contains($renderedLegacyPage, '<option value="legacy" selected>保留原位置：North facade, level 2</option>')
+        && str_contains($renderedLegacyPage, '<option value="">不指定位置（清空）</option>'),
+    'Editing a legacy location must preselect keeping it and offer an explicit clear option.'
+);
+
+// Editing unrelated fields must not discard a historical free-text location.
+$legacyOnlyIssueId = $locatedDocuments->createIssue(1, 1, ['description' => 'Legacy placeholder']);
+$db->exec("UPDATE document_issues SET location = 'North stair, level 3' WHERE issue_id = " . $legacyOnlyIssueId);
+$locatedDocuments->updateIssue(1, $legacyOnlyIssueId, [
+    'description' => 'Legacy placeholder edited',
+    'severity' => 'low',
+    'location' => 'legacy',
+]);
+$keptLegacy = $db->query(
+    'SELECT location, location_type FROM document_issues WHERE issue_id = ' . $legacyOnlyIssueId
+)->fetch();
+documentTestCheck(
+    $keptLegacy['location'] === 'North stair, level 3' && $keptLegacy['location_type'] === null,
+    'Keeping the original location must preserve the historical text when other fields change.'
+);
+$locatedDocuments->updateIssue(1, $legacyOnlyIssueId, [
+    'description' => 'Legacy placeholder edited',
+    'severity' => 'low',
+    'location' => '',
+]);
+documentTestCheck(
+    ($findListedIssue($locatedDocuments, 1, $legacyOnlyIssueId)['location_name'] ?? 'x') === '',
+    'Explicitly choosing no location must clear a historical text location.'
+);
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Keep marker on create',
+        'location' => 'legacy',
+    ]),
+    422,
+    'The keep-original marker must be rejected when there is no original location.'
+);
+
+// Cross-plugin access must go through the declared core contract.
+$contractGuardRejected = false;
+try {
+    $emptyServices = new \ProjectO\Plugin\PluginServiceRegistry();
+    $undeclaredContext = new PluginContext(
+        $db,
+        dirname(__DIR__) . '/modules/document-management',
+        null,
+        null,
+        $emptyServices->forPlugin('document.management')
+    );
+    $undeclaredContext->service(\ProjectO\Contracts\ProjectSpaceCatalog::class);
+} catch (\ProjectO\Plugin\PluginContractException $exception) {
+    $contractGuardRejected = true;
+}
+documentTestCheck(
+    $contractGuardRejected,
+    'A plugin must not resolve a contract it has not declared in its manifest.'
+);
+
+$testServices = new \ProjectO\Plugin\PluginServiceRegistry();
+$testServices->declare('document.management', [\ProjectO\Contracts\ProjectSpaceCatalog::class]);
+$testServices->publish(
+    'project.foundation',
+    \ProjectO\Contracts\ProjectSpaceCatalog::class,
+    $spaceCatalog
+);
+$locatedPlugin = new DocumentManagementPlugin(new PluginContext(
+    $db,
+    dirname(__DIR__) . '/modules/document-management',
+    new DocumentTestImageStorage(),
+    null,
+    $testServices->forPlugin('document.management')
+));
+documentTestCheck(
+    $locatedPlugin->dispatch('issues', [])->data['spaceSelectionReady'] === true,
+    'The issues page must report space selection as available when the contract resolves.'
+);
+$locatedExport = $locatedPlugin->dispatch('issue.export', []);
+$locatedExportSheet = documentTestXlsxPart($locatedExport, 'xl/worksheets/sheet1.xml');
+documentTestCheck(
+    str_contains($locatedExportSheet, 'Tower A Lobby'),
+    'The issue export must contain the resolved space name in the location column.'
+);
+
+// Without a provider the page stays usable and explains the limitation.
+$noSpacePlugin = new DocumentManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/document-management')
+);
+documentTestCheck(
+    $noSpacePlugin->dispatch('issues', [])->data['spaceSelectionReady'] === false,
+    'The issues page must report space selection as unavailable without a provider.'
+);
+$noSpaceDocuments = new DocumentService($db);
+documentTestExpectStatus(
+    static fn () => $noSpaceDocuments->createIssue(1, 1, [
+        'description' => 'Space selection without a provider',
+        'location' => 'room:14',
+    ]),
+    503,
+    'A space selection must fail clearly when the space contract is unavailable.'
+);
+documentTestCheck(
+    $noSpaceDocuments->createIssue(1, 1, ['description' => 'Issue without any location']) > 0,
+    'Issues must remain maintainable when the space contract is unavailable.'
+);
+
+// Authorization is checked before any space lookup, so a rejected request
+// cannot reveal whether a space exists in another project.
+$createDenied = false;
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id = 2');
+try {
+    documentTestExpectStatus(
+        static fn () => $locationRegistry->dispatch('POST', 'issue.create', [
+            'description' => 'Unauthorized space probe',
+            'location' => 'room:24',
+        ]),
+        403,
+        'Registering an issue must check the create permission before validating the space.'
+    );
+    $createDenied = true;
+} finally {
+    $db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 2)');
+}
+documentTestCheck($createDenied, 'The create permission check must run before the space lookup.');
+$editDenied = false;
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id IN (3, 4)');
+try {
+    documentTestExpectStatus(
+        static fn () => $locationRegistry->dispatch('POST', 'issue.update', [
+            'issue_id' => (string) $spaceIssueId,
+            'description' => 'Unauthorized space probe',
+            'severity' => 'high',
+            'location' => 'room:24',
+        ]),
+        403,
+        'Editing an issue must check the edit permission before validating the space.'
+    );
+    $editDenied = true;
+} finally {
+    $db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 3), (1, 4)');
+}
+documentTestCheck($editDenied, 'The edit permission check must run before the space lookup.');
+documentTestCheck(
+    (int) $db->query(
+        "SELECT COUNT(*) FROM document_issues WHERE description = 'Unauthorized space probe'"
+    )->fetchColumn() === 0,
+    'A rejected request must not create or modify any issue.'
+);
+
+// Archived spaces leave the options but keep their label for existing records.
+$db->exec(
+    "INSERT INTO project_foundation_archive_records (entity_type, entity_id, project_id, archived_by)
+     VALUES ('room', 15, 1, 1), ('floor', 11, 1, 1)"
+);
+$archivedCatalog = $locatedDocuments->issueLocationCatalog(1);
+$archivedValues = array_column($archivedCatalog['options'], 'value');
+documentTestCheck(
+    !in_array('room:15', $archivedValues, true)
+        && !in_array('floor:11', $archivedValues, true)
+        && !in_array('room:14', $archivedValues, true)
+        && isset($archivedCatalog['labels']['room:15'], $archivedCatalog['labels']['room:14']),
+    'Archived spaces and children of an archived floor must leave the options but keep their labels.'
+);
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Archived space selection',
+        'location' => 'room:15',
+    ]),
+    422,
+    'An archived space must not be selectable for a new issue.'
+);
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Space under an archived floor',
+        'location' => 'room:14',
+    ]),
+    422,
+    'A space under an archived floor must not be selectable.'
+);
+$locatedDocuments->updateIssue(1, $spaceIssueId, [
+    'description' => 'Crack reported in room 101',
+    'severity' => 'high',
+    'location' => 'area:13',
+]);
+$db->exec('DELETE FROM project_foundation_archive_records');
+$locatedDocuments->updateIssue(1, $spaceIssueId, [
+    'description' => 'Crack reported in room 101',
+    'severity' => 'high',
+    'location' => 'room:14',
+]);
+documentTestCheck(
+    ($findListedIssue($locatedDocuments, 1, $spaceIssueId)['location_name'] ?? '') === 'Tower A Ground 101',
+    'Restored spaces must resolve again for existing issues.'
+);
+
+// A referenced space is archived, never hard-deleted; unreferenced ones still delete.
+documentTestCheck(
+    $spaceCatalog->deleteOrArchive(1, 'room', 14, 1) === 'archived',
+    'A space referenced by an issue must be archived instead of hard-deleted.'
+);
+documentTestCheck(
+    (int) $db->query('SELECT COUNT(*) FROM Rooms WHERE room_id = 14')->fetchColumn() === 1,
+    'Archiving a referenced space must keep the space row and the issue reference.'
+);
+$db->exec("INSERT INTO Rooms (room_id, building_id, floor_id, room_number) VALUES (16, 10, 12, '202')");
+documentTestCheck(
+    $spaceCatalog->deleteOrArchive(1, 'room', 16, 1) === 'deleted',
+    'An unreferenced space must still be hard-deleted.'
+);
+$db->exec('DELETE FROM project_foundation_archive_records');
 
 echo "Document management tests passed.\n";

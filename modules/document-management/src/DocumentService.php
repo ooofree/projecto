@@ -5,6 +5,7 @@ namespace ProjectO\Modules\DocumentManagement;
 
 use DateTimeImmutable;
 use PDO;
+use ProjectO\Contracts\ProjectSpaceCatalog;
 use ProjectO\HttpException;
 use ProjectO\Support;
 use Throwable;
@@ -29,15 +30,109 @@ final class DocumentService
         'closed' => ['submitted'],
     ];
 
-    public function __construct(private readonly PDO $db)
+    public function __construct(
+        private readonly PDO $db,
+        private readonly ?ProjectSpaceCatalog $spaces = null
+    ) {
+    }
+
+    /**
+     * Selectable project spaces for the issue location control.
+     *
+     * Returns an empty catalogue when the space plugin contract is unavailable,
+     * so the page can explain the situation instead of failing.
+     *
+     * @return array{options: list<array{value: string, label: string, type: string, id: int}>, labels: array<string, string>}
+     */
+    public function issueLocationCatalog(int $projectId): array
     {
+        if ($this->spaces === null) {
+            return ['options' => [], 'labels' => []];
+        }
+
+        return $this->spaces->locationCatalog($projectId);
+    }
+
+    /**
+     * Resolve a submitted location into storage columns.
+     *
+     * An empty selection clears both the structured reference and the legacy
+     * text. The `legacy` marker keeps an existing free-text location untouched,
+     * so editing unrelated fields never discards a historical location. A
+     * `type:id` selection is validated against the current project by the space
+     * catalogue; free text is only accepted when no space catalogue is
+     * available, which keeps behaviour explicit rather than silently dropping
+     * the submitted value.
+     *
+     * @return array{
+     *     location: string|null,
+     *     location_type: string|null,
+     *     location_building_id: int|null,
+     *     location_floor_id: int|null,
+     *     location_area_id: int|null,
+     *     location_room_id: int|null
+     * }
+     */
+    private function resolveIssueLocation(int $projectId, mixed $value, ?string $legacyText = null): array
+    {
+        $empty = [
+            'location' => null,
+            'location_type' => null,
+            'location_building_id' => null,
+            'location_floor_id' => null,
+            'location_area_id' => null,
+            'location_room_id' => null,
+        ];
+        if ($value === null || $value === '') {
+            return $empty;
+        }
+        if (!is_string($value)) {
+            throw new HttpException('位置格式无效。', 422);
+        }
+        $value = trim($value);
+        if ($value === '') {
+            return $empty;
+        }
+
+        if ($value === 'legacy') {
+            if ($legacyText === null) {
+                throw new HttpException('没有可保留的原位置。', 422);
+            }
+
+            return ['location' => $this->optionalText($legacyText, '位置', 255)]
+                + array_slice($empty, 1, null, true);
+        }
+
+        if (preg_match('/^(building|floor|area|room):([1-9]\d*)$/', $value, $matches) === 1) {
+            if ($this->spaces === null) {
+                throw new HttpException('项目空间暂不可用，无法按空间登记位置。', 503);
+            }
+            $space = $this->spaces->requireLocation($projectId, $matches[1], (int) $matches[2]);
+
+            return [
+                'location' => null,
+                'location_type' => $space['type'],
+                'location_building_id' => $space['building_id'],
+                'location_floor_id' => $space['floor_id'],
+                'location_area_id' => $space['area_id'],
+                'location_room_id' => $space['room_id'],
+            ];
+        }
+
+        if ($this->spaces !== null) {
+            throw new HttpException('请从当前项目的空间中选择位置。', 422);
+        }
+
+        return ['location' => $this->optionalText($value, '位置', 255)] + array_slice($empty, 1, null, true);
     }
 
     public function listIssues(int $projectId): array
     {
         $stmt = $this->db->prepare(
             'SELECT i.issue_id, i.project_id, i.issue_number, i.description, i.severity, i.status,
-                    i.location, i.reported_by, i.reported_at, i.resolution_result,
+                    i.location, i.location_type, i.location_building_id, i.location_floor_id,
+                    i.location_area_id, i.location_room_id,
+                    i.reported_by, i.reported_at, i.resolution_result,
                     i.verification_status, i.verification_note, i.evidence_reference,
                     i.closed_at, i.closed_by, i.created_at, i.updated_at,
                     u.username AS reported_by_name
@@ -92,14 +187,52 @@ final class DocumentService
         $history->execute($params);
         $historyByIssue = $this->groupBy($history->fetchAll(), 'issue_id');
 
+        $labels = $this->spaces === null ? [] : $this->spaces->locationCatalog($projectId)['labels'];
         foreach ($issues as &$issue) {
             $id = (int) $issue['issue_id'];
             $issue['follow_ups'] = $followUpsByIssue[$id] ?? [];
             $issue['status_history'] = $historyByIssue[$id] ?? [];
+            $issue['location_value'] = $issue['location_type'] === null
+                ? ''
+                : $issue['location_type'] . ':' . $this->issueLocationEntityId($issue);
+            $issue['location_name'] = $this->issueLocationName($issue, $labels);
         }
         unset($issue);
 
         return $issues;
+    }
+
+    /** @param array<string, mixed> $issue */
+    private function issueLocationEntityId(array $issue): int
+    {
+        return (int) match ((string) $issue['location_type']) {
+            'building' => $issue['location_building_id'],
+            'floor' => $issue['location_floor_id'],
+            'area' => $issue['location_area_id'],
+            'room' => $issue['location_room_id'],
+            default => 0,
+        };
+    }
+
+    /**
+     * Display name for one issue location.
+     *
+     * Structured references resolve through the space catalogue (archived spaces
+     * keep their name). Records without a structured reference fall back to the
+     * legacy free-text column, so historical entries stay readable.
+     *
+     * @param array<string, mixed> $issue
+     * @param array<string, string> $labels
+     */
+    private function issueLocationName(array $issue, array $labels): string
+    {
+        if ($issue['location_type'] !== null) {
+            $value = $issue['location_type'] . ':' . $this->issueLocationEntityId($issue);
+
+            return $labels[$value] ?? '位置已删除';
+        }
+
+        return (string) ($issue['location'] ?? '');
     }
 
     public function listRfis(int $projectId): array
@@ -203,28 +336,38 @@ final class DocumentService
             ['low', 'medium', 'high', 'critical'],
             '问题严重程度'
         );
-        $location = $this->optionalText($data['location'] ?? null, '位置', 255);
-
         return $this->transaction(function () use (
             $projectId,
             $userId,
             $description,
             $severity,
-            $location
+            $data
         ): int {
+            // Resolved after the caller's permission and project checks so an
+            // unauthorized request cannot probe which spaces exist.
+            $location = $this->resolveIssueLocation($projectId, $data['location'] ?? null);
             $issueNumber = $this->nextDocumentNumber($projectId, 'ISS');
             $stmt = $this->db->prepare(
                 "INSERT INTO document_issues
-                    (project_id, issue_number, description, severity, status, location, reported_by)
+                    (project_id, issue_number, description, severity, status, location,
+                     location_type, location_building_id, location_floor_id,
+                     location_area_id, location_room_id, reported_by)
                  VALUES
-                    (:project_id, :issue_number, :description, :severity, 'open', :location, :reported_by)"
+                    (:project_id, :issue_number, :description, :severity, 'open', :location,
+                     :location_type, :location_building_id, :location_floor_id,
+                     :location_area_id, :location_room_id, :reported_by)"
             );
             $stmt->execute([
                 'project_id' => $projectId,
                 'issue_number' => $issueNumber,
                 'description' => $description,
                 'severity' => $severity,
-                'location' => $location,
+                'location' => $location['location'],
+                'location_type' => $location['location_type'],
+                'location_building_id' => $location['location_building_id'],
+                'location_floor_id' => $location['location_floor_id'],
+                'location_area_id' => $location['location_area_id'],
+                'location_room_id' => $location['location_room_id'],
                 'reported_by' => $userId,
             ]);
             $issueId = (int) $this->db->lastInsertId();
@@ -253,20 +396,33 @@ final class DocumentService
             ['low', 'medium', 'high', 'critical'],
             '问题严重程度'
         );
-        $location = $this->optionalText($data['location'] ?? null, '位置', 255);
-
-        $this->transaction(function () use ($projectId, $issueId, $description, $severity, $location): void {
+        $this->transaction(function () use ($projectId, $issueId, $description, $severity, $data): void {
             $issue = $this->lockIssue($projectId, $issueId);
+            // After the record lock: a foreign issue stays a plain 404 and the
+            // submitted space is never probed.
+            $location = $this->resolveIssueLocation(
+                $projectId,
+                $data['location'] ?? null,
+                (string) ($issue['location'] ?? '')
+            );
             $update = $this->db->prepare(
                 'UPDATE document_issues
                  SET description = :description, severity = :severity, location = :location,
+                     location_type = :location_type, location_building_id = :location_building_id,
+                     location_floor_id = :location_floor_id, location_area_id = :location_area_id,
+                     location_room_id = :location_room_id,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE issue_id = :issue_id AND project_id = :project_id'
             );
             $update->execute([
                 'description' => $description,
                 'severity' => $severity,
-                'location' => $location,
+                'location' => $location['location'],
+                'location_type' => $location['location_type'],
+                'location_building_id' => $location['location_building_id'],
+                'location_floor_id' => $location['location_floor_id'],
+                'location_area_id' => $location['location_area_id'],
+                'location_room_id' => $location['location_room_id'],
                 'issue_id' => $issueId,
                 'project_id' => $projectId,
             ]);

@@ -8,6 +8,9 @@
     "requires": [
         "platform.core"
     ],
+    "provides": [
+        "ProjectO\\Contracts\\ProjectSpaceCatalog"
+    ],
     "routes": {
         "GET projects": "index",
         "GET spaces": "spaces",

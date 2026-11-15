@@ -11,6 +11,71 @@ $severityLabels = [
     'high' => '高',
     'critical' => '紧急',
 ];
+$locationOptions = $locationCatalog['options'] ?? [];
+$locationLabels = $locationCatalog['labels'] ?? [];
+$spaceSelectionReady = !empty($spaceSelectionReady);
+$locationTypeLabels = ['building' => '楼栋', 'floor' => '楼层', 'area' => '区域', 'room' => '房间'];
+/**
+ * Render the project-space location selector.
+ *
+ * Groups options by space type. Keeps an archived selection visible but marked
+ * so it must be re-picked, and shows a legacy free-text location as a read-only
+ * note rather than silently discarding it.
+ */
+$renderLocationSelect = static function (
+    string $selectedValue,
+    string $legacyText = ''
+) use ($escape, $locationOptions, $spaceSelectionReady, $locationTypeLabels): string {
+    if (!$spaceSelectionReady) {
+        return '<p class="muted">项目空间不可用，暂时无法选择位置。</p>';
+    }
+
+    $known = false;
+    foreach ($locationOptions as $option) {
+        if ($option['value'] === $selectedValue) {
+            $known = true;
+            break;
+        }
+    }
+
+    $html = '<select name="location">';
+    if ($legacyText !== '') {
+        // Historical free-text location: keep it selected by default so editing
+        // other fields never silently discards it.
+        $html .= '<option value="legacy" selected>保留原位置：' . $escape($legacyText) . '</option>';
+    }
+    if ($selectedValue === '' && $legacyText === '') {
+        $html .= '<option value="" selected>不指定位置</option>';
+    } elseif ($known || $legacyText !== '') {
+        $html .= '<option value="">不指定位置（清空）</option>';
+    } else {
+        $html .= '<option value="" selected>原位置已归档或不存在，请重新选择</option>';
+    }
+
+    $grouped = [];
+    foreach ($locationOptions as $option) {
+        $grouped[$option['type']][] = $option;
+    }
+    foreach ($locationTypeLabels as $type => $typeLabel) {
+        if (!isset($grouped[$type])) {
+            continue;
+        }
+        $html .= '<optgroup label="' . $escape($typeLabel) . '">';
+        foreach ($grouped[$type] as $option) {
+            $html .= '<option value="' . $escape($option['value']) . '"'
+                . ($option['value'] === $selectedValue ? ' selected' : '') . '>'
+                . $escape($option['label']) . '</option>';
+        }
+        $html .= '</optgroup>';
+    }
+    $html .= '</select>';
+
+    if ($locationOptions === []) {
+        $html .= '<span class="muted">当前项目还没有空间记录，请先在“项目空间”中维护楼栋、楼层、区域或房间。</span>';
+    }
+
+    return $html;
+};
 ob_start();
 ?>
 <section class="page-heading">
@@ -59,8 +124,8 @@ ob_start();
                 </select>
             </label>
             <label class="field-wide">
-                位置（可选）
-                <input name="location" maxlength="255">
+                位置（可选，从项目空间选择）
+                <?= $renderLocationSelect('') ?>
             </label>
             <div class="field-wide dialog-actions">
                 <button class="button button-secondary" type="button" data-dialog-close>取消</button>
@@ -101,7 +166,7 @@ ob_start();
                         <?php $searchText = mb_strtolower(implode(' ', [
                             $issue['description'],
                             $issue['issue_number'] ?? '',
-                            $issue['location'] ?? '',
+                            $issue['location_name'] ?? '',
                             $statusLabels[$issue['status']] ?? $issue['status'],
                             $severityLabels[$issue['severity']] ?? $issue['severity'],
                         ])); ?>
@@ -110,7 +175,7 @@ ob_start();
                             <td class="table-primary-cell"><?= $escape(mb_strimwidth($issue['description'], 0, 100, '…')) ?></td>
                             <td><span class="badge badge-neutral"><?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?></span></td>
                             <td><span class="badge"><?= $escape($statusLabels[$issue['status']] ?? $issue['status']) ?></span></td>
-                            <td><?= $escape($issue['location'] ?: '—') ?></td>
+                            <td><?= $escape(($issue['location_name'] ?? '') !== '' ? $issue['location_name'] : '—') ?></td>
                             <td><?= count($issue['images']) ?></td>
                             <td><?= $escape(\ProjectO\Support::formatDateTime($issue['updated_at'])) ?></td>
                             <td><button class="button button-secondary" type="button" data-dialog-open="issue-dialog-<?= (int) $issue['issue_id'] ?>">查看 / 编辑</button></td>
@@ -149,9 +214,12 @@ ob_start();
                                 <?php endforeach; ?>
                             </select>
                         </label>
-                        <label>
-                            位置
-                            <input name="location" maxlength="255" value="<?= $escape($issue['location'] ?? '') ?>">
+                        <label class="field-wide">
+                            位置（从项目空间选择）
+                            <?= $renderLocationSelect(
+                                (string) ($issue['location_value'] ?? ''),
+                                $issue['location_type'] === null ? (string) ($issue['location'] ?? '') : ''
+                            ) ?>
                         </label>
                         <div class="field-wide dialog-actions">
                             <button class="button button-primary" type="submit">保存编辑</button>
@@ -159,7 +227,7 @@ ob_start();
                     </form>
                 <?php else: ?>
                     <p><?= nl2br($escape($issue['description'])) ?></p>
-                    <p>严重程度：<?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?> · 位置：<?= $escape($issue['location'] ?: '—') ?></p>
+                    <p>严重程度：<?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?> · 位置：<?= $escape(($issue['location_name'] ?? '') !== '' ? $issue['location_name'] : '—') ?></p>
                 <?php endif; ?>
 
                 <?php if ($issue['resolution_result']): ?>

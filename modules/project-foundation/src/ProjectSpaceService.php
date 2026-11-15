@@ -4,10 +4,11 @@ declare(strict_types=1);
 namespace ProjectO\Modules\ProjectFoundation;
 
 use PDO;
+use ProjectO\Contracts\ProjectSpaceCatalog;
 use ProjectO\HttpException;
 use Throwable;
 
-final class ProjectSpaceService
+final class ProjectSpaceService implements ProjectSpaceCatalog
 {
     private ProjectArchiveService $archive;
 
@@ -153,6 +154,170 @@ final class ProjectSpaceService
         unset($building);
 
         return $rows;
+    }
+
+    /**
+     * Public read-only catalogue used by other plugins' location selectors.
+     *
+     * Four flat queries (no per-building fan-out). Options exclude archived
+     * spaces and their archived ancestors; labels keep archived names so an
+     * existing record still displays where it was registered.
+     */
+    public function locationCatalog(int $projectId): array
+    {
+        $options = [];
+        $labels = [];
+        foreach ($this->locationRows($projectId) as $type => $rows) {
+            foreach ($rows as $row) {
+                $value = $type . ':' . (int) $row['entity_id'];
+                $label = $this->locationLabel($type, $row);
+                $labels[$value] = $label;
+                if ((int) $row['is_active'] === 1) {
+                    $options[] = [
+                        'value' => $value,
+                        'label' => $label,
+                        'type' => $type,
+                        'id' => (int) $row['entity_id'],
+                    ];
+                }
+            }
+        }
+
+        return ['options' => $options, 'labels' => $labels];
+    }
+
+    /**
+     * Validate a submitted space reference for the server-verified project.
+     *
+     * Rejects spaces from another project and archived spaces (or spaces under
+     * an archived ancestor), then returns the columns a consumer should store.
+     */
+    public function requireLocation(int $projectId, string $type, int $id): array
+    {
+        if (!in_array($type, ['building', 'floor', 'area', 'room'], true)) {
+            throw new HttpException('位置类型无效。', 422);
+        }
+        if ($id < 1) {
+            throw new HttpException('位置编号无效。', 422);
+        }
+
+        foreach ($this->locationRows($projectId)[$type] as $row) {
+            if ((int) $row['entity_id'] !== $id) {
+                continue;
+            }
+            if ((int) $row['is_active'] !== 1) {
+                throw new HttpException('所选位置已归档，请重新选择当前项目的位置。', 422);
+            }
+
+            return [
+                'type' => $type,
+                'id' => $id,
+                'label' => $this->locationLabel($type, $row),
+                'building_id' => (int) $row['building_id'],
+                'floor_id' => $row['floor_id'] === null ? null : (int) $row['floor_id'],
+                'area_id' => $row['area_id'] === null ? null : (int) $row['area_id'],
+                'room_id' => $row['room_id'] === null ? null : (int) $row['room_id'],
+            ];
+        }
+
+        throw new HttpException('所选位置不属于当前项目。', 404);
+    }
+
+    /**
+     * Flat per-type space rows for one project, including archived entries.
+     *
+     * `is_active` is 0 when the entity or any ancestor is archived. Names are
+     * returned raw so labels can be assembled without database-specific string
+     * functions.
+     *
+     * @return array<string, list<array<string, mixed>>>
+     */
+    private function locationRows(int $projectId): array
+    {
+        $archived = static fn (string $type, string $alias, string $idColumn): string =>
+            "EXISTS (
+                SELECT 1 FROM project_foundation_archive_records ar
+                WHERE ar.entity_type = '" . $type . "' AND ar.entity_id = " . $alias . '.' . $idColumn . "
+                  AND ar.project_id = b.project_id
+            )";
+        $active = static fn (string $expression): string =>
+            'CASE WHEN ' . $expression . ' THEN 0 ELSE 1 END AS is_active';
+
+        $queries = [
+            'building' =>
+                'SELECT b.building_id AS entity_id, b.building_id, NULL AS floor_id,
+                        NULL AS area_id, NULL AS room_id, b.building_name,
+                        ' . $active($archived('building', 'b', 'building_id')) . '
+                 FROM Buildings b
+                 WHERE b.project_id = :project_id
+                 ORDER BY b.building_number, b.building_id',
+            'floor' =>
+                'SELECT f.floor_id AS entity_id, b.building_id, f.floor_id,
+                        NULL AS area_id, NULL AS room_id,
+                        b.building_name, f.floor_name, f.floor_number,
+                        ' . $active(
+                            $archived('building', 'b', 'building_id')
+                            . ' OR ' . $archived('floor', 'f', 'floor_id')
+                        ) . '
+                 FROM Building_Floors f
+                 JOIN Buildings b ON b.building_id = f.building_id
+                 WHERE b.project_id = :project_id
+                 ORDER BY b.building_number, f.floor_number, f.floor_id',
+            'area' =>
+                'SELECT a.area_id AS entity_id, b.building_id, NULL AS floor_id,
+                        a.area_id, NULL AS room_id, b.building_name, a.area_name,
+                        ' . $active(
+                            $archived('building', 'b', 'building_id')
+                            . ' OR ' . $archived('area', 'a', 'area_id')
+                        ) . '
+                 FROM Construction_Areas a
+                 JOIN Buildings b ON b.building_id = a.building_id
+                 WHERE b.project_id = :project_id
+                 ORDER BY b.building_number, a.area_name, a.area_id',
+            'room' =>
+                'SELECT r.room_id AS entity_id, b.building_id, f.floor_id,
+                        NULL AS area_id, r.room_id,
+                        b.building_name, f.floor_name, f.floor_number, r.room_number,
+                        ' . $active(
+                            $archived('building', 'b', 'building_id')
+                            . ' OR ' . $archived('floor', 'f', 'floor_id')
+                            . ' OR ' . $archived('room', 'r', 'room_id')
+                        ) . '
+                 FROM Rooms r
+                 JOIN Building_Floors f ON f.floor_id = r.floor_id AND f.building_id = r.building_id
+                 JOIN Buildings b ON b.building_id = r.building_id
+                 WHERE b.project_id = :project_id
+                 ORDER BY b.building_number, f.floor_number, r.room_number, r.room_id',
+        ];
+
+        $rows = [];
+        foreach ($queries as $type => $sql) {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute(['project_id' => $projectId]);
+            $rows[$type] = $stmt->fetchAll();
+        }
+
+        return $rows;
+    }
+
+    /** @param array<string, mixed> $row */
+    private function locationLabel(string $type, array $row): string
+    {
+        $building = trim((string) $row['building_name']);
+        if ($type === 'building') {
+            return $building;
+        }
+        if ($type === 'area') {
+            return trim($building . ' ' . (string) $row['area_name']);
+        }
+
+        $floorName = trim((string) ($row['floor_name'] ?? ''));
+        $floor = $floorName !== '' ? $floorName : (string) $row['floor_number'];
+        if ($type === 'floor') {
+            return trim($building . ' ' . $floor);
+        }
+
+        return trim($building . ' ' . $floor . ' ' . (string) $row['room_number']);
     }
 
     public function save(int $projectId, array $data): int
