@@ -38,7 +38,7 @@
 .loc-crumb-leaf { color: var(--accent); }
 .loc-current-empty { color: var(--text-muted); font-size: .83rem; }
 .loc-clear {
-    margin-left: auto; min-height: 30px; padding: 4px 10px; color: var(--text-muted);
+    margin-left: auto; min-height: 36px; padding: 6px 12px; color: var(--text-muted);
     background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
     font: inherit; font-size: .76rem; cursor: pointer;
 }
@@ -160,8 +160,11 @@ body.theme-dark .loc-clear:hover { color: #f0a3a3; border-color: #7c4a4a; }
 @media (max-width: 560px) {
     .loc-picker { padding: 10px; }
     .loc-tabs { width: 100%; }
-    .loc-tab { flex: 1 1 0; }
-    .loc-clear { margin-left: 0; }
+    .loc-tab { flex: 1 1 0; min-height: 42px; }
+    .loc-clear { margin-left: 0; min-height: 40px; }
+    .loc-chip { min-height: 40px; }
+    .loc-node { min-height: 42px; }
+    .loc-result { min-height: 46px; }
     .loc-results { max-height: 240px; }
     .loc-tree { max-height: 260px; }
 }

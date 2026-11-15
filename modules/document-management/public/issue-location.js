@@ -423,6 +423,11 @@
             }
             tree.append(rootList);
             treePane.append(tree);
+            // Open at the floor level: the point of this view is to see what a
+            // floor contains, so buildings start expanded and floors collapsed.
+            for (const li of rootList.children) {
+                if (li._expand) li._expand();
+            }
 
             const actions = el('div', 'loc-tree-actions');
             const expand = el('button', 'button button-secondary', '展开全部');
