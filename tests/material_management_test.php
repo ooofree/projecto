@@ -987,6 +987,69 @@ materialTestCheck(
         && str_contains($estimateHtml, 'href="?page=estimates&amp;group=category"'),
     'Estimates page must render the quick-entry material picker and group records by building and floor.'
 );
+materialTestCheck(
+    str_contains($estimateHtml, 'data-entry-counter')
+        && str_contains($estimateHtml, 'data-entry-status')
+        && str_contains($estimateHtml, 'data-entry-recent')
+        && str_contains($estimateHtml, 'data-quantity-unit')
+        && str_contains($estimateHtml, 'entry-location')
+        && str_contains($estimateHtml, '保存并继续')
+        && str_contains($estimateHtml, 'data-estimate-id='),
+    'Estimates quick entry must render the continuous-entry workbench (location bar, unit hint, status line, recent chips).'
+);
+materialTestCheck(
+    str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.css'), '.combo.is-enhanced .combo-native')
+        && str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.css'), '.entry-line')
+        && str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.css'), '.ledger-record-head'),
+    'The shared stylesheet must style the material combo, the entry workbench and the record ledger.'
+);
+$asyncEstimateResponse = $plugin->dispatch('estimate.save', [
+    'async' => '1',
+    'building_id' => (string) $buildingId,
+    'material_id' => (string) $categorizedMaterialId,
+    'estimated_quantity' => '3.5',
+    'remarks' => '连续录入',
+]);
+$asyncEstimateJson = json_decode((string) ($asyncEstimateResponse->data['body'] ?? ''), true);
+materialTestCheck(
+    $asyncEstimateResponse->type === 'raw'
+        && str_contains((string) ($asyncEstimateResponse->data['content_type'] ?? ''), 'application/json')
+        && is_array($asyncEstimateJson)
+        && ($asyncEstimateJson['ok'] ?? false) === true
+        && (int) ($asyncEstimateJson['id'] ?? 0) > 0
+        && (float) ($asyncEstimateJson['estimate']['estimated_quantity'] ?? 0) === 3.5
+        && (string) ($asyncEstimateJson['estimate']['material_name'] ?? '') !== ''
+        && (string) ($asyncEstimateJson['estimate']['building_name'] ?? '') !== '',
+    'Async estimate save must return the saved record as JSON for the continuous-entry ledger.'
+);
+materialTestCheck(
+    (string) $projectMaterials->estimateData(1)[0]['remarks'] === '连续录入',
+    'Async estimate save must persist the record like a normal form post.'
+);
+materialTestExpectStatus(
+    fn () => $plugin->dispatch('estimate.save', [
+        'async' => '1',
+        'building_id' => (string) $buildingId,
+        'material_id' => (string) $categorizedMaterialId,
+        'estimated_quantity' => '-2',
+    ]),
+    422,
+    'Async estimate save must reject negative quantities with 422.'
+);
+$estimatePermissionRow = $db->query("SELECT permission_id FROM Permissions WHERE permission_name = 'edit_material_estimates'")->fetch();
+materialTestCheck(is_array($estimatePermissionRow), 'The estimate edit permission must exist for the denial test.');
+$db->exec('DELETE FROM Role_Permissions WHERE role_id = 1 AND permission_id = ' . (int) $estimatePermissionRow['permission_id']);
+materialTestExpectStatus(
+    fn () => $plugin->dispatch('estimate.save', [
+        'async' => '1',
+        'building_id' => (string) $buildingId,
+        'material_id' => (string) $categorizedMaterialId,
+        'estimated_quantity' => '1',
+    ]),
+    403,
+    'Async estimate save must enforce the edit permission.'
+);
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, ' . (int) $estimatePermissionRow['permission_id'] . ')');
 $categoryEstimatePage = $plugin->dispatch('estimates', ['group' => 'category']);
 materialTestCheck(
     $categoryEstimatePage->type === 'view'

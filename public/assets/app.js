@@ -233,12 +233,24 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
 // space selection) and a grouped/filterable record ledger. Everything here is
 // progressive enhancement: without JavaScript the original selects still work.
 (() => {
+    // Guard against the bundle being evaluated twice (e.g. injected preview
+    // harnesses). A DOM dataset flag is shared across execution worlds, so the
+    // listeners and submit handlers are registered exactly once per page load.
+    if (document.documentElement.dataset.estimateUiInit === '1') return;
+    document.documentElement.dataset.estimateUiInit = '1';
+
     const normalize = text => String(text).toLowerCase().replace(/\s+/g, ' ').trim();
 
     function initCombos() {
-        const combos = [];
-        let comboIndex = 0;
+        // Persistent registry shared across re-init calls (ledger refresh), so the
+        // document click handler is attached once and never leaks listeners.
+        window.comboRegistry = window.comboRegistry || [];
+        const combos = window.comboRegistry;
+        let comboIndex = window.comboIndex || 0;
+        window.comboResetFns = window.comboResetFns || [];
         for (const combo of document.querySelectorAll('[data-combo]')) {
+            if (combo.dataset.comboInit === '1') continue;
+            combo.dataset.comboInit = '1';
             const select = combo.querySelector('select[data-combo-select]');
             const input = combo.querySelector('[data-combo-input]');
             const list = combo.querySelector('[data-combo-options]');
@@ -267,6 +279,15 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
             const syncInput = () => {
                 const chosen = chosenOption();
                 if (chosen) input.value = chosen.textContent.replace(/\s+/g, ' ').trim();
+            };
+            const unitOf = option => {
+                const match = /\(([^()]*)\)\s*$/.exec(option ? option.textContent : '');
+                return match ? match[1].trim() : '';
+            };
+            const syncUnit = () => {
+                const addForm = combo.closest('form[data-estimate-add]');
+                const unit = addForm ? addForm.querySelector('[data-quantity-unit]') : null;
+                if (unit) unit.textContent = unitOf(chosenOption()) || '—';
             };
             const close = () => {
                 list.hidden = true;
@@ -321,6 +342,7 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
                 input.setCustomValidity('');
                 close();
                 select.dispatchEvent(new Event('change', { bubbles: true }));
+                syncUnit();
                 // After picking a material the quantity is the only field left
                 // for the common case, so move the caret there.
                 const addForm = combo.closest('form[data-estimate-add]');
@@ -379,6 +401,16 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
             input.addEventListener('blur', () => window.setTimeout(close, 120));
             select.addEventListener('change', syncInput);
             combos.push({ combo, close });
+            window.comboIndex = comboIndex;
+            if (combo.closest('form[data-estimate-add]')) {
+                window.comboResetFns.push(() => {
+                    select.value = '';
+                    input.value = '';
+                    input.setCustomValidity('');
+                    close();
+                    syncUnit();
+                });
+            }
 
             if (form) {
                 form.addEventListener('submit', event => {
@@ -392,6 +424,7 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
                             select.value = resolved.value;
                             input.value = resolved.textContent.trim();
                             input.setCustomValidity('');
+                            syncUnit();
                             return;
                         }
                     }
@@ -404,16 +437,22 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
             }
 
             syncInput();
+            syncUnit();
         }
-        document.addEventListener('click', event => {
-            for (const entry of combos) {
-                if (!entry.combo.contains(event.target)) entry.close();
-            }
-        });
+        if (!window.comboClickBound) {
+            window.comboClickBound = true;
+            document.addEventListener('click', event => {
+                for (const entry of window.comboRegistry ?? []) {
+                    if (!entry.combo.contains(event.target)) entry.close();
+                }
+            });
+        }
     }
 
     function initCascades() {
         for (const form of document.querySelectorAll('form[data-estimate-form]')) {
+            if (form.dataset.cascadeInit === '1') continue;
+            form.dataset.cascadeInit = '1';
             const building = form.querySelector('select[data-cascade-building]');
             const floor = form.querySelector('select[data-cascade-floor]');
             const room = form.querySelector('select[data-cascade-room]');
@@ -541,7 +580,141 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
         filter.addEventListener('input', apply);
     }
 
+    // Continuous entry: save asynchronously, keep the remembered location,
+    // clear material/quantity/remarks and refocus the material search so the
+    // next record can be typed immediately. Without fetch the form still
+    // submits normally and the page reloads.
+    function initQuickEntry() {
+        const form = document.querySelector('form[data-estimate-add]');
+        if (!form || typeof window.fetch !== 'function') return;
+
+        const counter = document.querySelector('[data-entry-counter] strong');
+        const status = form.querySelector('[data-entry-status]');
+        const recent = document.querySelector('[data-entry-recent]');
+        const chips = document.querySelector('[data-entry-recent-chips]');
+        const quantity = form.querySelector('[data-quantity-input]');
+        const remarks = form.querySelector('input[name="remarks"]');
+        const submit = form.querySelector('.entry-submit');
+        let busy = false;
+        let savedCount = 0;
+        let statusTimer = 0;
+
+        const showStatus = (message, isError) => {
+            if (!status) return;
+            window.clearTimeout(statusTimer);
+            status.textContent = message;
+            status.classList.toggle('is-error', isError);
+            status.classList.toggle('is-success', !isError);
+            status.hidden = false;
+            if (!isError) statusTimer = window.setTimeout(() => { status.hidden = true; }, 4000);
+        };
+
+        const addChip = record => {
+            if (!recent || !chips) return;
+            recent.hidden = false;
+            const chip = document.createElement('span');
+            chip.className = 'entry-chip';
+            const name = document.createElement('strong');
+            name.textContent = String(record.material_name ?? '');
+            const qty = document.createElement('span');
+            qty.textContent = `${String(record.estimated_quantity ?? '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')} ${record.unit ?? ''}`;
+            const place = document.createElement('span');
+            place.className = 'entry-chip-place';
+            place.textContent = [record.building_name || record.building_number, record.floor_number, record.room_number]
+                .filter(part => part !== null && part !== undefined && part !== '')
+                .join(' · ');
+            chip.append(name, qty, place);
+            chips.prepend(chip);
+            while (chips.children.length > 10) chips.lastElementChild.remove();
+        };
+
+        const normalizeQuantity = value => {
+            const text = String(value ?? '');
+            return /^-?\d+(?:\.\d+)?$/.test(text) ? (text.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') || '0') : text;
+        };
+
+        const refreshLedger = async record => {
+            const ledger = document.querySelector('[data-estimate-ledger]');
+            if (!ledger) return;
+            const response = await fetch(window.location.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!response.ok) return;
+            const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+            const fresh = doc.querySelector('[data-estimate-ledger]');
+            if (!fresh) return;
+            const openIds = new Set([...ledger.querySelectorAll('details[open]')].map(item => item.dataset.estimateId ?? '').filter(id => id !== ''));
+            const expandedRecord = ledger.querySelector('details[data-ledger-record][open]');
+            const expandedId = expandedRecord ? expandedRecord.dataset.estimateId : null;
+            ledger.replaceChildren(...fresh.childNodes);
+            // Re-enhance the replaced edit forms (searchable material picker and
+            // cascading selects); the entry form is untouched by the swap.
+            initCombos();
+            initCascades();
+            for (const item of ledger.querySelectorAll('details[data-ledger-record]')) {
+                const id = item.dataset.estimateId ?? '';
+                if (openIds.has(id) || id === expandedId || id === String(record.estimate_detail_id)) item.open = true;
+            }
+            const freshCount = doc.querySelector('[data-estimate-count]');
+            const count = document.querySelector('[data-estimate-count]');
+            if (freshCount && count) count.textContent = freshCount.textContent;
+            const freshLimit = doc.querySelector('[data-estimate-limit-note]');
+            const limit = document.querySelector('[data-estimate-limit-note]');
+            if (freshLimit && limit) limit.textContent = freshLimit.textContent;
+            const emptyState = document.querySelector('[data-estimate-empty-state]');
+            if (emptyState) emptyState.remove();
+            const added = ledger.querySelector(`[data-estimate-id="${record.estimate_detail_id}"]`);
+            if (added) added.classList.add('is-new');
+        };
+
+        form.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (busy) return;
+            const material = form.querySelector('select[name="material_id"]');
+            if (!material || material.value === '') {
+                form.reportValidity();
+                return;
+            }
+            if (quantity && !quantity.checkValidity()) {
+                quantity.reportValidity();
+                return;
+            }
+            busy = true;
+            if (submit) { submit.disabled = true; submit.classList.add('is-busy'); }
+            const body = new FormData(form);
+            body.set('async', '1');
+            try {
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    body,
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                });
+                const payload = await response.json().catch(() => null);
+                if (!response.ok || !payload || payload.ok !== true || !payload.estimate) {
+                    throw new Error(payload && payload.message ? payload.message : '保存失败，请重试。');
+                }
+                const record = payload.estimate;
+                savedCount++;
+                if (counter) counter.textContent = String(savedCount);
+                const materialName = String(record.material_name ?? '');
+                showStatus(`已保存：${materialName} × ${normalizeQuantity(record.estimated_quantity)} ${record.unit ?? ''}，继续录入下一条`, false);
+                addChip(record);
+                for (const reset of window.comboResetFns ?? []) reset();
+                if (quantity) quantity.value = '';
+                if (remarks) remarks.value = '';
+                refreshLedger(record).catch(() => {});
+                const materialInput = form.querySelector('[data-combo-input]');
+                if (materialInput) { materialInput.focus(); materialInput.select(); }
+            } catch (error) {
+                showStatus(error instanceof Error && error.message ? error.message : '网络异常，保存失败，请重试。', true);
+                if (quantity) { quantity.focus(); quantity.select(); }
+            } finally {
+                busy = false;
+                if (submit) { submit.disabled = false; submit.classList.remove('is-busy'); }
+            }
+        });
+    }
+
     initCombos();
     initCascades();
     initLedgerFilter();
+    initQuickEntry();
 })();

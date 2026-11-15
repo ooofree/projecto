@@ -760,6 +760,27 @@ final class MaterialManagementPlugin implements PluginInterface
         Support::requirePermission($this->context->db, 'edit_material_estimates');
         $project = $this->context->requireCurrentProject();
         $id = $this->projectMaterials->saveEstimate((int) $project['project_id'], $input);
+        // Continuous quick entry posts asynchronously: answer with the saved
+        // record so the ledger can refresh in place. The same permissions,
+        // project context and audit trail apply as for a normal form post.
+        if (($input['async'] ?? '') === '1') {
+            Support::audit($this->context->db, 'material.estimate.save', 'Record ' . $id . '.');
+            $record = null;
+            foreach ($this->projectMaterials->estimateData((int) $project['project_id']) as $row) {
+                if ((int) $row['estimate_detail_id'] === $id) {
+                    $record = $row;
+                    break;
+                }
+            }
+            if ($record === null) {
+                throw new HttpException('测算明细已保存，但暂时无法读取记录，请刷新页面。', 500);
+            }
+            return PluginResponse::raw(
+                (string) json_encode(['ok' => true, 'id' => $id, 'estimate' => $record], JSON_UNESCAPED_UNICODE),
+                'application/json; charset=utf-8',
+                ['Cache-Control' => 'private, no-store']
+            );
+        }
         return $this->complete('material.estimate.save', '材料测算明细已保存。', $id, '?page=estimates');
     }
 
