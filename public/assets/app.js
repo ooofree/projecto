@@ -1,28 +1,454 @@
-const materialSearch = document.getElementById('material-search');
-const materialCategory = document.getElementById('material-category');
+// Materials catalogue page: persistent category rail + continuous entry.
+// Selecting a category keeps the list AND the entry form on that category, so
+// a batch of same-kind materials can be numbered while seeing what already
+// exists. Saves post asynchronously (same pattern as the estimates quick
+// entry); without JavaScript the forms still submit normally and the category
+// select in the toolbar filters nothing but still scopes the Excel export.
+(() => {
+    if (document.documentElement.dataset.materialUiInit === '1') return;
+    const workspace = document.querySelector('[data-material-workspace]');
+    if (!workspace) return;
+    document.documentElement.dataset.materialUiInit = '1';
 
-if (materialSearch && materialCategory) {
-    const materialRows = [...document.querySelectorAll('.material-row')];
-    const materialCount = document.getElementById('material-count');
-    const noMaterialMatch = document.getElementById('materials-no-match');
+    const search = document.getElementById('material-search');
+    const categorySelect = document.getElementById('material-category');
+    const countLabel = document.getElementById('material-count');
+    const totalLabel = workspace.querySelector('[data-material-total]');
+    const noMatch = document.getElementById('materials-no-match');
+    const tbody = workspace.querySelector('[data-materials-body]');
+    const rail = document.getElementById('material-rail');
+    const entryForm = document.querySelector('form[data-material-add]');
+    const entryCategory = entryForm ? entryForm.querySelector('[data-entry-category]') : null;
+    const followToggle = entryForm ? entryForm.querySelector('[data-entry-follow]') : null;
+    const categoryStat = entryForm ? entryForm.querySelector('[data-entry-category-stat]') : null;
+    const codeInput = entryForm ? entryForm.querySelector('[data-entry-code]') : null;
+    const codeNextButton = entryForm ? entryForm.querySelector('[data-entry-code-next]') : null;
+    const codePreview = entryForm ? entryForm.querySelector('[data-entry-code-preview]') : null;
+    const codeNote = entryForm ? entryForm.querySelector('[data-entry-code-note]') : null;
+    const entryStatus = entryForm ? entryForm.querySelector('[data-entry-status]') : null;
+    const entryCounter = document.querySelector('[data-material-entry-counter] strong');
+    const recentBox = document.querySelector('[data-entry-recent]');
+    const recentChips = document.querySelector('[data-entry-recent-chips]');
+    const unitList = document.getElementById('material-unit-options');
+    const dialogsHost = document.querySelector('[data-material-dialogs]');
 
-    function filterMaterials() {
-        const query = materialSearch.value.trim().toLocaleLowerCase();
-        const categoryId = materialCategory.value;
+    let rows = [...workspace.querySelectorAll('.material-row')];
+    let railButtons = rail ? [...rail.querySelectorAll('[data-rail-category]')] : [];
+    let selectedCategory = '';
+    let savedCount = 0;
+    let busy = false;
+    let statusTimer = 0;
+    let codeDirty = false;
+
+    const storageKey = 'material-entry:' + (entryForm ? entryForm.dataset.projectId ?? '' : '');
+    const readSaved = () => {
+        try { return JSON.parse(window.localStorage.getItem(storageKey) ?? 'null'); } catch { return null; }
+    };
+    const persistEntry = () => {
+        if (!entryForm) return;
+        try {
+            window.localStorage.setItem(storageKey, JSON.stringify({
+                category: entryCategory ? entryCategory.value : '',
+                unit: entryForm.querySelector('[data-entry-unit]')?.value ?? '',
+                follow: followToggle ? followToggle.checked : true,
+            }));
+        } catch { /* storage unavailable (private mode); the form still works */ }
+    };
+
+    // ---- filtering -------------------------------------------------------
+    const applyFilter = () => {
+        const query = search ? search.value.trim().toLocaleLowerCase() : '';
         let visible = 0;
-        for (const row of materialRows) {
-            const matches = row.dataset.search.includes(query)
-                && (categoryId === '' || row.dataset.category === categoryId);
+        for (const row of rows) {
+            const matches = (row.dataset.search ?? '').includes(query)
+                && (selectedCategory === '' || row.dataset.category === selectedCategory);
             row.hidden = !matches;
             if (matches) visible++;
         }
-        materialCount.textContent = `${visible}${materialCount.dataset.unit}`;
-        if (noMaterialMatch) noMaterialMatch.hidden = visible !== 0;
-    }
+        if (countLabel) countLabel.textContent = `${visible}${countLabel.dataset.unit ?? ' 项材料'}`;
+        if (noMatch) noMatch.hidden = visible !== 0;
+    };
 
-    materialSearch.addEventListener('input', filterMaterials);
-    materialCategory.addEventListener('change', filterMaterials);
-}
+    const categoryNameOf = value => {
+        if (value === '') return '全部分类';
+        if (value === '0') return '未分类';
+        const option = entryCategory
+            ? [...entryCategory.options].find(item => item.value === value)
+            : categorySelect ? [...categorySelect.options].find(item => item.value === value) : null;
+        return option ? option.textContent.trim() : '所选分类';
+    };
+
+    const updateCategoryStat = () => {
+        if (!categoryStat || !entryCategory) return;
+        const value = entryCategory.value;
+        const total = rows.filter(row => row.dataset.category === (value === '' ? '0' : value)).length;
+        const name = value === '' ? '未分类' : categoryNameOf(value);
+        categoryStat.textContent = `「${name}」现有 ${total} 项`;
+    };
+
+    // ---- numbering helper ------------------------------------------------
+    // Suggest the next code from the codes already used in the chosen category:
+    // split the longest code into prefix + trailing digits and increment the
+    // number, keeping the zero padding. Pure convenience — the server keeps
+    // enforcing uniqueness, and any suggestion can be overwritten by typing.
+    const nextCodeFor = categoryId => {
+        const codes = rows
+            .filter(row => row.dataset.category === (categoryId === '' ? '0' : categoryId))
+            .map(row => (row.querySelector('.report-code')?.textContent ?? '').trim())
+            .filter(code => code !== '' && code !== '—');
+        if (codes.length === 0) return null;
+        let best = null;
+        for (const code of codes) {
+            const match = /^(.*?)(\d+)$/.exec(code);
+            if (!match) continue;
+            const candidate = { prefix: match[1], number: parseInt(match[2], 10), width: match[2].length };
+            if (
+                best === null
+                || candidate.number > best.number
+                || (candidate.number === best.number && candidate.prefix.length > best.prefix.length)
+            ) {
+                best = candidate;
+            }
+        }
+        if (best === null) return null;
+        const next = String(best.number + 1);
+        return best.prefix + (next.length < best.width ? next.padStart(best.width, '0') : next);
+    };
+
+    const refreshCodeTools = () => {
+        if (!entryForm || !codeInput || !entryCategory) return;
+        const current = codeInput.value.trim();
+        const typed = /^(.*?)(\d+)$/.exec(current);
+        let suggestion = null;
+        if (typed) {
+            // Continue the user's own prefix: typing "XX-001" suggests "XX-002"
+            // even when the category has never used that prefix before.
+            const next = String(parseInt(typed[2], 10) + 1);
+            suggestion = typed[1] + (next.length < typed[2].length ? next.padStart(typed[2].length, '0') : next);
+        } else {
+            suggestion = nextCodeFor(entryCategory.value);
+        }
+        // Codes are unique per project, so skip anything already taken.
+        const taken = new Set(rows.map(row => (row.querySelector('.report-code')?.textContent ?? '').trim()));
+        if (suggestion !== null && taken.has(suggestion)) {
+            const parts = /^(.*?)(\d+)$/.exec(suggestion);
+            let number = parseInt(parts[2], 10);
+            do {
+                number++;
+                const text = String(number);
+                suggestion = parts[1] + (text.length < parts[2].length ? text.padStart(parts[2].length, '0') : text);
+            } while (taken.has(suggestion) && number < 1e9);
+        }
+        if (suggestion === null) {
+            if (codeNextButton) codeNextButton.hidden = true;
+            if (codeNote) {
+                codeNote.hidden = false;
+                codeNote.textContent = '该分类还没有带尾号的编码；可直接输入，或留空。';
+            }
+            return;
+        }
+        if (codeNote) codeNote.hidden = true;
+        if (codeNextButton) codeNextButton.hidden = false;
+        if (codePreview) codePreview.textContent = suggestion;
+        const duplicate = current !== '' && taken.has(current);
+        if (codeNextButton) {
+            codeNextButton.classList.toggle('is-warning', duplicate);
+            codeNextButton.title = duplicate ? '当前编码已存在，点击改用建议编码' : '点击填入建议编码';
+        }
+        if (!codeDirty && current === '') codeInput.value = suggestion;
+    };
+
+    // ---- category selection ----------------------------------------------
+    const selectCategory = (value, { syncEntry = true } = {}) => {
+        selectedCategory = value;
+        if (categorySelect && categorySelect.value !== value) categorySelect.value = value;
+        for (const button of railButtons) {
+            const active = button.dataset.railCategory === value;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+        if (syncEntry && entryCategory && followToggle && followToggle.checked && entryCategory.value !== value) {
+            entryCategory.value = value;
+            codeDirty = false;
+            refreshCodeTools();
+            updateCategoryStat();
+            persistEntry();
+        }
+        applyFilter();
+    };
+
+    // ---- async save + in-place refresh ------------------------------------
+    const showStatus = (node, message, isError) => {
+        if (!node) return;
+        window.clearTimeout(statusTimer);
+        node.textContent = message;
+        node.classList.toggle('is-error', isError);
+        node.classList.toggle('is-success', !isError);
+        node.hidden = false;
+        if (!isError) statusTimer = window.setTimeout(() => { node.hidden = true; }, 4000);
+    };
+
+    const extractError = async response => {
+        const text = await response.text().catch(() => '');
+        try {
+            const doc = new DOMParser().parseFromString(text, 'text/html');
+            const message = doc.querySelector('.auth-card p:not(.eyebrow)');
+            if (message && message.textContent.trim() !== '') return message.textContent.trim();
+        } catch { /* fall through to the generic message */ }
+        if (response.status === 419) return '表单已过期，请刷新页面后重试。';
+        if (response.status === 403) return '没有执行此操作的权限。';
+        return '保存失败，请重试。';
+    };
+
+    const addChip = material => {
+        if (!recentBox || !recentChips) return;
+        recentBox.hidden = false;
+        const chip = document.createElement('span');
+        chip.className = 'entry-chip';
+        const code = document.createElement('strong');
+        code.textContent = String(material.material_code ?? '') !== '' ? String(material.material_code) : '无编码';
+        const name = document.createElement('span');
+        name.textContent = String(material.material_name ?? '');
+        const unit = document.createElement('span');
+        unit.className = 'entry-chip-place';
+        unit.textContent = String(material.unit ?? '');
+        chip.append(code, name, unit);
+        recentChips.prepend(chip);
+        while (recentChips.children.length > 10) recentChips.lastElementChild.remove();
+    };
+
+    const refreshCatalogue = async highlightId => {
+        const response = await fetch(window.location.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!response.ok) return;
+        const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+        const freshBody = doc.querySelector('[data-materials-body]');
+        if (freshBody && tbody) {
+            tbody.replaceChildren(...freshBody.childNodes);
+            rows = [...tbody.querySelectorAll('.material-row')];
+        }
+        const freshRail = doc.querySelector('#material-rail .rail-list');
+        const railList = rail ? rail.querySelector('.rail-list') : null;
+        if (freshRail && railList) {
+            railList.replaceChildren(...freshRail.childNodes);
+            railButtons = [...railList.querySelectorAll('[data-rail-category]')];
+        }
+        const freshDialogs = doc.querySelector('[data-material-dialogs]');
+        if (freshDialogs && dialogsHost) dialogsHost.replaceChildren(...freshDialogs.childNodes);
+        const freshUnits = doc.getElementById('material-unit-options');
+        if (freshUnits && unitList) unitList.replaceChildren(...freshUnits.childNodes);
+        const freshTotal = doc.querySelector('[data-material-total]');
+        if (freshTotal && totalLabel) totalLabel.textContent = freshTotal.textContent;
+        if (highlightId != null) {
+            const row = tbody ? tbody.querySelector(`[data-material-id="${highlightId}"]`) : null;
+            if (row) {
+                row.classList.add('is-new');
+                row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }
+        // Re-apply the active category; do not touch the entry form itself.
+        selectCategory(selectedCategory, { syncEntry: false });
+        updateCategoryStat();
+        refreshCodeTools();
+    };
+
+    const postMaterial = async body => {
+        body.set('async', '1');
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.ok !== true || !payload.material) {
+            throw new Error(response.ok ? '保存失败，请重试。' : await extractError(response));
+        }
+        return payload.material;
+    };
+
+    const initEntry = () => {
+        if (!entryForm || typeof window.fetch !== 'function') return;
+        const nameInput = entryForm.querySelector('[data-entry-name]');
+        const unitInput = entryForm.querySelector('[data-entry-unit]');
+        const submit = entryForm.querySelector('.entry-submit');
+
+        const saved = readSaved();
+        if (saved && typeof saved === 'object') {
+            if (followToggle && typeof saved.follow === 'boolean') followToggle.checked = saved.follow;
+            if (entryCategory && saved.category && [...entryCategory.options].some(option => option.value === saved.category)) {
+                entryCategory.value = saved.category;
+            }
+            if (unitInput && typeof saved.unit === 'string' && saved.unit !== '') {
+                unitInput.value = saved.unit;
+            }
+        }
+
+        if (entryCategory) {
+            entryCategory.addEventListener('change', () => {
+                codeDirty = false;
+                refreshCodeTools();
+                updateCategoryStat();
+                persistEntry();
+                // Changing the entry category is also a deliberate list filter:
+                // keep the rail and the visible list aligned with what is typed.
+                selectCategory(entryCategory.value, { syncEntry: false });
+            });
+        }
+        if (followToggle) {
+            followToggle.addEventListener('change', () => {
+                persistEntry();
+                if (followToggle.checked && entryCategory && entryCategory.value !== selectedCategory) {
+                    entryCategory.value = selectedCategory;
+                    codeDirty = false;
+                    refreshCodeTools();
+                    updateCategoryStat();
+                    persistEntry();
+                }
+            });
+        }
+        if (codeInput) {
+            codeInput.addEventListener('input', () => {
+                codeDirty = true;
+                refreshCodeTools();
+            });
+        }
+        if (codeNextButton) {
+            codeNextButton.addEventListener('click', () => {
+                const suggestion = nextCodeFor(entryCategory ? entryCategory.value : '');
+                if (suggestion !== null && codeInput) {
+                    codeInput.value = suggestion;
+                    codeDirty = true;
+                    refreshCodeTools();
+                    if (nameInput) nameInput.focus();
+                }
+            });
+        }
+        if (unitInput) {
+            unitInput.addEventListener('input', persistEntry);
+        }
+        // Returning to the page keeps the last batch context visible: the list
+        // opens on the category that was last being entered.
+        if (entryCategory && entryCategory.value !== '') {
+            selectCategory(entryCategory.value, { syncEntry: false });
+        }
+        // Single-line textareas keep the tab order short: Enter saves, while
+        // Shift+Enter still inserts a line break for longer specifications.
+        for (const field of entryForm.querySelectorAll('[data-entry-single-line]')) {
+            field.addEventListener('keydown', event => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+                    event.preventDefault();
+                    entryForm.requestSubmit();
+                }
+            });
+        }
+
+        entryForm.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (busy) return;
+            if (!entryForm.reportValidity()) return;
+            busy = true;
+            if (submit) { submit.disabled = true; submit.classList.add('is-busy'); }
+            try {
+                const material = await postMaterial(new FormData(entryForm));
+                savedCount++;
+                if (entryCounter) entryCounter.textContent = String(savedCount);
+                const codeText = String(material.material_code ?? '');
+                showStatus(entryStatus, `已保存：${codeText !== '' ? codeText + ' · ' : ''}${material.material_name}，继续录入下一条`, false);
+                addChip(material);
+                // Keep category + unit (the batch context), clear the rest.
+                if (codeInput) codeInput.value = '';
+                if (nameInput) nameInput.value = '';
+                const specs = entryForm.querySelector('textarea[name="specifications"]');
+                const description = entryForm.querySelector('textarea[name="material_description_detailed"]');
+                if (specs) specs.value = '';
+                if (description) description.value = '';
+                codeDirty = false;
+                persistEntry();
+                // Refresh first, then suggest the next code against the new
+                // list; refocus immediately so typing is never blocked.
+                refreshCatalogue(material.material_id)
+                    .catch(() => {})
+                    .finally(() => refreshCodeTools());
+                if (nameInput) nameInput.focus();
+            } catch (error) {
+                showStatus(entryStatus, error instanceof Error && error.message ? error.message : '网络异常，保存失败，请重试。', true);
+            } finally {
+                busy = false;
+                if (submit) { submit.disabled = false; submit.classList.remove('is-busy'); }
+            }
+        });
+
+        updateCategoryStat();
+        refreshCodeTools();
+    };
+
+    const initEditDialogs = () => {
+        if (typeof window.fetch !== 'function') return;
+        // Delegated so dialogs replaced by refreshCatalogue keep working.
+        document.addEventListener('submit', async event => {
+            const form = event.target.closest('form[data-material-edit]');
+            if (!form) return;
+            event.preventDefault();
+            if (form.dataset.busy === '1') return;
+            if (!form.reportValidity()) return;
+            form.dataset.busy = '1';
+            const submit = form.querySelector('button[type="submit"]');
+            const status = form.querySelector('[data-edit-status]');
+            if (submit) submit.disabled = true;
+            try {
+                const material = await postMaterial(new FormData(form));
+                const dialog = form.closest('dialog');
+                if (dialog) dialog.close();
+                showStatus(entryStatus, `已更新：${material.material_name}`, false);
+                refreshCatalogue(material.material_id).catch(() => {});
+            } catch (error) {
+                showStatus(status, error instanceof Error && error.message ? error.message : '网络异常，保存失败，请重试。', true);
+            } finally {
+                form.dataset.busy = '';
+                if (submit) submit.disabled = false;
+            }
+        });
+        document.addEventListener('keydown', event => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                const dialog = document.querySelector('dialog.edit-dialog[open]');
+                const form = dialog ? dialog.querySelector('form[data-material-edit]') : null;
+                if (form) {
+                    event.preventDefault();
+                    form.requestSubmit();
+                }
+            }
+        });
+    };
+
+    // ---- wiring -----------------------------------------------------------
+    if (!entryForm && categorySelect) {
+        // Without the entry panel the "未分类" option only exists for the rail;
+        // keep it out of the export select so no invalid category id is posted.
+        const uncategorised = categorySelect.querySelector('option[value="0"]');
+        if (uncategorised) uncategorised.remove();
+    }
+    if (search) search.addEventListener('input', applyFilter);
+    if (categorySelect) {
+        categorySelect.addEventListener('change', () => selectCategory(categorySelect.value));
+    }
+    if (rail) {
+        rail.addEventListener('click', event => {
+            const button = event.target.closest('[data-rail-category]');
+            if (button) selectCategory(button.dataset.railCategory);
+        });
+    }
+    document.addEventListener('click', event => {
+        const trigger = event.target.closest('[data-entry-focus]');
+        if (!trigger || !entryForm) return;
+        const panel = document.getElementById('material-entry');
+        if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const nameInput = entryForm.querySelector('[data-entry-name]');
+        if (nameInput) nameInput.focus();
+    });
+
+    initEntry();
+    initEditDialogs();
+    applyFilter();
+})();
 
 document.addEventListener('click', event => {
     const trigger = event.target.closest('[data-disclosure-open]');

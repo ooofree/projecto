@@ -1106,6 +1106,118 @@ foreach ([
     }
 }
 
+// Materials page redesign: persistent category rail + continuous entry
+// workbench + async material save (same permissions/project scope as the form).
+$materialWorkbenchHtml = renderMaterialTestView($plugin->dispatch('materials', []));
+materialTestCheck(
+    str_contains($materialWorkbenchHtml, 'id="material-rail"')
+        && str_contains($materialWorkbenchHtml, 'data-rail-category=')
+        && str_contains($materialWorkbenchHtml, 'data-material-workspace')
+        && str_contains($materialWorkbenchHtml, 'data-material-add')
+        && str_contains($materialWorkbenchHtml, 'data-entry-category')
+        && str_contains($materialWorkbenchHtml, 'data-entry-code-next')
+        && str_contains($materialWorkbenchHtml, 'data-material-entry-counter')
+        && str_contains($materialWorkbenchHtml, 'data-entry-status')
+        && str_contains($materialWorkbenchHtml, 'data-entry-recent')
+        && str_contains($materialWorkbenchHtml, 'data-materials-body')
+        && str_contains($materialWorkbenchHtml, 'data-material-dialogs')
+        && str_contains($materialWorkbenchHtml, 'data-material-edit')
+        && str_contains($materialWorkbenchHtml, 'id="material-unit-options"')
+        && str_contains($materialWorkbenchHtml, '保存并继续'),
+    'Materials page must render the category rail, continuous-entry workbench, refreshable table/dialog hosts and unit suggestions.'
+);
+preg_match_all('/\sid="([^"]+)"/', $materialWorkbenchHtml, $materialIdMatches);
+materialTestCheck(
+    count($materialIdMatches[1]) === count(array_unique($materialIdMatches[1])),
+    'Materials page markup must not repeat element IDs.'
+);
+materialTestCheck(
+    str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.css'), '.material-rail')
+        && str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.css'), '.entry-context')
+        && str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.js'), 'data-material-workspace'),
+    'The shared assets must style and drive the materials category rail and entry workbench.'
+);
+$asyncMaterialResponse = $plugin->dispatch('material.save', [
+    'async' => '1',
+    'material_code' => 'DG-900',
+    'material_name' => '连续录入测试灯',
+    'unit' => '个',
+    'category_id' => (string) $lightingCategoryId,
+    'specifications' => '测试规格',
+]);
+$asyncMaterialJson = json_decode((string) ($asyncMaterialResponse->data['body'] ?? ''), true);
+materialTestCheck(
+    $asyncMaterialResponse->type === 'raw'
+        && str_contains((string) ($asyncMaterialResponse->data['content_type'] ?? ''), 'application/json')
+        && is_array($asyncMaterialJson)
+        && ($asyncMaterialJson['ok'] ?? false) === true
+        && (int) ($asyncMaterialJson['id'] ?? 0) > 0
+        && (string) ($asyncMaterialJson['material']['material_code'] ?? '') === 'DG-900'
+        && (string) ($asyncMaterialJson['material']['material_name'] ?? '') === '连续录入测试灯'
+        && (int) ($asyncMaterialJson['material']['category_id'] ?? 0) === (int) $lightingCategoryId,
+    'Async material save must return the saved record as JSON for the continuous-entry workbench.'
+);
+$asyncMaterialId = (int) $asyncMaterialJson['id'];
+materialTestExpectStatus(
+    fn () => $plugin->dispatch('material.save', [
+        'async' => '1',
+        'material_code' => 'DG-900',
+        'material_name' => '编码冲突材料',
+        'unit' => '个',
+    ]),
+    409,
+    'Async material save must surface duplicate-code conflicts like a normal form post.'
+);
+materialTestExpectStatus(
+    fn () => $plugin->dispatch('material.save', [
+        'async' => '1',
+        'material_name' => '',
+        'unit' => '个',
+    ]),
+    422,
+    'Async material save must validate required fields.'
+);
+materialTestExpectStatus(
+    fn () => $plugin->dispatch('material.save', [
+        'async' => '1',
+        'material_name' => '跨项目分类材料',
+        'unit' => '个',
+        'category_id' => (string) $otherProjectCategoryId,
+    ]),
+    404,
+    'Async material save must reject categories from another project.'
+);
+$materialEditPermissionRow = $db->query("SELECT permission_id FROM Permissions WHERE permission_name = 'edit_materials'")->fetch();
+materialTestCheck(is_array($materialEditPermissionRow), 'The material edit permission must exist for the denial test.');
+$db->exec('DELETE FROM Role_Permissions WHERE role_id = 1 AND permission_id = ' . (int) $materialEditPermissionRow['permission_id']);
+materialTestExpectStatus(
+    fn () => $plugin->dispatch('material.save', [
+        'async' => '1',
+        'material_name' => '无权限材料',
+        'unit' => '个',
+    ]),
+    403,
+    'Async material save must enforce the edit permission.'
+);
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, ' . (int) $materialEditPermissionRow['permission_id'] . ')');
+$asyncMaterialAuditCount = (int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'material.save'")->fetchColumn();
+materialTestCheck($asyncMaterialAuditCount >= 1, 'Async material save must write the same audit entry as a form post.');
+// Normal (non-async) save keeps redirecting; clean the async test record up so
+// the export assertions below keep their expected row counts.
+$normalMaterialResponse = $plugin->dispatch('material.save', [
+    'material_code' => 'DG-901',
+    'material_name' => '常规保存测试灯',
+    'unit' => '个',
+]);
+materialTestCheck(
+    $normalMaterialResponse->type === 'redirect' && $normalMaterialResponse->location === '?page=materials',
+    'Non-async material save must keep the flash + redirect contract.'
+);
+$catalog->deleteMaterial(1, $asyncMaterialId);
+$normalMaterialRow = $db->query("SELECT material_id FROM Materials WHERE material_code = 'DG-901'")->fetch();
+materialTestCheck(is_array($normalMaterialRow), 'The normal-save test material must exist before cleanup.');
+$catalog->deleteMaterial(1, (int) $normalMaterialRow['material_id']);
+
 // Material catalogue Excel export: all rows, or only the category chosen in the
 // list filter; the file name carries the project, category and date.
 $allMaterialsExport = $plugin->dispatch('material.export', []);

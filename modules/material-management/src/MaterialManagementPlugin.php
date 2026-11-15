@@ -249,6 +249,28 @@ final class MaterialManagementPlugin implements PluginInterface
     {
         $projectId = $this->requireMaterialEdit();
         $id = $this->catalog->saveMaterial($projectId, $input);
+        // Continuous catalogue entry posts asynchronously: answer with the saved
+        // record so the list, category counts and edit dialogs refresh in place.
+        // The same permissions, project context and audit trail apply as for a
+        // normal form post.
+        if (($input['async'] ?? '') === '1') {
+            Support::audit($this->context->db, 'material.save', 'Record ' . $id . '.');
+            $record = null;
+            foreach ($this->catalog->materialData($projectId)['materials'] as $row) {
+                if ((int) $row['material_id'] === $id) {
+                    $record = $row;
+                    break;
+                }
+            }
+            if ($record === null) {
+                throw new HttpException('材料已保存，但暂时无法读取记录，请刷新页面。', 500);
+            }
+            return PluginResponse::raw(
+                (string) json_encode(['ok' => true, 'id' => $id, 'material' => $record], JSON_UNESCAPED_UNICODE),
+                'application/json; charset=utf-8',
+                ['Cache-Control' => 'private, no-store']
+            );
+        }
         return $this->complete('material.save', '材料已保存。', $id, '?page=materials');
     }
 
