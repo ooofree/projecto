@@ -19,6 +19,26 @@ $assetVersion = static function (string $relative): string {
 
     return $relative . '?v=' . $cache[$relative];
 };
+
+/**
+ * Cache-busting for plugin-owned assets. A business page declares the module
+ * assets it needs, so they load only on that page instead of every request.
+ *
+ * Module directories live outside the web root, so the file is streamed by the
+ * plugin's own asset route rather than exposed as a browsable path. The route
+ * validates the module and file name against its manifest-declared assets.
+ */
+$moduleAssetVersion = static function (array $asset): string {
+    $module = (string) ($asset['module'] ?? '');
+    $file = (string) ($asset['file'] ?? '');
+    $version = (string) ($asset['version'] ?? '0');
+    if (preg_match('/^[a-z0-9.-]+$/', $module) !== 1 || preg_match('/^[a-z0-9._-]+$/', $file) !== 1) {
+        throw new RuntimeException('Invalid module asset declaration.');
+    }
+
+    return '?page=module-asset&module=' . rawurlencode($module)
+        . '&file=' . rawurlencode($file) . '&v=' . rawurlencode($version);
+};
 ?>
 <!doctype html>
 <html lang="zh-CN">
@@ -27,6 +47,9 @@ $assetVersion = static function (string $relative): string {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= $escape($title ?? $platformName) ?> · <?= $escape($platformName) ?></title>
     <link rel="stylesheet" href="<?= $escape($assetVersion('assets/app.css')) ?>">
+    <?php foreach (($pageStyles ?? []) as $pageStyle): ?>
+        <link rel="stylesheet" href="<?= $escape($moduleAssetVersion($pageStyle)) ?>">
+    <?php endforeach; ?>
 </head>
 <body class="theme-<?= $escape($theme) ?>">
 <header class="topbar">
@@ -55,5 +78,8 @@ $assetVersion = static function (string $relative): string {
     <?= $content ?>
 </main>
 <script src="<?= $escape($assetVersion('assets/app.js')) ?>" defer></script>
+<?php foreach (($pageScripts ?? []) as $pageScript): ?>
+    <script src="<?= $escape($moduleAssetVersion($pageScript)) ?>" defer></script>
+<?php endforeach; ?>
 </body>
 </html>

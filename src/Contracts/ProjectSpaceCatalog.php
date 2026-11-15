@@ -24,8 +24,23 @@ interface ProjectSpaceCatalog
      * a selection control. `labels` also covers archived spaces so records that
      * already reference them keep a readable name.
      *
+     * Each option also carries `path` (ancestor names, outermost first, ending
+     * with its own name) and `depth`, so a consumer can render an indented
+     * hierarchy and a breadcrumb without knowing the space schema.
+     *
      * @return array{
-     *     options: list<array{value: string, label: string, type: string, id: int}>,
+     *     options: list<array{
+     *         value: string,
+     *         label: string,
+     *         type: string,
+     *         id: int,
+     *         name: string,
+     *         path: list<string>,
+     *         depth: int,
+     *         building_id: int,
+     *         floor_id: int|null,
+     *         area_id: int|null
+     *     }>,
      *     labels: array<string, string>
      * }
      */

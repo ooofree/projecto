@@ -34,6 +34,10 @@
         "POST rfi.image.upload": "rfi.image.upload",
         "POST rfi.image.delete": "rfi.image.delete"
     },
+    "assets": [
+        "issue-location.css",
+        "issue-location.js"
+    ],
     "migrations": [
         "database/migrations"
     ],

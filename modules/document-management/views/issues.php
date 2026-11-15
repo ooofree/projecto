@@ -15,17 +15,29 @@ $locationOptions = $locationCatalog['options'] ?? [];
 $locationLabels = $locationCatalog['labels'] ?? [];
 $spaceSelectionReady = !empty($spaceSelectionReady);
 $locationTypeLabels = ['building' => '楼栋', 'floor' => '楼层', 'area' => '区域', 'room' => '房间'];
+$locationPickerIndex = 0;
 /**
- * Render the project-space location selector.
+ * Render the issue location field.
  *
- * Groups options by space type. Keeps an archived selection visible but marked
- * so it must be re-picked, and shows a legacy free-text location as a read-only
- * note rather than silently discarding it.
+ * Server-rendered fallback: a grouped native select that already submits the
+ * right value. issue-location.js enhances it into search + tree browse + recent
+ * picks, keeping this select as the submitted control, so the form still works
+ * with JavaScript disabled. The catalogue is emitted as JSON for the enhancer;
+ * it holds only this project's active spaces, already filtered server-side.
  */
 $renderLocationSelect = static function (
     string $selectedValue,
-    string $legacyText = ''
-) use ($escape, $locationOptions, $spaceSelectionReady, $locationTypeLabels): string {
+    string $legacyText = '',
+    string $noteValue = ''
+) use (
+    $escape,
+    $locationOptions,
+    $spaceSelectionReady,
+    $locationTypeLabels,
+    $locationCatalog,
+    $currentProject,
+    &$locationPickerIndex
+): string {
     if (!$spaceSelectionReady) {
         return '<p class="muted">项目空间不可用，暂时无法选择位置。</p>';
     }
@@ -38,10 +50,22 @@ $renderLocationSelect = static function (
         }
     }
 
-    $html = '<select name="location">';
+    $locationPickerIndex++;
+    $pickerId = 'location-picker-' . $locationPickerIndex;
+    $html = '<div class="field-wide" data-location-picker id="' . $escape($pickerId)
+        . '" data-project-id="' . (int) $currentProject['project_id'] . '">';
+    $html .= '<span class="field-label">位置（可选，从项目空间选择）</span>';
+
+    // Progressive-enhancement payload: only active, project-scoped spaces.
+    $html .= '<script type="application/json" data-location-catalog>'
+        . json_encode(
+            ['options' => array_values($locationOptions)],
+            JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+        )
+        . '</script>';
+
+    $html .= '<select name="location" class="loc-fallback" aria-label="位置">';
     if ($legacyText !== '') {
-        // Historical free-text location: keep it selected by default so editing
-        // other fields never silently discards it.
         $html .= '<option value="legacy" selected>保留原位置：' . $escape($legacyText) . '</option>';
     }
     if ($selectedValue === '' && $legacyText === '') {
@@ -51,7 +75,6 @@ $renderLocationSelect = static function (
     } else {
         $html .= '<option value="" selected>原位置已归档或不存在，请重新选择</option>';
     }
-
     $grouped = [];
     foreach ($locationOptions as $option) {
         $grouped[$option['type']][] = $option;
@@ -70,9 +93,18 @@ $renderLocationSelect = static function (
     }
     $html .= '</select>';
 
+    // Server-rendered note field; the enhancer moves its value and removes this
+    // wrapper so exactly one location_note input is ever submitted.
+    $html .= '<span class="loc-note" data-location-note-field>'
+        . '<label>位置补充说明（可选）'
+        . '<input name="location_note" maxlength="255" data-location-note value="' . $escape($noteValue)
+        . '" placeholder="如 C-E轴、前室靠门侧">'
+        . '</label></span>';
+
     if ($locationOptions === []) {
-        $html .= '<span class="muted">当前项目还没有空间记录，请先在“项目空间”中维护楼栋、楼层、区域或房间。</span>';
+        $html .= '<p class="loc-empty-note">当前项目还没有空间记录，请先在“项目空间”中维护楼栋、楼层、区域或房间。</p>';
     }
+    $html .= '</div>';
 
     return $html;
 };
@@ -123,10 +155,7 @@ ob_start();
                     <option value="critical">紧急</option>
                 </select>
             </label>
-            <label class="field-wide">
-                位置（可选，从项目空间选择）
-                <?= $renderLocationSelect('') ?>
-            </label>
+            <?= $renderLocationSelect('') ?>
             <div class="field-wide dialog-actions">
                 <button class="button button-secondary" type="button" data-dialog-close>取消</button>
                 <button class="button button-primary" type="submit">保存问题</button>
@@ -166,7 +195,7 @@ ob_start();
                         <?php $searchText = mb_strtolower(implode(' ', [
                             $issue['description'],
                             $issue['issue_number'] ?? '',
-                            $issue['location_name'] ?? '',
+                            $issue['location_display'] ?? '',
                             $statusLabels[$issue['status']] ?? $issue['status'],
                             $severityLabels[$issue['severity']] ?? $issue['severity'],
                         ])); ?>
@@ -175,7 +204,7 @@ ob_start();
                             <td class="table-primary-cell"><?= $escape(mb_strimwidth($issue['description'], 0, 100, '…')) ?></td>
                             <td><span class="badge badge-neutral"><?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?></span></td>
                             <td><span class="badge"><?= $escape($statusLabels[$issue['status']] ?? $issue['status']) ?></span></td>
-                            <td><?= $escape(($issue['location_name'] ?? '') !== '' ? $issue['location_name'] : '—') ?></td>
+                            <td><?= $escape(($issue['location_display'] ?? '') !== '' ? $issue['location_display'] : '—') ?></td>
                             <td><?= count($issue['images']) ?></td>
                             <td><?= $escape(\ProjectO\Support::formatDateTime($issue['updated_at'])) ?></td>
                             <td><button class="button button-secondary" type="button" data-dialog-open="issue-dialog-<?= (int) $issue['issue_id'] ?>">查看 / 编辑</button></td>
@@ -214,20 +243,18 @@ ob_start();
                                 <?php endforeach; ?>
                             </select>
                         </label>
-                        <label class="field-wide">
-                            位置（从项目空间选择）
-                            <?= $renderLocationSelect(
-                                (string) ($issue['location_value'] ?? ''),
-                                $issue['location_type'] === null ? (string) ($issue['location'] ?? '') : ''
-                            ) ?>
-                        </label>
+                        <?= $renderLocationSelect(
+                            (string) ($issue['location_value'] ?? ''),
+                            $issue['location_type'] === null ? (string) ($issue['location'] ?? '') : '',
+                            (string) ($issue['location_note'] ?? '')
+                        ) ?>
                         <div class="field-wide dialog-actions">
                             <button class="button button-primary" type="submit">保存编辑</button>
                         </div>
                     </form>
                 <?php else: ?>
                     <p><?= nl2br($escape($issue['description'])) ?></p>
-                    <p>严重程度：<?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?> · 位置：<?= $escape(($issue['location_name'] ?? '') !== '' ? $issue['location_name'] : '—') ?></p>
+                    <p>严重程度：<?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?> · 位置：<?= $escape(($issue['location_display'] ?? '') !== '' ? $issue['location_display'] : '—') ?></p>
                 <?php endif; ?>
 
                 <?php if ($issue['resolution_result']): ?>
@@ -381,4 +408,9 @@ ob_start();
         <?php endforeach; ?>
     <?php endif; ?>
 </section>
-<?php $content = ob_get_clean(); require dirname(__DIR__, 3) . '/views/layout.php'; ?>
+<?php
+$content = ob_get_clean();
+$pageStyles = [['module' => 'document.management', 'file' => 'issue-location.css', 'version' => $moduleAssetVersions['issue-location.css'] ?? '0']];
+$pageScripts = [['module' => 'document.management', 'file' => 'issue-location.js', 'version' => $moduleAssetVersions['issue-location.js'] ?? '0']];
+require dirname(__DIR__, 3) . '/views/layout.php';
+?>

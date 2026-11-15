@@ -14,6 +14,7 @@ final class PluginRegistry
     private array $permissions = [];
     private array $permissionNames = [];
     private array $migrations = [];
+    private array $assets = [];
     private array $manifests = [];
     private array $enabledStates = [];
     private PluginEventBus $eventBus;
@@ -98,7 +99,8 @@ final class PluginRegistry
                 $manifest['directory'],
                 $this->objectStorage,
                 $this->eventBus,
-                $this->services->forPlugin($id)
+                $this->services->forPlugin($id),
+                fn (string $pluginId, string $file): string => $this->assetVersion($pluginId, $file)
             ));
             if (!$plugin instanceof PluginInterface) {
                 throw new RuntimeException("Plugin {$id} must implement PluginInterface.");
@@ -176,6 +178,26 @@ final class PluginRegistry
             if ($moduleDirectory === false) {
                 throw new RuntimeException("Plugin {$id} directory could not be resolved.");
             }
+
+            // Opt-in static assets. Only manifest-declared files inside the
+            // plugin's own public directory are ever served, so the route can
+            // never be turned into arbitrary file read.
+            foreach ($manifest['assets'] ?? [] as $asset) {
+                if (!is_string($asset) || preg_match('/^[a-z0-9._-]+\.(css|js)$/', $asset) !== 1) {
+                    throw new RuntimeException("Plugin {$id} declares an invalid asset name.");
+                }
+                $assetPath = realpath($moduleDirectory . '/public/' . $asset);
+                $publicDirectory = realpath($moduleDirectory . '/public');
+                if (
+                    $assetPath === false
+                    || $publicDirectory === false
+                    || !str_starts_with($assetPath, $publicDirectory . DIRECTORY_SEPARATOR)
+                    || !is_file($assetPath)
+                ) {
+                    throw new RuntimeException("Plugin {$id} asset {$asset} is missing.");
+                }
+                $this->assets[$id . '/' . $asset] = $assetPath;
+            }
             foreach ($manifest['migrations'] ?? [] as $migrationDirectory) {
                 if (!is_string($migrationDirectory) || $migrationDirectory === '') {
                     throw new RuntimeException("Plugin {$id} declares an invalid migration directory.");
@@ -227,6 +249,34 @@ final class PluginRegistry
     public function migrations(): array
     {
         return $this->migrations;
+    }
+
+    /**
+     * Resolve a manifest-declared plugin asset to an absolute path.
+     *
+     * Returns null when the plugin is disabled or the file was not declared, so
+     * callers answer 404 instead of probing the filesystem.
+     */
+    public function assetPath(string $pluginId, string $file): ?string
+    {
+        if (!$this->isEnabled($pluginId)) {
+            return null;
+        }
+
+        return $this->assets[$pluginId . '/' . $file] ?? null;
+    }
+
+    /** Content fingerprint used to cache-bust a declared plugin asset. */
+    public function assetVersion(string $pluginId, string $file): string
+    {
+        $path = $this->assetPath($pluginId, $file);
+        if ($path === null) {
+            return '0';
+        }
+        $mtime = @filemtime($path);
+        $size = @filesize($path);
+
+        return substr(sha1(($mtime === false ? 0 : $mtime) . ':' . ($size === false ? 0 : $size)), 0, 10);
     }
 
     public function catalog(): array

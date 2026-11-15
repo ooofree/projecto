@@ -131,7 +131,7 @@ final class DocumentService
         $stmt = $this->db->prepare(
             'SELECT i.issue_id, i.project_id, i.issue_number, i.description, i.severity, i.status,
                     i.location, i.location_type, i.location_building_id, i.location_floor_id,
-                    i.location_area_id, i.location_room_id,
+                    i.location_area_id, i.location_room_id, i.location_note,
                     i.reported_by, i.reported_at, i.resolution_result,
                     i.verification_status, i.verification_note, i.evidence_reference,
                     i.closed_at, i.closed_by, i.created_at, i.updated_at,
@@ -196,6 +196,8 @@ final class DocumentService
                 ? ''
                 : $issue['location_type'] . ':' . $this->issueLocationEntityId($issue);
             $issue['location_name'] = $this->issueLocationName($issue, $labels);
+            $issue['location_note'] = $issue['location_note'] === null ? '' : (string) $issue['location_note'];
+            $issue['location_display'] = $this->issueLocationDisplay($issue);
         }
         unset($issue);
 
@@ -233,6 +235,25 @@ final class DocumentService
         }
 
         return (string) ($issue['location'] ?? '');
+    }
+
+    /**
+     * Space name plus the optional detail note, as shown in lists and exports.
+     *
+     * The note carries precision the space catalogue cannot express (grid axes,
+     * lobbies, risers), so it is appended rather than replacing the space.
+     *
+     * @param array<string, mixed> $issue
+     */
+    private function issueLocationDisplay(array $issue): string
+    {
+        $name = (string) ($issue['location_name'] ?? '');
+        $note = trim((string) ($issue['location_note'] ?? ''));
+        if ($note === '') {
+            return $name;
+        }
+
+        return $name === '' ? $note : $name . ' · ' . $note;
     }
 
     public function listRfis(int $projectId): array
@@ -346,16 +367,17 @@ final class DocumentService
             // Resolved after the caller's permission and project checks so an
             // unauthorized request cannot probe which spaces exist.
             $location = $this->resolveIssueLocation($projectId, $data['location'] ?? null);
+            $locationNote = $this->optionalText($data['location_note'] ?? null, '位置补充说明', 255);
             $issueNumber = $this->nextDocumentNumber($projectId, 'ISS');
             $stmt = $this->db->prepare(
                 "INSERT INTO document_issues
                     (project_id, issue_number, description, severity, status, location,
                      location_type, location_building_id, location_floor_id,
-                     location_area_id, location_room_id, reported_by)
+                     location_area_id, location_room_id, location_note, reported_by)
                  VALUES
                     (:project_id, :issue_number, :description, :severity, 'open', :location,
                      :location_type, :location_building_id, :location_floor_id,
-                     :location_area_id, :location_room_id, :reported_by)"
+                     :location_area_id, :location_room_id, :location_note, :reported_by)"
             );
             $stmt->execute([
                 'project_id' => $projectId,
@@ -368,6 +390,7 @@ final class DocumentService
                 'location_floor_id' => $location['location_floor_id'],
                 'location_area_id' => $location['location_area_id'],
                 'location_room_id' => $location['location_room_id'],
+                'location_note' => $locationNote,
                 'reported_by' => $userId,
             ]);
             $issueId = (int) $this->db->lastInsertId();
@@ -405,12 +428,13 @@ final class DocumentService
                 $data['location'] ?? null,
                 (string) ($issue['location'] ?? '')
             );
+            $locationNote = $this->optionalText($data['location_note'] ?? null, '位置补充说明', 255);
             $update = $this->db->prepare(
                 'UPDATE document_issues
                  SET description = :description, severity = :severity, location = :location,
                      location_type = :location_type, location_building_id = :location_building_id,
                      location_floor_id = :location_floor_id, location_area_id = :location_area_id,
-                     location_room_id = :location_room_id,
+                     location_room_id = :location_room_id, location_note = :location_note,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE issue_id = :issue_id AND project_id = :project_id'
             );
@@ -423,6 +447,7 @@ final class DocumentService
                 'location_floor_id' => $location['location_floor_id'],
                 'location_area_id' => $location['location_area_id'],
                 'location_room_id' => $location['location_room_id'],
+                'location_note' => $locationNote,
                 'issue_id' => $issueId,
                 'project_id' => $projectId,
             ]);

@@ -17,7 +17,8 @@ final class PluginContext
         private readonly string $moduleDirectory,
         private readonly ?ObjectStorageInterface $objectStorage = null,
         private readonly ?PluginEventBus $events = null,
-        private readonly ?ServiceLocator $services = null
+        private readonly ?ServiceLocator $services = null,
+        private readonly ?\Closure $assetVersions = null
     ) {
         $this->projectContext = new ProjectContext($db);
     }
@@ -39,6 +40,15 @@ final class PluginContext
         }
 
         return $this->services->service($contract);
+    }
+
+    /**
+     * Content fingerprint of a manifest-declared asset of any enabled plugin.
+     * Set by the registry; isolated test contexts fall back to a stable stamp.
+     */
+    public function assetVersion(string $pluginId, string $file): string
+    {
+        return $this->assetVersions === null ? '0' : ($this->assetVersions)($pluginId, $file);
     }
 
     /** Whether a declared contract currently has an enabled provider. */

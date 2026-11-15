@@ -43,6 +43,22 @@ final class DocumentManagementPlugin implements PluginInterface
     }
 
     /**
+     * Cache-busting stamps for this page's own assets, resolved by the registry
+     * so the view never touches the filesystem.
+     *
+     * @return array<string, string>
+     */
+    private function locationAssetVersions(): array
+    {
+        $versions = [];
+        foreach (['issue-location.css', 'issue-location.js'] as $file) {
+            $versions[$file] = $this->context->assetVersion('document.management', $file);
+        }
+
+        return $versions;
+    }
+
+    /**
      * The project space catalogue published by project.foundation.
      *
      * Returns null when the contract has no enabled provider, so issue records
@@ -144,6 +160,7 @@ final class DocumentManagementPlugin implements PluginInterface
             'issues' => $issues,
             'locationCatalog' => $this->documents->issueLocationCatalog((int) $project['project_id']),
             'spaceSelectionReady' => $this->spaceCatalog() !== null,
+            'moduleAssetVersions' => $this->locationAssetVersions(),
             'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'canEdit' => $this->canEdit(),
             'canManage' => $canManage,
@@ -205,6 +222,7 @@ final class DocumentManagementPlugin implements PluginInterface
                 'description' => $input['description'] ?? null,
                 'severity' => $input['severity'] ?? 'medium',
                 'location' => $input['location'] ?? null,
+                'location_note' => $input['location_note'] ?? null,
             ]
         );
 
@@ -247,6 +265,7 @@ final class DocumentManagementPlugin implements PluginInterface
                 'description' => $input['description'] ?? null,
                 'severity' => $input['severity'] ?? null,
                 'location' => $input['location'] ?? null,
+                'location_note' => $input['location_note'] ?? null,
             ]
         );
 
@@ -662,7 +681,7 @@ final class DocumentManagementPlugin implements PluginInterface
                 self::exportText($issue['description'] ?? null),
                 self::ISSUE_SEVERITY_LABELS[$issue['severity']] ?? (string) $issue['severity'],
                 self::ISSUE_STATUS_LABELS[$status] ?? $status,
-                self::exportText($issue['location_name'] ?? null),
+                self::exportText($issue['location_display'] ?? null),
                 $this->exportIssueImageCell($issue, $images, $rowNumber, $imageColumn),
                 self::exportText($issue['reported_by_name'] ?? null),
                 Support::formatDateTime($issue['reported_at'] ?? null),

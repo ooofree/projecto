@@ -134,6 +134,11 @@ final class Application
         Support::requireLogin();
         Support::setDisplayTimezone(Support::resolveTimezone($this->db));
 
+        if ($page === 'module-asset') {
+            $this->sendModuleAsset($_GET);
+            return;
+        }
+
         if ($page === 'profile') {
             $this->render(dirname(__DIR__) . '/views/profile.php', $this->profileData(), true);
             return;
@@ -158,6 +163,47 @@ final class Application
         }
 
         $this->respond($response);
+    }
+
+    /**
+     * Stream a manifest-declared plugin asset.
+     *
+     * The registry only knows files a plugin explicitly published from its own
+     * public directory, so neither the module nor the file name can be used to
+     * read anything else. Signed-in users only; assets carry no business data.
+     *
+     * @param array<string, mixed> $input
+     */
+    private function sendModuleAsset(array $input): void
+    {
+        $module = $input['module'] ?? '';
+        $file = $input['file'] ?? '';
+        if (!is_string($module) || !is_string($file)) {
+            throw new HttpException('资源参数无效。', 422);
+        }
+        $path = $this->plugins->assetPath($module, $file);
+        if ($path === null) {
+            throw new HttpException('资源不存在。', 404);
+        }
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $contentType = $extension === 'css' ? 'text/css' : 'application/javascript';
+        $body = @file_get_contents($path);
+        if ($body === false) {
+            throw new HttpException('资源读取失败。', 500);
+        }
+        $version = $this->plugins->assetVersion($module, $file);
+        $etag = '"' . $version . '"';
+
+        header('Content-Type: ' . $contentType . '; charset=utf-8');
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, max-age=31536000, immutable');
+        header('ETag: ' . $etag);
+        if (trim((string) ($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === $etag) {
+            http_response_code(304);
+            return;
+        }
+        header('Content-Length: ' . strlen($body));
+        echo $body;
     }
 
     private function respond(PluginResponse $response): void

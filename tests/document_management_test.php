@@ -245,6 +245,7 @@ $db->exec(
         location_floor_id INTEGER REFERENCES Building_Floors (floor_id),
         location_area_id INTEGER REFERENCES Construction_Areas (area_id),
         location_room_id INTEGER REFERENCES Rooms (room_id),
+        location_note TEXT,
         reported_by INTEGER NOT NULL,
         reported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         resolution_result TEXT,
@@ -1704,7 +1705,7 @@ ob_start();
 (new Application($db))->run();
 $renderedLocationPage = (string) ob_get_clean();
 documentTestCheck(
-    str_contains($renderedLocationPage, '<select name="location">')
+    str_contains($renderedLocationPage, '<select name="location" class="loc-fallback"')
         && str_contains($renderedLocationPage, '<optgroup label="楼栋">')
         && str_contains($renderedLocationPage, '<optgroup label="楼层">')
         && str_contains($renderedLocationPage, '<optgroup label="区域">')
@@ -1712,7 +1713,7 @@ documentTestCheck(
         && str_contains($renderedLocationPage, 'value="room:14"')
         && !str_contains($renderedLocationPage, 'value="room:24"')
         && !str_contains($renderedLocationPage, 'name="location" maxlength="255"'),
-    'The issue forms must offer a grouped project-space dropdown instead of a free-text field.'
+    'The issue forms must keep a grouped native fallback select, never a free-text location field.'
 );
 documentTestCheck(
     str_contains($renderedLocationPage, 'Tower A Lobby'),
@@ -1935,5 +1936,226 @@ documentTestCheck(
     'An unreferenced space must still be hard-deleted.'
 );
 $db->exec('DELETE FROM project_foundation_archive_records');
+
+// --- Approach F: search catalogue, tree paths, and the detail note (2026-11-15) ---
+$fCatalog = $spaceCatalog->locationCatalog(1);
+$fRoom = null;
+foreach ($fCatalog['options'] as $option) {
+    if ($option['value'] === 'room:14') { $fRoom = $option; break; }
+}
+documentTestCheck(
+    $fRoom !== null
+        && $fRoom['name'] === '101'
+        && $fRoom['path'] === ['Tower A', 'Ground', '101']
+        && $fRoom['depth'] === 2
+        && (int) $fRoom['building_id'] === 10
+        && (int) $fRoom['floor_id'] === 11,
+    'Each catalogue option must carry its own name, ancestor path and depth for search and tree rendering.'
+);
+$fBuilding = null;
+$fArea = null;
+foreach ($fCatalog['options'] as $option) {
+    if ($option['value'] === 'building:10') { $fBuilding = $option; }
+    if ($option['value'] === 'area:13') { $fArea = $option; }
+}
+documentTestCheck(
+    $fBuilding !== null && $fBuilding['path'] === ['Tower A'] && $fBuilding['depth'] === 0
+        && $fArea !== null && $fArea['path'] === ['Tower A', 'Lobby'] && $fArea['depth'] === 1
+        && $fArea['floor_id'] === null,
+    'Areas must stay building-level: no floor parent is invented for the tree.'
+);
+
+// The detail note is stored alongside the space and shown together with it.
+$noteIssueId = $locatedDocuments->createIssue(1, 1, [
+    'description' => 'Crack along the grid axis',
+    'severity' => 'medium',
+    'location' => 'floor:11',
+    'location_note' => 'C-E轴靠窗一侧',
+]);
+$noteRow = $db->query(
+    'SELECT location_type, location_floor_id, location_note FROM document_issues WHERE issue_id = ' . $noteIssueId
+)->fetch();
+documentTestCheck(
+    $noteRow['location_type'] === 'floor' && (int) $noteRow['location_floor_id'] === 11
+        && $noteRow['location_note'] === 'C-E轴靠窗一侧',
+    'A space selection and its detail note must be stored together.'
+);
+$noteListed = $findListedIssue($locatedDocuments, 1, $noteIssueId);
+documentTestCheck(
+    $noteListed !== null
+        && $noteListed['location_name'] === 'Tower A Ground'
+        && $noteListed['location_display'] === 'Tower A Ground · C-E轴靠窗一侧',
+    'Lists must show the space name plus the detail note.'
+);
+// A note alone is allowed: some locations have no matching space record at all.
+$noteOnlyId = $locatedDocuments->createIssue(1, 1, [
+    'description' => 'Lobby issue without a space record',
+    'location' => '',
+    'location_note' => '客梯前室',
+]);
+$noteOnlyListed = $findListedIssue($locatedDocuments, 1, $noteOnlyId);
+documentTestCheck(
+    $noteOnlyListed !== null && $noteOnlyListed['location_name'] === ''
+        && $noteOnlyListed['location_display'] === '客梯前室',
+    'A detail note without a space must still be readable.'
+);
+// Editing the note must not disturb the selected space.
+$locatedDocuments->updateIssue(1, $noteIssueId, [
+    'description' => 'Crack along the grid axis',
+    'severity' => 'high',
+    'location' => 'floor:11',
+    'location_note' => 'C-E轴，已复核',
+]);
+$noteEdited = $db->query(
+    'SELECT location_floor_id, location_note FROM document_issues WHERE issue_id = ' . $noteIssueId
+)->fetch();
+documentTestCheck(
+    (int) $noteEdited['location_floor_id'] === 11 && $noteEdited['location_note'] === 'C-E轴，已复核',
+    'Editing the note must keep the selected space intact.'
+);
+// Clearing the note keeps the space.
+$locatedDocuments->updateIssue(1, $noteIssueId, [
+    'description' => 'Crack along the grid axis',
+    'severity' => 'high',
+    'location' => 'floor:11',
+    'location_note' => '',
+]);
+documentTestCheck(
+    ($findListedIssue($locatedDocuments, 1, $noteIssueId)['location_display'] ?? 'x') === 'Tower A Ground',
+    'Clearing the note must leave the space name.'
+);
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Overlong note',
+        'location' => 'floor:11',
+        'location_note' => str_repeat('轴', 256),
+    ]),
+    422,
+    'An overlong detail note must be rejected.'
+);
+documentTestExpectStatus(
+    static fn () => $locatedDocuments->createIssue(1, 1, [
+        'description' => 'Array note',
+        'location_note' => ['C-E'],
+    ]),
+    422,
+    'A non-string detail note must be rejected.'
+);
+// Permission is checked before the note is validated, like the space itself.
+$noteDenied = false;
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id = 2');
+try {
+    documentTestExpectStatus(
+        static fn () => $locationRegistry->dispatch('POST', 'issue.create', [
+            'description' => 'Unauthorized note probe',
+            'location' => 'room:24',
+            'location_note' => 'x',
+        ]),
+        403,
+        'The create permission must be checked before location validation.'
+    );
+    $noteDenied = true;
+} finally {
+    $db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 2)');
+}
+documentTestCheck($noteDenied, 'Note handling must not run before authorization.');
+
+// The page ships the picker container, catalogue payload and its own assets.
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_GET = ['page' => 'issues'];
+ob_start();
+(new Application($db))->run();
+$fPage = (string) ob_get_clean();
+documentTestCheck(
+    str_contains($fPage, 'data-location-picker')
+        && str_contains($fPage, 'data-location-catalog')
+        && str_contains($fPage, 'data-project-id="1"')
+        && str_contains($fPage, 'name="location_note"'),
+    'The issue page must render the picker container, its catalogue and the note field.'
+);
+documentTestCheck(
+    str_contains($fPage, 'page=module-asset&amp;module=document.management&amp;file=issue-location.css')
+        && str_contains($fPage, 'page=module-asset&amp;module=document.management&amp;file=issue-location.js'),
+    'The issue page must load its own plugin assets through the asset route.'
+);
+documentTestCheck(
+    !str_contains($fPage, 'modules/document-management/public/'),
+    'Plugin assets must not be referenced as raw filesystem paths.'
+);
+// The JSON payload must not be able to break out of its script element.
+documentTestCheck(
+    str_contains($fPage, 'Tower A') && str_contains($fPage, '"depth":2'),
+    'The catalogue payload must include ancestor paths for the enhancer.'
+);
+
+// The asset route serves declared files and refuses everything else.
+$serveAsset = static function (array $query) use ($db): array {
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+    $_GET = $query;
+    ob_start();
+    (new Application($db))->run();
+    return ['body' => (string) ob_get_clean(), 'status' => http_response_code()];
+};
+$cssOut = $serveAsset(['page' => 'module-asset', 'module' => 'document.management', 'file' => 'issue-location.css']);
+documentTestCheck(
+    str_contains($cssOut['body'], '.loc-picker') && str_contains($cssOut['body'], '.loc-tree'),
+    'The asset route must serve the declared stylesheet.'
+);
+$jsOut = $serveAsset(['page' => 'module-asset', 'module' => 'document.management', 'file' => 'issue-location.js']);
+documentTestCheck(
+    str_contains($jsOut['body'], 'data-location-picker'),
+    'The asset route must serve the declared script.'
+);
+// The host renders errors instead of throwing, so assert on the response.
+foreach ([
+    ['page' => 'module-asset', 'module' => 'document.management', 'file' => '../../src/DocumentService.php'],
+    ['page' => 'module-asset', 'module' => 'document.management', 'file' => 'plugin.json'],
+    ['page' => 'module-asset', 'module' => '../../etc', 'file' => 'passwd'],
+    ['page' => 'module-asset', 'module' => 'unknown.module', 'file' => 'issue-location.css'],
+    ['page' => 'module-asset', 'module' => ['document.management'], 'file' => 'issue-location.css'],
+] as $badAsset) {
+    $refused = $serveAsset($badAsset);
+    documentTestCheck(
+        !str_contains($refused['body'], '.loc-picker')
+            && !str_contains($refused['body'], 'declare(strict_types')
+            && !str_contains($refused['body'], 'data-location-picker')
+            && !str_contains($refused['body'], 'loc-picker'),
+        'Undeclared or traversing asset requests must be refused without leaking file content.'
+    );
+}
+// Disabled plugins must not serve their assets.
+$db->exec("INSERT INTO Plugin_States (plugin_id, is_enabled) VALUES ('document.management', 0)");
+$disabledAsset = $serveAsset(['page' => 'module-asset', 'module' => 'document.management', 'file' => 'issue-location.css']);
+documentTestCheck(
+    !str_contains($disabledAsset['body'], '.loc-picker'),
+    'A disabled plugin must not serve assets.'
+);
+$db->exec("DELETE FROM Plugin_States WHERE plugin_id = 'document.management'");
+// The registry itself must refuse undeclared paths outright.
+$assetRegistry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
+foreach ([
+    ['document.management', '../../src/DocumentService.php'],
+    ['document.management', 'plugin.json'],
+    ['../../etc', 'passwd'],
+    ['unknown.module', 'issue-location.css'],
+] as [$badModule, $badFile]) {
+    documentTestCheck(
+        $assetRegistry->assetPath($badModule, $badFile) === null,
+        'The registry must not resolve undeclared or traversing asset paths.'
+    );
+}
+documentTestCheck(
+    $assetRegistry->assetPath('document.management', 'issue-location.css') !== null
+        && $assetRegistry->assetVersion('document.management', 'issue-location.css') !== '0',
+    'Declared assets must resolve and carry a content fingerprint.'
+);
+
+// Export carries the combined location text.
+$fExport = $locatedPlugin->dispatch('issue.export', []);
+$fSheet = documentTestXlsxPart($fExport, 'xl/worksheets/sheet1.xml');
+documentTestCheck(
+    str_contains($fSheet, '客梯前室'),
+    'The export must include detail notes in the location column.'
+);
 
 echo "Document management tests passed.\n";

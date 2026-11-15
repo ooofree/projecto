@@ -178,6 +178,12 @@ final class ProjectSpaceService implements ProjectSpaceCatalog
                         'label' => $label,
                         'type' => $type,
                         'id' => (int) $row['entity_id'],
+                        'name' => $this->locationName($type, $row),
+                        'path' => $this->locationPath($type, $row),
+                        'depth' => $type === 'room' ? 2 : ($type === 'building' ? 0 : 1),
+                        'building_id' => (int) $row['building_id'],
+                        'floor_id' => $row['floor_id'] === null ? null : (int) $row['floor_id'],
+                        'area_id' => $row['area_id'] === null ? null : (int) $row['area_id'],
                     ];
                 }
             }
@@ -298,6 +304,50 @@ final class ProjectSpaceService implements ProjectSpaceCatalog
         }
 
         return $rows;
+    }
+
+    /**
+     * Own name of one space, without its ancestors.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function locationName(string $type, array $row): string
+    {
+        if ($type === 'building') {
+            return trim((string) $row['building_name']);
+        }
+        if ($type === 'area') {
+            return trim((string) $row['area_name']);
+        }
+        if ($type === 'room') {
+            return trim((string) $row['room_number']);
+        }
+        $floorName = trim((string) ($row['floor_name'] ?? ''));
+
+        return $floorName !== '' ? $floorName : (string) $row['floor_number'];
+    }
+
+    /**
+     * Ancestor names outermost first, ending with the space's own name.
+     *
+     * @param array<string, mixed> $row
+     * @return list<string>
+     */
+    private function locationPath(string $type, array $row): array
+    {
+        $own = $this->locationName($type, $row);
+        if ($type === 'building') {
+            return [$own];
+        }
+        $building = trim((string) $row['building_name']);
+        if ($type === 'room') {
+            $floorName = trim((string) ($row['floor_name'] ?? ''));
+            $floor = $floorName !== '' ? $floorName : (string) $row['floor_number'];
+
+            return [$building, $floor, $own];
+        }
+
+        return [$building, $own];
     }
 
     /** @param array<string, mixed> $row */
