@@ -667,6 +667,17 @@ final class MaterialManagementPlugin implements PluginInterface
         $image = $this->projectMaterials->requireImage($projectId, $sampleId, $imageId);
         $contentType = (string) $image['content_type'];
         $extension = ImageUpload::EXTENSIONS[$contentType] ?? 'img';
+        // Everything above is the only part of this route that needs the session.
+        // Reading the object can take seconds, and PHP's file session lock
+        // serialises every request from the same user, so a samples page with
+        // dozens of thumbnails queues navigation behind the last image and the
+        // UI appears to freeze. Releasing the lock before the slow remote read
+        // lets images load concurrently in the background while page clicks are
+        // served immediately. The token is minted first because nothing can be
+        // persisted once the session is closed, and the error page rendered on
+        // a read failure still offers a logout form.
+        Support::csrfToken();
+        session_write_close();
         try {
             $body = $this->imageStorage->read((string) $image['object_key']);
         } catch (Throwable $exception) {
