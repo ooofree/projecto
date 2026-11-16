@@ -622,6 +622,20 @@ final class DocumentManagementPlugin implements PluginInterface
         $image = $this->images->requireImage($type, $projectId, $ownerId, $imageId);
         $contentType = (string) $image['content_type'];
         $extension = ImageUpload::EXTENSIONS[$contentType] ?? 'img';
+        // Same contract as the sample images: the key embeds 16 random bytes and
+        // is never rewritten, so it is a faithful validator for the bytes the
+        // browser cached. Answering 304 here avoids the remote read entirely.
+        $etag = '"' . hash('sha256', (string) $image['object_key']) . '"';
+        // This route only reads the session; release the lock before any slow
+        // remote work so a page full of attachments cannot queue navigation.
+        Support::csrfToken();
+        session_write_close();
+        if (self::etagMatches($etag)) {
+            return PluginResponse::notModified([
+                'ETag' => $etag,
+                'Cache-Control' => 'private, max-age=31536000, immutable',
+            ]);
+        }
         try {
             $body = $this->imageStorage->read((string) $image['object_key']);
         } catch (Throwable $exception) {
@@ -632,8 +646,35 @@ final class DocumentManagementPlugin implements PluginInterface
         return PluginResponse::inline(
             $label . '-' . $ownerId . '-' . $imageId . '.' . $extension,
             $contentType,
-            $body
+            $body,
+            $etag
         );
+    }
+
+    /**
+     * Whether the browser's conditional request already holds these exact bytes.
+     * Handles a comma-separated If-None-Match list, "*" and weak validators.
+     */
+    private static function etagMatches(string $etag): bool
+    {
+        $header = $_SERVER['HTTP_IF_NONE_MATCH'] ?? null;
+        if (!is_string($header) || trim($header) === '') {
+            return false;
+        }
+        foreach (explode(',', $header) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '*') {
+                return true;
+            }
+            if (str_starts_with($candidate, 'W/')) {
+                $candidate = substr($candidate, 2);
+            }
+            if ($candidate === $etag) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function exportIssues(array $input): PluginResponse

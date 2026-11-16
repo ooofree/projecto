@@ -1809,4 +1809,120 @@ materialTestExpectStatus(
     'Estimate export must enforce server-side feature permissions.'
 );
 
+// Browser-side image caching: an unchanged image must be answerable from the
+// object key alone, so a conditional request costs no remote read and no bytes.
+// A counting adapter proves the 304 path really short-circuits before read().
+final class MaterialCountingImageStorage implements ObjectStorageInterface
+{
+    public int $reads = 0;
+
+    public function isConfigured(): bool
+    {
+        return true;
+    }
+
+    public function upload(string $objectKey, string $filePath, string $contentType): void
+    {
+    }
+
+    public function signedReadUrl(string $objectKey, string $contentType): string
+    {
+        return 'https://example.invalid/' . $objectKey;
+    }
+
+    public function read(string $objectKey): string
+    {
+        $this->reads++;
+
+        return 'counted-image-bytes';
+    }
+
+    public function delete(string $objectKey): void
+    {
+    }
+}
+
+$db->exec(
+    "INSERT INTO Role_Permissions (role_id, permission_id)
+     SELECT 1, permission_id FROM Permissions WHERE permission_name = 'view_material_samples'"
+);
+$_SESSION['active_project_id'] = 1;
+$countingStorage = new MaterialCountingImageStorage();
+$countingPlugin = new MaterialManagementPlugin(
+    new PluginContext($db, dirname(__DIR__) . '/modules/material-management', $countingStorage)
+);
+$cacheInput = ['sample_id' => (string) $linkedSampleId, 'image_id' => (string) $thumbImageId];
+$cacheKeyRow = $db->query(
+    'SELECT object_key FROM Material_Sample_Images WHERE image_id = ' . (int) $thumbImageId
+)->fetch();
+$cacheEtag = '"' . hash('sha256', (string) $cacheKeyRow['object_key']) . '"';
+
+unset($_SERVER['HTTP_IF_NONE_MATCH']);
+$countingStorage->reads = 0;
+$freshImage = $countingPlugin->dispatch('sample.image.view', $cacheInput);
+materialTestCheck(
+    $freshImage->type === 'inline' && ($freshImage->data['etag'] ?? null) === $cacheEtag,
+    'A fresh sample image response must publish an ETag derived from its object key.'
+);
+materialTestCheck(
+    $countingStorage->reads === 1,
+    'A fresh sample image request must read the remote object exactly once.'
+);
+
+$_SERVER['HTTP_IF_NONE_MATCH'] = $cacheEtag;
+$countingStorage->reads = 0;
+$cachedImage = $countingPlugin->dispatch('sample.image.view', $cacheInput);
+materialTestCheck(
+    $cachedImage->type === 'not_modified'
+        && ($cachedImage->data['headers']['ETag'] ?? null) === $cacheEtag,
+    'A matching If-None-Match must yield 304 with the same ETag.'
+);
+materialTestCheck(
+    $countingStorage->reads === 0,
+    'A matching If-None-Match must not read the remote object at all.'
+);
+
+$_SERVER['HTTP_IF_NONE_MATCH'] = 'W/' . $cacheEtag;
+materialTestCheck(
+    $countingPlugin->dispatch('sample.image.view', $cacheInput)->type === 'not_modified',
+    'A weak validator must still match the cached image.'
+);
+$_SERVER['HTTP_IF_NONE_MATCH'] = '"unrelated", ' . $cacheEtag;
+materialTestCheck(
+    $countingPlugin->dispatch('sample.image.view', $cacheInput)->type === 'not_modified',
+    'An If-None-Match list containing our ETag must match.'
+);
+
+$_SERVER['HTTP_IF_NONE_MATCH'] = '"etag-of-a-previous-photo"';
+$countingStorage->reads = 0;
+$changedImage = $countingPlugin->dispatch('sample.image.view', $cacheInput);
+materialTestCheck(
+    $changedImage->type === 'inline' && $countingStorage->reads === 1,
+    'A stale ETag must refetch the image so a replaced photo is never served from cache.'
+);
+
+// The conditional path must not become an authorization bypass.
+$_SERVER['HTTP_IF_NONE_MATCH'] = $cacheEtag;
+$db->exec(
+    "DELETE FROM Role_Permissions
+     WHERE permission_id = (SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_samples')"
+);
+materialTestExpectStatus(
+    static fn () => $countingPlugin->dispatch('sample.image.view', $cacheInput),
+    403,
+    'A matching ETag must not bypass the sample view permission.'
+);
+$db->exec(
+    "INSERT INTO Role_Permissions (role_id, permission_id)
+     SELECT 1, permission_id FROM Permissions WHERE permission_name = 'view_material_samples'"
+);
+$_SESSION['active_project_id'] = 2;
+materialTestExpectStatus(
+    static fn () => $countingPlugin->dispatch('sample.image.view', $cacheInput),
+    404,
+    'A matching ETag must not bypass the project scope of a sample image.'
+);
+$_SESSION['active_project_id'] = 1;
+unset($_SERVER['HTTP_IF_NONE_MATCH']);
+
 echo "Material management tests passed.\n";

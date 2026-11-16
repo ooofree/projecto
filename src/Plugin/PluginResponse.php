@@ -34,13 +34,22 @@ final class PluginResponse
 
     /**
      * Inline binary response for private images served through the application.
+     *
+     * $etag lets the caller publish a validator derived from the immutable
+     * object key, so the browser can keep the bytes and revalidate cheaply.
+     * Omitting it keeps the previous behaviour (no conditional requests).
      */
-    public static function inline(string $filename, string $contentType, string $body): self
-    {
+    public static function inline(
+        string $filename,
+        string $contentType,
+        string $body,
+        ?string $etag = null
+    ): self {
         return new self('inline', [
             'filename' => $filename,
             'content_type' => $contentType,
             'body' => $body,
+            'etag' => $etag,
         ]);
     }
 

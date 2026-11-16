@@ -418,10 +418,21 @@ final class Application
         }
         header('Content-Length: ' . strlen($body));
         header('X-Content-Type-Options: nosniff');
-        // Inline images are immutable per object key (the key embeds 16 random
-        // bytes), so browsers may retain them for a week instead of refetching
-        // a multi-second remote read every five minutes.
-        header('Cache-Control: private, max-age=604800, immutable');
+        // The bytes live in the user's browser, not on this server. An object key
+        // embeds 16 random bytes and is never rewritten in place (uploads INSERT
+        // a new key, removals DELETE it), so a given URL always means the same
+        // image: a year of freshness is safe, and "immutable" stops the browser
+        // from revalidating on every reload. A replaced photo gets a brand-new
+        // URL, which the freshly rendered page carries, so only the changed
+        // image is ever fetched again.
+        header('Cache-Control: private, max-age=31536000, immutable');
+        $etag = $data['etag'] ?? null;
+        if (is_string($etag) && preg_match('/^"[A-Za-z0-9._-]+"$/', $etag) === 1) {
+            // A validator for the cases where the browser does revalidate
+            // (cache cleared, hard reload): the plugin can answer 304 from the
+            // key alone, without reading the remote object at all.
+            header('ETag: ' . $etag);
+        }
         echo $body;
     }
 

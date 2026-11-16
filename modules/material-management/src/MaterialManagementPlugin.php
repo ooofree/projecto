@@ -667,6 +667,12 @@ final class MaterialManagementPlugin implements PluginInterface
         $image = $this->projectMaterials->requireImage($projectId, $sampleId, $imageId);
         $contentType = (string) $image['content_type'];
         $extension = ImageUpload::EXTENSIONS[$contentType] ?? 'img';
+        // The validator comes from the object key, which embeds 16 random bytes
+        // and is never rewritten in place, so it identifies the exact bytes the
+        // browser already holds. Checking it here -- before the remote read --
+        // means an unchanged image costs one indexed query and no R2 round trip
+        // and no payload, instead of a multi-second fetch.
+        $etag = '"' . hash('sha256', (string) $image['object_key']) . '"';
         // Everything above is the only part of this route that needs the session.
         // Reading the object can take seconds, and PHP's file session lock
         // serialises every request from the same user, so a samples page with
@@ -678,6 +684,12 @@ final class MaterialManagementPlugin implements PluginInterface
         // a read failure still offers a logout form.
         Support::csrfToken();
         session_write_close();
+        if (self::etagMatches($etag)) {
+            return PluginResponse::notModified([
+                'ETag' => $etag,
+                'Cache-Control' => 'private, max-age=31536000, immutable',
+            ]);
+        }
         try {
             $body = $this->imageStorage->read((string) $image['object_key']);
         } catch (Throwable $exception) {
@@ -688,8 +700,37 @@ final class MaterialManagementPlugin implements PluginInterface
         return PluginResponse::inline(
             '样品图片-' . $sampleId . '-' . $imageId . '.' . $extension,
             $contentType,
-            $body
+            $body,
+            $etag
         );
+    }
+
+    /**
+     * Whether the browser's conditional request already holds these exact bytes.
+     *
+     * Handles a comma-separated If-None-Match list and the "*" wildcard, and
+     * tolerates the weak-validator prefix some proxies add.
+     */
+    private static function etagMatches(string $etag): bool
+    {
+        $header = $_SERVER['HTTP_IF_NONE_MATCH'] ?? null;
+        if (!is_string($header) || trim($header) === '') {
+            return false;
+        }
+        foreach (explode(',', $header) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '*') {
+                return true;
+            }
+            if (str_starts_with($candidate, 'W/')) {
+                $candidate = substr($candidate, 2);
+            }
+            if ($candidate === $etag) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
