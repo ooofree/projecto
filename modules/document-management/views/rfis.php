@@ -24,15 +24,20 @@ ob_start();
         <button class="button button-primary" type="button" data-dialog-open="rfi-create-dialog">创建 RFI</button>
     <?php endif; ?>
 </section>
-<nav class="module-nav" aria-label="文档管理">
-    <a class="button button-secondary" href="?page=projects">项目首页</a>
-    <a class="button button-secondary" href="?page=documents">文档管理首页</a>
-    <a class="button button-secondary" href="?page=issues">问题管理</a>
-    <a class="button button-primary" href="?page=rfis" aria-current="page">RFI 管理</a>
-    <?php if (!empty($canManageSettings)): ?>
-        <a class="button button-secondary" href="?page=document-settings">系统设置</a>
-    <?php endif; ?>
-</nav>
+<?php
+$navItems = [
+    ['page' => 'projects', 'label' => '项目首页'],
+    ['page' => 'documents', 'label' => '文档管理首页'],
+    ['page' => 'issues', 'label' => '问题管理'],
+    ['page' => 'rfis', 'label' => 'RFI 管理'],
+];
+if (!empty($canManageSettings)) {
+    $navItems[] = ['page' => 'document-settings', 'label' => '系统设置'];
+}
+$navCurrent = 'rfis';
+$navLabel = '文档管理';
+require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
+?>
 <?php if (!$imageStorageReady): ?>
     <div class="notice notice-info">图片存储尚未配置；问题与 RFI 图片暂不可上传或查看。</div>
 <?php endif; ?>

@@ -8,13 +8,20 @@ ob_start();
         <p class="muted">图片存储配置对问题、RFI 与材料样品图片统一生效；数据库配置优先于 .env 环境变量。</p>
     </div>
 </section>
-<nav class="module-nav" aria-label="文档管理">
-    <a class="button button-secondary" href="?page=projects">项目首页</a>
-    <a class="button button-secondary" href="?page=documents">文档管理首页</a>
-    <a class="button button-secondary" href="?page=issues">问题管理</a>
-    <a class="button button-secondary" href="?page=rfis">RFI 管理</a>
-    <a class="button button-primary" href="?page=document-settings" aria-current="page">系统设置</a>
-</nav>
+<?php
+// This page is only reachable with settings permission, so the settings item
+// is always shown here (same as before the shared partial).
+$navItems = [
+    ['page' => 'projects', 'label' => '项目首页'],
+    ['page' => 'documents', 'label' => '文档管理首页'],
+    ['page' => 'issues', 'label' => '问题管理'],
+    ['page' => 'rfis', 'label' => 'RFI 管理'],
+    ['page' => 'document-settings', 'label' => '系统设置'],
+];
+$navCurrent = 'document-settings';
+$navLabel = '文档管理';
+require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
+?>
 
 <section class="panel">
     <div class="panel-heading">

@@ -109,10 +109,46 @@ final class DocumentManagementPlugin implements PluginInterface
         $issues = $this->documents->listIssues((int) $project['project_id']);
         $rfis = $this->documents->listRfis((int) $project['project_id']);
 
+        // Work-queue projections derived from the same service lists the page
+        // already loads (both ordered by updated_at DESC). No new SQL, no new
+        // data source: project scope and visibility are exactly what the
+        // service already enforces for this user.
+        $recent = [];
+        foreach ($issues as $issue) {
+            $recent[] = [
+                'kind' => 'issue',
+                'number' => (string) ($issue['issue_number'] ?: '#' . $issue['issue_id']),
+                'summary' => (string) $issue['description'],
+                'status' => (string) $issue['status'],
+                'updated_at' => (string) $issue['updated_at'],
+            ];
+        }
+        foreach ($rfis as $rfi) {
+            $recent[] = [
+                'kind' => 'rfi',
+                'number' => (string) ($rfi['rfi_number'] ?: '#' . $rfi['rfi_id']),
+                'summary' => (string) $rfi['description'],
+                'status' => (string) $rfi['status'],
+                'updated_at' => (string) $rfi['updated_at'],
+            ];
+        }
+        usort($recent, static fn (array $a, array $b): int => strcmp($b['updated_at'], $a['updated_at']));
+        $recent = array_slice($recent, 0, 8);
+
+        $pendingIssues = array_slice(array_values(array_filter(
+            $issues,
+            static fn (array $issue): bool => in_array($issue['status'], ['open', 'in_review'], true)
+        )), 0, 5);
+        $pendingRfis = array_slice(array_values(array_filter(
+            $rfis,
+            static fn (array $rfi): bool => $rfi['status'] !== 'closed'
+        )), 0, 5);
+
         return $this->context->view('documents.php', [
             'title' => '文档管理',
             'currentProject' => $project,
             'canManageSettings' => $this->canManageSettings(),
+            'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'issueCount' => count($issues),
             'rfiCount' => count($rfis),
             'openIssueCount' => count(array_filter(
@@ -123,6 +159,9 @@ final class DocumentManagementPlugin implements PluginInterface
                 $rfis,
                 static fn (array $rfi): bool => $rfi['status'] !== 'closed'
             )),
+            'recentActivity' => $recent,
+            'pendingIssues' => $pendingIssues,
+            'pendingRfis' => $pendingRfis,
         ]);
     }
 

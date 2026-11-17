@@ -31,45 +31,58 @@ $isSection = static fn (string $key): bool => $activeSection === $key;
                         <p class="muted">平台名称用于顶栏、登录页和浏览器标题。默认国家/币种初始为 CN / CNY，使用 ISO 代码；这不会转换已有金额或汇率。</p>
                     </div>
                 </div>
-                <form method="post" action="" class="form-grid">
+                <form method="post" action="">
                     <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                     <input type="hidden" name="action" value="admin.settings.save">
-                    <label>
-                        平台名称
-                        <input name="platform_name" value="<?= $escape($settings['platform_name']) ?>" maxlength="80" required>
-                    </label>
-                    <label>
-                        系统主题
-                        <select name="theme">
-                            <option value="light" <?= $settings['theme'] === 'light' ? 'selected' : '' ?>>浅色</option>
-                            <option value="dark" <?= $settings['theme'] === 'dark' ? 'selected' : '' ?>>深色</option>
-                        </select>
-                    </label>
-                    <label>
-                        默认国家代码
-                        <input name="default_country_code" value="<?= $escape($settings['default_country_code']) ?>" maxlength="2" pattern="[A-Za-z]{2}" required>
-                    </label>
-                    <label>
-                        默认币种代码
-                        <select name="default_currency_code" required>
-                            <?php foreach ($currencies as $code => $name): ?>
-                                <option value="<?= $escape($code) ?>" <?= $code === $settings['default_currency_code'] ? 'selected' : '' ?>><?= $escape($name) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </label>
-                    <label>
-                        项目默认时区
-                        <select name="timezone" required>
-                            <?php foreach ($timezones as $zone): ?>
-                                <option value="<?= $escape($zone) ?>" <?= $zone === $settings['timezone'] ? 'selected' : '' ?>><?= $escape($zone) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </label>
-                    <label>
-                        管理界面语言
-                        <input value="简体中文（zh-CN）" readonly>
-                    </label>
-                    <div class="field-wide">
+                    <fieldset class="settings-group">
+                        <legend>平台外观</legend>
+                        <p class="muted settings-group-note">平台名称与主题，影响顶栏、登录页和浏览器标题。</p>
+                        <div class="form-grid settings-group-grid">
+                            <label>
+                                平台名称
+                                <input name="platform_name" value="<?= $escape($settings['platform_name']) ?>" maxlength="80" required>
+                            </label>
+                            <label>
+                                系统主题
+                                <select name="theme">
+                                    <option value="light" <?= $settings['theme'] === 'light' ? 'selected' : '' ?>>浅色</option>
+                                    <option value="dark" <?= $settings['theme'] === 'dark' ? 'selected' : '' ?>>深色</option>
+                                </select>
+                            </label>
+                        </div>
+                    </fieldset>
+                    <fieldset class="settings-group">
+                        <legend>区域与本地化</legend>
+                        <p class="muted settings-group-note">国家/币种使用 ISO 代码，仅作为新记录默认值；不会转换已有金额或汇率。</p>
+                        <div class="form-grid settings-group-grid">
+                            <label>
+                                默认国家代码
+                                <input name="default_country_code" value="<?= $escape($settings['default_country_code']) ?>" maxlength="2" pattern="[A-Za-z]{2}" required>
+                            </label>
+                            <label>
+                                默认币种代码
+                                <select name="default_currency_code" required>
+                                    <?php foreach ($currencies as $code => $name): ?>
+                                        <option value="<?= $escape($code) ?>" <?= $code === $settings['default_currency_code'] ? 'selected' : '' ?>><?= $escape($name) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <label>
+                                项目默认时区
+                                <select name="timezone" required>
+                                    <?php foreach ($timezones as $zone): ?>
+                                        <option value="<?= $escape($zone) ?>" <?= $zone === $settings['timezone'] ? 'selected' : '' ?>><?= $escape($zone) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
+                            <label>
+                                管理界面语言
+                                <input value="简体中文（zh-CN）" readonly>
+                            </label>
+                        </div>
+                    </fieldset>
+                    <p class="muted settings-save-note">保存将同时提交以上两组配置。</p>
+                    <div class="dialog-actions settings-save-actions">
                         <button class="button button-primary" type="submit">保存系统配置</button>
                     </div>
                 </form>

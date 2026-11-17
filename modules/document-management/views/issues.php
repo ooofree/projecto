@@ -11,6 +11,21 @@ $severityLabels = [
     'high' => '高',
     'critical' => '紧急',
 ];
+// Status and severity are separate visual semantics (Design System V2):
+// status = workflow progress (blue/amber/green/neutral), severity = risk heat
+// (neutral/blue/orange/red). Both always carry a text label.
+$statusBadgeClass = [
+    'open' => 'is-blue',
+    'in_review' => 'is-amber',
+    'resolved' => 'is-green',
+    'closed' => 'is-neutral',
+];
+$severityBadgeClass = [
+    'low' => 'is-neutral',
+    'medium' => 'is-blue',
+    'high' => 'is-orange',
+    'critical' => 'is-red',
+];
 $locationOptions = $locationCatalog['options'] ?? [];
 $locationLabels = $locationCatalog['labels'] ?? [];
 $spaceSelectionReady = !empty($spaceSelectionReady);
@@ -120,15 +135,20 @@ ob_start();
         <button class="button button-primary" type="button" data-dialog-open="issue-create-dialog">登记问题</button>
     <?php endif; ?>
 </section>
-<nav class="module-nav" aria-label="文档管理">
-    <a class="button button-secondary" href="?page=projects">项目首页</a>
-    <a class="button button-secondary" href="?page=documents">文档管理首页</a>
-    <a class="button button-primary" href="?page=issues" aria-current="page">问题管理</a>
-    <a class="button button-secondary" href="?page=rfis">RFI 管理</a>
-    <?php if (!empty($canManageSettings)): ?>
-        <a class="button button-secondary" href="?page=document-settings">系统设置</a>
-    <?php endif; ?>
-</nav>
+<?php
+$navItems = [
+    ['page' => 'projects', 'label' => '项目首页'],
+    ['page' => 'documents', 'label' => '文档管理首页'],
+    ['page' => 'issues', 'label' => '问题管理'],
+    ['page' => 'rfis', 'label' => 'RFI 管理'],
+];
+if (!empty($canManageSettings)) {
+    $navItems[] = ['page' => 'document-settings', 'label' => '系统设置'];
+}
+$navCurrent = 'issues';
+$navLabel = '文档管理';
+require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
+?>
 <?php if (!$imageStorageReady): ?>
     <div class="notice notice-info">图片存储尚未配置；问题与 RFI 图片暂不可上传或查看。</div>
 <?php endif; ?>
@@ -168,15 +188,34 @@ ob_start();
     <div class="panel-heading">
         <div>
             <h2>问题台账</h2>
-            <span class="muted" data-list-count data-unit=" 条"><?= count($issues) ?> 条</span>
         </div>
+    </div>
+    <div class="toolbar" role="search" aria-label="筛选问题">
         <label class="search-field">
             <span class="sr-only">搜索问题</span>
             <input type="search" placeholder="搜索问题…" data-list-search="issues-table">
         </label>
-    </div>
-    <div class="toolbar">
-        <form method="post" action="">
+        <label>
+            状态
+            <select data-list-filter="status">
+                <option value="">全部状态</option>
+                <?php foreach ($statusLabels as $value => $label): ?>
+                    <option value="<?= $escape($value) ?>"><?= $escape($label) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+        <label>
+            严重程度
+            <select data-list-filter="severity">
+                <option value="">全部程度</option>
+                <?php foreach ($severityLabels as $value => $label): ?>
+                    <option value="<?= $escape($value) ?>"><?= $escape($label) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+        <button class="button button-quiet" type="button" data-list-filter-clear hidden>清空筛选</button>
+        <span class="toolbar-count" data-list-count data-unit=" 条" aria-live="polite"><?= count($issues) ?> 条</span>
+        <form method="post" action="" class="inline-form toolbar-export">
             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
             <input type="hidden" name="action" value="issue.export">
             <button class="button button-secondary" type="submit">导出 Excel</button>
@@ -199,11 +238,13 @@ ob_start();
                             $statusLabels[$issue['status']] ?? $issue['status'],
                             $severityLabels[$issue['severity']] ?? $issue['severity'],
                         ])); ?>
-                        <tr data-list-item data-search="<?= $escape($searchText) ?>">
+                        <tr data-list-item data-search="<?= $escape($searchText) ?>"
+                            data-status="<?= $escape($issue['status']) ?>"
+                            data-severity="<?= $escape($issue['severity']) ?>">
                             <td><?= $escape($issue['issue_number'] ?: '#' . $issue['issue_id']) ?></td>
-                            <td class="table-primary-cell"><?= $escape(mb_strimwidth($issue['description'], 0, 100, '…')) ?></td>
-                            <td><span class="badge badge-neutral"><?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?></span></td>
-                            <td><span class="badge"><?= $escape($statusLabels[$issue['status']] ?? $issue['status']) ?></span></td>
+                            <td><span class="table-primary-cell issue-description-clamp" title="<?= $escape($issue['description']) ?>"><?= $escape(mb_strimwidth($issue['description'], 0, 200, '…')) ?></span></td>
+                            <td><span class="status-badge <?= $escape($severityBadgeClass[$issue['severity']] ?? 'is-neutral') ?>"><?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?></span></td>
+                            <td><span class="status-badge <?= $escape($statusBadgeClass[$issue['status']] ?? 'is-neutral') ?>"><?= $escape($statusLabels[$issue['status']] ?? $issue['status']) ?></span></td>
                             <td><?= $escape(($issue['location_display'] ?? '') !== '' ? $issue['location_display'] : '—') ?></td>
                             <td><?= count($issue['images']) ?></td>
                             <td><?= $escape(\ProjectO\Support::formatDateTime($issue['updated_at'])) ?></td>

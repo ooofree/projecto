@@ -398,6 +398,10 @@
                 const material = await postMaterial(new FormData(form));
                 const dialog = form.closest('dialog');
                 if (dialog) dialog.close();
+                // The status line lives inside the collapsible entry panel;
+                // reveal it so the confirmation is never silently hidden.
+                const disclosure = document.getElementById('material-entry');
+                if (disclosure && disclosure.tagName === 'DETAILS' && !disclosure.open) disclosure.open = true;
                 showStatus(entryStatus, `已更新：${material.material_name}`, false);
                 refreshCatalogue(material.material_id).catch(() => {});
             } catch (error) {
@@ -436,11 +440,39 @@
             if (button) selectCategory(button.dataset.railCategory);
         });
     }
+    // ---- collapsible entry panel ------------------------------------------
+    // The catalogue owns the first screen; the full entry form lives in a
+    // <details> that starts closed. The user's choice is remembered per project
+    // (client-side only, same mechanism as the batch context). Without JS the
+    // details element still toggles natively and the form posts normally.
+    const entryDisclosure = document.getElementById('material-entry');
+    const disclosureKey = storageKey + ':open';
+    const openEntry = ({ focus = true } = {}) => {
+        if (!entryDisclosure) return;
+        entryDisclosure.open = true;
+        try { window.localStorage.setItem(disclosureKey, '1'); } catch { /* private mode */ }
+        if (focus) {
+            const nameInput = entryForm ? entryForm.querySelector('[data-entry-name]') : null;
+            if (nameInput) nameInput.focus();
+        }
+    };
+    if (entryDisclosure && entryDisclosure.tagName === 'DETAILS') {
+        let savedOpen = null;
+        try { savedOpen = window.localStorage.getItem(disclosureKey); } catch { /* private mode */ }
+        if (savedOpen === '1') entryDisclosure.open = true;
+        entryDisclosure.addEventListener('toggle', () => {
+            try { window.localStorage.setItem(disclosureKey, entryDisclosure.open ? '1' : '0'); } catch { /* private mode */ }
+            if (entryDisclosure.open) {
+                refreshCodeTools();
+                updateCategoryStat();
+            }
+        });
+    }
     document.addEventListener('click', event => {
         const trigger = event.target.closest('[data-entry-focus]');
         if (!trigger || !entryForm) return;
-        const panel = document.getElementById('material-entry');
-        if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        openEntry({ focus: false });
+        if (entryDisclosure) entryDisclosure.scrollIntoView({ behavior: 'smooth', block: 'start' });
         const nameInput = entryForm.querySelector('[data-entry-name]');
         if (nameInput) nameInput.focus();
     });
@@ -640,19 +672,39 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
     const emptyState = panel?.querySelector('[data-list-empty]');
     const count = panel?.querySelector('[data-list-count]');
     const items = [...list.querySelectorAll('[data-list-item]')];
+    // Optional combinable dropdown filters: each select declares which row
+    // data-attribute it matches (data-list-filter="status" → data-status).
+    // Empty value = no constraint. Pure client-side; the server-rendered list
+    // and export stay untouched.
+    const filters = panel ? [...panel.querySelectorAll('[data-list-filter]')] : [];
+    const clearButton = panel?.querySelector('[data-list-filter-clear]');
     const filter = () => {
         const query = search.value.trim().toLocaleLowerCase();
+        const active = filters
+            .map(select => [select.dataset.listFilter, select.value])
+            .filter(([, value]) => value !== '');
         let visibleCount = 0;
         for (const item of items) {
-            const visible = (item.dataset.search ?? '').includes(query);
+            const visible = (item.dataset.search ?? '').includes(query)
+                && active.every(([key, value]) => (item.dataset[key] ?? '') === value);
             item.hidden = !visible;
             if (visible) visibleCount++;
         }
         if (emptyState) emptyState.hidden = visibleCount !== 0;
         if (count) count.textContent = `${visibleCount}${count.dataset.unit ?? ' 条'}`;
+        if (clearButton) clearButton.hidden = query === '' && active.length === 0;
     };
 
     search.addEventListener('input', filter);
+    for (const select of filters) select.addEventListener('change', filter);
+    if (clearButton) {
+        clearButton.addEventListener('click', () => {
+            search.value = '';
+            for (const select of filters) select.value = '';
+            filter();
+            search.focus();
+        });
+    }
 }
 
 // Material estimates page: fast entry (searchable material picker, remembered

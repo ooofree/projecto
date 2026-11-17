@@ -46,23 +46,16 @@ foreach ($materials as $material) {
         <?php if ($canEdit): ?>
             <button class="button button-primary" type="button" data-entry-focus>新增材料</button>
         <?php endif; ?>
-        <form method="post" action="" id="material-export-form" class="inline-form">
-            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-            <input type="hidden" name="action" value="material.export">
-            <button class="button button-secondary" type="submit">导出 Excel</button>
-        </form>
     </div>
 </section>
 
 <?php if ($canEdit): ?>
-    <section class="panel material-entry-panel" id="material-entry">
-        <div class="panel-heading">
-            <div>
-                <h2>快速录入</h2>
-                <p class="muted">选分类 → 填编码、名称、单位 → 回车即存。分类与单位自动沿用，编码尾号自动递增，可连续录入同类材料。</p>
-            </div>
+    <details class="panel material-entry-panel" id="material-entry" data-entry-disclosure>
+        <summary class="material-entry-summary">
+            <span class="material-entry-summary-title">快速录入</span>
+            <span class="material-entry-summary-hint">分类 → 编码、名称、单位 → 回车即存；分类与单位自动沿用，编码尾号自动递增</span>
             <span class="entry-counter" data-material-entry-counter aria-live="polite">本次已录 <strong>0</strong> 项</span>
-        </div>
+        </summary>
         <form method="post" action="" class="material-entry" id="material-entry-form" data-material-add data-project-id="<?= (int) $currentProject['project_id'] ?>">
             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
             <input type="hidden" name="action" value="material.save">
@@ -113,7 +106,7 @@ foreach ($materials as $material) {
             <span class="entry-recent-label">本次录入</span>
             <div class="entry-recent-chips" data-entry-recent-chips></div>
         </div>
-    </section>
+    </details>
 <?php endif; ?>
 
 <div class="material-workspace<?= $canEdit ? ' has-entry' : '' ?>" id="material-workspace" data-material-workspace>
@@ -164,6 +157,11 @@ foreach ($materials as $material) {
                 </select>
             </label>
             <span class="toolbar-count" id="material-count" data-unit=" 项材料" aria-live="polite"><?= count($materials) ?> 项材料</span>
+            <form method="post" action="" id="material-export-form" class="inline-form toolbar-export">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                <input type="hidden" name="action" value="material.export">
+                <button class="button button-secondary" type="submit">导出 Excel</button>
+            </form>
         </div>
 
         <div class="table-wrap" id="materials-table-wrap">
