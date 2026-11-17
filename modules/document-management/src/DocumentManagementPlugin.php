@@ -10,13 +10,14 @@ use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Plugin\SidebarNavigationProvider;
 use ProjectO\Storage\CloudStorageSettings;
 use ProjectO\Storage\ImageUpload;
 use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
 use ProjectO\Support;
 
-final class DocumentManagementPlugin implements PluginInterface
+final class DocumentManagementPlugin implements PluginInterface, SidebarNavigationProvider
 {
     private const ISSUE_STATUS_LABELS = [
         'open' => '待评估',
@@ -503,6 +504,29 @@ final class DocumentManagementPlugin implements PluginInterface
     {
         return Support::hasPermission($this->context->db, 'manage_document_settings')
             || Support::hasPermission($this->context->db, 'manage_platform');
+    }
+
+    /**
+     * V2.1 project sidebar: documents & collaboration entries. Gates mirror
+     * requireDocumentAccess()/requireSettingsAccess(); the in-page module nav
+     * keeps its own markup, this only feeds the global sidebar.
+     */
+    public function sidebarItems(): array
+    {
+        $items = [];
+        if (
+            Support::hasPermission($this->context->db, 'view_projects')
+            && Support::hasPermission($this->context->db, 'view_issues')
+        ) {
+            $items[] = ['group' => 'site', 'page' => 'documents', 'label' => '文档管理', 'icon' => '▣'];
+            $items[] = ['group' => 'site', 'page' => 'issues', 'label' => '问题管理', 'icon' => '⚑'];
+            $items[] = ['group' => 'site', 'page' => 'rfis', 'label' => 'RFI 管理', 'icon' => '↗'];
+        }
+        if ($this->canManageSettings()) {
+            $items[] = ['group' => 'site', 'page' => 'document-settings', 'label' => '文档设置', 'icon' => '⚙'];
+        }
+
+        return $items;
     }
 
     private function requireSettingsAccess(): void

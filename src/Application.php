@@ -344,6 +344,20 @@ final class Application
         $theme = $appearance['theme'];
         $platformName = $appearance['platform_name'];
         $brandMark = self::brandMark($platformName);
+        // V2.1 sidebar: aggregate plugin-declared entries once per render. The
+        // layout decides whether project groups apply (valid current project);
+        // anonymous views receive an empty list. No authorization is added or
+        // removed here — plugins already filtered their items by permission.
+        $sidebarItems = isset($_SESSION['user_id']) ? $this->plugins->sidebarItems() : [];
+        $projectDirectory = isset($_SESSION['user_id']) ? $this->plugins->projectDirectory() : [];
+        $db = $this->db;
+        // The shell needs the current project on EVERY signed-in page, including
+        // shared-catalogue views (brands/suppliers/…) that do not pass it
+        // themselves. Resolve it from the server-side session exactly like the
+        // plugins do; a view-provided value still wins (EXTR_SKIP below).
+        if (isset($_SESSION['user_id']) && !array_key_exists('currentProject', $viewData)) {
+            $currentProject = (new ProjectContext($this->db))->current();
+        }
         extract($viewData, EXTR_SKIP);
         $viewPath = $isAbsolutePath ? $view : dirname(__DIR__) . '/views/' . $view . '.php';
         if (!is_file($viewPath)) {

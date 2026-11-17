@@ -17,6 +17,8 @@ final class PluginRegistry
     private array $assets = [];
     private array $manifests = [];
     private array $enabledStates = [];
+    private array $sidebarItems = [];
+    private array $projectDirectory = [];
     private PluginEventBus $eventBus;
     private PluginServiceRegistry $services;
 
@@ -104,6 +106,41 @@ final class PluginRegistry
             ));
             if (!$plugin instanceof PluginInterface) {
                 throw new RuntimeException("Plugin {$id} must implement PluginInterface.");
+            }
+
+            // V2.1 sidebar: plugins opt in by declaring their own project-level
+            // menu items. The core only validates shape and aggregates; the
+            // permission gates inside sidebarItems() stay owned by the plugin.
+            if ($plugin instanceof SidebarNavigationProvider) {
+                foreach ($plugin->sidebarItems() as $item) {
+                    if (
+                        !is_array($item)
+                        || !isset($item['group'], $item['page'], $item['label'])
+                        || !is_string($item['group']) || $item['group'] === ''
+                        || !is_string($item['page']) || preg_match('/^[a-z0-9-]+$/', $item['page']) !== 1
+                        || !is_string($item['label']) || $item['label'] === ''
+                    ) {
+                        throw new RuntimeException("Plugin {$id} declares an invalid sidebar item.");
+                    }
+                    $this->sidebarItems[] = $item;
+                }
+            }
+
+            // V2.1 top-bar switcher: the project directory is published by its
+            // owning plugin (project.foundation) with its own permission gate.
+            if ($plugin instanceof ProjectDirectoryProvider) {
+                foreach ($plugin->projectDirectory() as $entry) {
+                    if (
+                        !is_array($entry)
+                        || !isset($entry['project_id'], $entry['project_name'], $entry['status'])
+                        || !is_int($entry['project_id'])
+                        || !is_string($entry['project_name'])
+                        || !is_string($entry['status'])
+                    ) {
+                        throw new RuntimeException("Plugin {$id} declares an invalid project directory entry.");
+                    }
+                    $this->projectDirectory[] = $entry;
+                }
             }
 
             // "provides" publishes this plugin's implementation of a core
@@ -244,6 +281,23 @@ final class PluginRegistry
     public function permissions(): array
     {
         return $this->permissions;
+    }
+
+    /**
+     * Aggregated project-sidebar entries declared by enabled plugins (V2.1).
+     * Order follows plugin dependency order, then each plugin's declaration
+     * order. Disabled plugins contribute nothing, so their entries disappear
+     * together with their routes.
+     */
+    public function sidebarItems(): array
+    {
+        return $this->sidebarItems;
+    }
+
+    /** Project directory published by enabled plugins for the top-bar switcher. */
+    public function projectDirectory(): array
+    {
+        return $this->projectDirectory;
     }
 
     public function migrations(): array

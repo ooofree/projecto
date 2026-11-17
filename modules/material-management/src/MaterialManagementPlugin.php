@@ -10,13 +10,14 @@ use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Plugin\SidebarNavigationProvider;
 use ProjectO\Storage\ImageUpload;
 use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
 use ProjectO\Support;
 use Throwable;
 
-final class MaterialManagementPlugin implements PluginInterface
+final class MaterialManagementPlugin implements PluginInterface, SidebarNavigationProvider
 {
     private MaterialCatalogService $catalog;
     private ProjectMaterialService $projectMaterials;
@@ -1085,6 +1086,35 @@ final class MaterialManagementPlugin implements PluginInterface
             'tenders' => Support::hasPermission($this->context->db, 'view_tenders')
                 && Support::hasPermission($this->context->db, 'view_projects'),
         ];
+    }
+
+    /**
+     * V2.1 project sidebar: materials & commercial entries. Reuses the exact
+     * permission gates of nav() — shared directories (brands/suppliers/
+     * supplier materials) keep their cross-project semantics, project-scoped
+     * pages additionally require view_projects. UX only; routes stay guarded.
+     */
+    public function sidebarItems(): array
+    {
+        $nav = $this->nav();
+        $items = [];
+        foreach ([
+            ['materials', 'materials', '材料管理', '▤'],
+            ['auxiliaries', 'auxiliary-materials', '辅材目录', '◫'],
+            ['brands', 'brands', '品牌管理', '◇'],
+            ['suppliers', 'suppliers', '供应商', '▧'],
+            ['supplierMaterials', 'supplier-materials', '供应商材料', '▱'],
+            ['quotations', 'quotations', '材料报价', '￥'],
+            ['tenders', 'tender-list', '招标清单', '☷'],
+            ['estimates', 'estimates', '材料测算', '∑'],
+            ['samples', 'samples', '样品跟踪', '◉'],
+        ] as [$key, $page, $label, $icon]) {
+            if (!empty($nav[$key])) {
+                $items[] = ['group' => 'commercial', 'page' => $page, 'label' => $label, 'icon' => $icon];
+            }
+        }
+
+        return $items;
     }
 
     private function complete(string $action, string $message, int $id, string $location): PluginResponse

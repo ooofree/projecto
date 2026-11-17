@@ -90,6 +90,23 @@ try {
         throw $exception;
     }
 }
+
+// V2.1 card/switcher entry: selecting a project lands inside the project on a
+// whitelisted page the viewer may open; unknown targets fall back to the list.
+$db->exec("INSERT INTO Permissions (permission_id, permission_name) VALUES (4, 'view_materials')");
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 4)');
+$selectInside = $plugin->dispatch('select', ['project_id' => 1, 'return' => 'materials']);
+if ($selectInside->type !== 'redirect' || $selectInside->location !== '?page=materials') {
+    throw new RuntimeException('Selecting with an authorized return target should enter that module.');
+}
+$selectFallback = $plugin->dispatch('select', ['project_id' => 1, 'return' => 'spaces']);
+if ($selectFallback->type !== 'redirect' || $selectFallback->location !== '?page=projects') {
+    throw new RuntimeException('A return target without its permission must fall back to the project list.');
+}
+$selectEvil = $plugin->dispatch('select', ['project_id' => 1, 'return' => 'admin']);
+if ($selectEvil->type !== 'redirect' || $selectEvil->location !== '?page=projects') {
+    throw new RuntimeException('Non-whitelisted return targets must fall back to the project list.');
+}
 $deleteResponse = $plugin->dispatch('project.delete', ['project_id' => 1]);
 if (
     $deleteResponse->type !== 'redirect'

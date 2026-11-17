@@ -1196,3 +1196,143 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
     initLedgerFilter();
     initQuickEntry();
 })();
+
+// V2.1 app shell: sidebar collapse (desktop rail) + narrow-screen drawer.
+// Pure layout chrome — no business form, fetch or filter logic is touched.
+// The collapsed choice is remembered per browser; without JS the sidebar
+// simply stays expanded and every link keeps working.
+(() => {
+    const sidebar = document.querySelector('[data-sidebar]');
+    if (!sidebar) return;
+    const toggle = document.querySelector('[data-sidebar-toggle]');
+    const collapseButton = document.querySelector('[data-sidebar-collapse]');
+    const scrim = document.querySelector('[data-sidebar-scrim]');
+    const storageKey = 'project-o:sidebar-collapsed';
+    const readCollapsed = () => {
+        try { return window.localStorage.getItem(storageKey) === '1'; } catch { return false; }
+    };
+    const writeCollapsed = value => {
+        try { window.localStorage.setItem(storageKey, value ? '1' : '0'); } catch { /* private mode */ }
+    };
+    const applyCollapsed = value => {
+        document.body.classList.toggle('sidebar-collapsed', value);
+        if (collapseButton) {
+            collapseButton.setAttribute('aria-label', value ? '展开侧边栏' : '收起侧边栏');
+            const text = collapseButton.querySelector('.sidebar-text');
+            if (text) text.textContent = value ? '展开侧栏' : '收起侧栏';
+        }
+    };
+    applyCollapsed(readCollapsed());
+
+    const setDrawer = open => {
+        document.body.classList.toggle('sidebar-open', open);
+        if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (scrim) scrim.hidden = !open;
+    };
+    if (toggle) {
+        toggle.addEventListener('click', () => {
+            if (window.matchMedia('(max-width: 760px)').matches) {
+                setDrawer(!document.body.classList.contains('sidebar-open'));
+            } else {
+                const next = !document.body.classList.contains('sidebar-collapsed');
+                applyCollapsed(next);
+                writeCollapsed(next);
+            }
+        });
+    }
+    if (collapseButton) {
+        collapseButton.addEventListener('click', () => {
+            const next = !document.body.classList.contains('sidebar-collapsed');
+            applyCollapsed(next);
+            writeCollapsed(next);
+        });
+    }
+    if (scrim) scrim.addEventListener('click', () => setDrawer(false));
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) setDrawer(false);
+    });
+    // Navigating from the drawer closes it; desktop keeps the rail state.
+    sidebar.addEventListener('click', event => {
+        if (event.target.closest('a') && window.matchMedia('(max-width: 760px)').matches) setDrawer(false);
+    });
+    window.addEventListener('resize', () => {
+        if (!window.matchMedia('(max-width: 760px)').matches) setDrawer(false);
+    });
+})();
+
+// V2.1 project home: client-side name search + status tabs over the portfolio
+// cards (high-fidelity prototype interaction). Pure display filtering — the
+// server-rendered list, the enter/select POST forms and the archived view stay
+// untouched. Without JS every card and form keeps working; only the live
+// filter is absent.
+(() => {
+    const grid = document.querySelector('[data-project-grid]');
+    if (!grid) return;
+    const search = document.querySelector('[data-project-search]');
+    const tabs = [...document.querySelectorAll('[data-project-filter]')];
+    const count = document.querySelector('[data-project-count]');
+    const empty = document.querySelector('[data-project-empty]');
+    const cards = [...grid.querySelectorAll('[data-project-card]')];
+    let activeStatus = '';
+
+    const apply = () => {
+        const query = search ? search.value.trim().toLocaleLowerCase() : '';
+        let visible = 0;
+        for (const card of cards) {
+            const matches = (card.dataset.search ?? '').includes(query)
+                && (activeStatus === '' || (card.dataset.status ?? '') === activeStatus);
+            card.hidden = !matches;
+            if (matches) visible++;
+        }
+        if (count) count.textContent = `${visible}${count.dataset.unit ?? ' 个项目'}`;
+        if (empty) empty.hidden = visible !== 0;
+    };
+
+    if (search) search.addEventListener('input', apply);
+    for (const tab of tabs) {
+        tab.addEventListener('click', () => {
+            activeStatus = tab.dataset.projectFilter ?? '';
+            for (const other of tabs) {
+                const isActive = other === tab;
+                other.classList.toggle('is-active', isActive);
+                other.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            }
+            apply();
+        });
+    }
+
+    // Whole-card click enters the project: submit the card's hidden
+    // project.select form (same POST contract as the explicit button). Inner
+    // forms/buttons (delete/archive) keep their own behaviour. Without JS the
+    // card is inert but every form on the page still works.
+    const enterFromCard = card => {
+        const form = card.querySelector('[data-project-enter-form]');
+        if (form) form.requestSubmit();
+    };
+    grid.addEventListener('click', event => {
+        if (event.target.closest('form, button, a, input, select, summary')) return;
+        const card = event.target.closest('[data-project-enter]');
+        if (card) enterFromCard(card);
+    });
+    grid.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const card = event.target.closest('[data-project-enter]');
+        if (card && event.target === card) {
+            event.preventDefault();
+            enterFromCard(card);
+        }
+    });
+})();
+
+// Top-bar project switcher: close the dropdown on outside click / Escape.
+// The menu itself is a native <details>, so it also works without JS.
+(() => {
+    const switcher = document.querySelector('.project-switcher');
+    if (!switcher) return;
+    document.addEventListener('click', event => {
+        if (switcher.open && !switcher.contains(event.target)) switcher.open = false;
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && switcher.open) switcher.open = false;
+    });
+})();

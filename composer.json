@@ -23,7 +23,8 @@
             "php tests/profile_service_test.php",
             "php tests/labor_crew_test.php",
             "php tests/login_page_smoke_test.php",
-            "php tests/projects_page_smoke_test.php"
+            "php tests/projects_page_smoke_test.php",
+            "php tests/layout_v21_smoke_test.php"
         ]
     },
     "autoload": {

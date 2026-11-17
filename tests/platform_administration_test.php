@@ -96,6 +96,9 @@ $db->exec(
         user_agent TEXT
     )'
 );
+// V2.1 top-bar switcher reads the project directory on every signed-in render.
+$db->exec('CREATE TABLE Projects (project_id INTEGER PRIMARY KEY, project_name TEXT, start_date TEXT, end_date TEXT, status TEXT)');
+$db->exec('CREATE TABLE project_foundation_archive_records (archive_id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT, entity_id INTEGER, project_id INTEGER, archived_by INTEGER, archived_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE (entity_type, entity_id))');
 $db->exec(
     "INSERT INTO Users (user_id, username, password_hash, country_code, is_active)
      VALUES (1, 'admin', 'unused-test-hash', 'CN', 1), (2, 'viewer', 'unused-test-hash', 'CN', 1)"
@@ -328,7 +331,7 @@ platformAdminCheck(
 );
 platformAdminCheck(
     str_contains($adminHtml, '<title>系统设置 · Alpha Works</title>')
-        && str_contains($adminHtml, '<span>Alpha Works</span>')
+        && str_contains($adminHtml, '<span class="brand-word">Alpha Works</span>')
         && str_contains($adminHtml, 'value="Alpha Works"')
         && str_contains($adminHtml, 'aria-hidden="true">A</span>'),
     'The configured platform name must drive the document title, brand and settings field.'

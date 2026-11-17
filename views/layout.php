@@ -39,6 +39,63 @@ $moduleAssetVersion = static function (array $asset): string {
     return '?page=module-asset&module=' . rawurlencode($module)
         . '&file=' . rawurlencode($file) . '&v=' . rawurlencode($version);
 };
+
+/*
+ * V2.1 global layout (C plan): top global bar + project-level sidebar.
+ *
+ * Sidebar entries are aggregated from plugin declarations (PluginRegistry::
+ * sidebarItems); the core never hardcodes business menus. Project groups only
+ * render inside a valid current-project context — outside a project (project
+ * list, profile, admin, login, error) the sidebar carries platform entries only.
+ * Permission gates stay owned by the plugins; hiding an entry is UX only and
+ * every route keeps its server-side authorization.
+ */
+$sidebarItems = is_array($sidebarItems ?? null) ? $sidebarItems : [];
+$layoutProject = is_array($currentProject ?? null) ? $currentProject : null;
+$layoutPage = (string) ($_GET['page'] ?? 'projects');
+// Project-level groups render whenever a valid current project exists in the
+// session — including the home page, whose cards enter that project. Without
+// a current project (or on anonymous pages) only the platform bucket shows.
+$layoutProjectScoped = $layoutProject !== null;
+$projectStatusLabels = [
+    'planning' => '计划中',
+    'ongoing' => '进行中',
+    'completed' => '已完成',
+    'on-hold' => '已暂停',
+];
+$sidebarGroups = [
+    'workspace' => '项目工作区',
+    'commercial' => '材料与商务',
+    'site' => '文档与现场',
+];
+// Recycle-bin sub-views keep their parent module entry highlighted.
+$sidebarActivePage = $layoutPage;
+$groupedSidebar = [];
+if ($layoutProjectScoped) {
+    foreach ($sidebarItems as $sidebarItem) {
+        $group = (string) ($sidebarItem['group'] ?? '');
+        if (!isset($sidebarGroups[$group])) {
+            continue;
+        }
+        $groupedSidebar[$group][] = $sidebarItem;
+    }
+}
+$layoutCrumb = '';
+foreach ($sidebarItems as $sidebarItem) {
+    if (($sidebarItem['page'] ?? '') === $layoutPage) {
+        $layoutCrumb = (string) $sidebarItem['label'];
+        break;
+    }
+}
+if ($layoutCrumb === '') {
+    $layoutCrumb = match ($layoutPage) {
+        'projects' => '项目首页',
+        'profile' => '个人设置',
+        'admin' => '系统设置',
+        default => (string) ($title ?? $platformName),
+    };
+}
+$avatarMark = mb_strtoupper(mb_substr(trim($username) !== '' ? $username : $platformName, 0, 1, 'UTF-8'), 'UTF-8');
 ?>
 <!doctype html>
 <html lang="zh-CN">
@@ -51,16 +108,65 @@ $moduleAssetVersion = static function (array $asset): string {
         <link rel="stylesheet" href="<?= $escape($moduleAssetVersion($pageStyle)) ?>">
     <?php endforeach; ?>
 </head>
-<body class="theme-<?= $escape($theme) ?>">
+<body class="theme-<?= $escape($theme) ?><?= $username === '' ? ' is-anonymous' : '' ?>">
 <header class="topbar">
-    <a class="brand" href="?page=projects"><span class="brand-mark" aria-hidden="true"><?= $escape($brandMark) ?></span><span><?= $escape($platformName) ?></span></a>
     <?php if ($username !== ''): ?>
+        <button class="topbar-menu" type="button" data-sidebar-toggle aria-controls="app-sidebar" aria-expanded="false" aria-label="展开或收起导航">☰</button>
+    <?php endif; ?>
+    <a class="brand" href="?page=projects"><span class="brand-mark" aria-hidden="true"><?= $escape($brandMark) ?></span><span class="brand-word"><?= $escape($platformName) ?></span></a>
+    <?php if ($username !== ''): ?>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <?php
+        $switcherEntries = is_array($projectDirectory ?? null) ? $projectDirectory : [];
+        // Entry landing mirrors the home cards: first module the viewer may open.
+        $switcherReturn = 'projects';
+        foreach ([
+            ['spaces', 'view_project_spaces'],
+            ['materials', 'view_materials'],
+            ['documents', 'view_issues'],
+        ] as [$switcherPage, $switcherPermission]) {
+            if (isset($db) && \ProjectO\Support::hasPermission($db, $switcherPermission)) {
+                $switcherReturn = $switcherPage;
+                break;
+            }
+        }
+        ?>
+        <?php if ($switcherEntries !== []): ?>
+            <details class="project-switcher">
+                <summary class="project-switch<?= $layoutProject === null ? ' is-empty' : '' ?>" title="切换项目">
+                    <span class="project-switch-dot<?= $layoutProject !== null ? ' status-' . $escape((string) ($layoutProject['status'] ?? '')) : '' ?>" aria-hidden="true"></span>
+                    <span class="project-switch-name"><?= $escape($layoutProject !== null ? (string) $layoutProject['project_name'] : '选择项目') ?></span>
+                    <span class="project-switch-caret" aria-hidden="true">⌄</span>
+                </summary>
+                <div class="project-menu" role="menu" aria-label="切换项目">
+                    <?php foreach ($switcherEntries as $switcherEntry): ?>
+                        <form method="post" action="">
+                            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                            <input type="hidden" name="action" value="project.select">
+                            <input type="hidden" name="project_id" value="<?= (int) $switcherEntry['project_id'] ?>">
+                            <input type="hidden" name="return" value="<?= $escape($switcherReturn) ?>">
+                            <button class="project-menu-item<?= $layoutProject !== null && (int) $switcherEntry['project_id'] === (int) $layoutProject['project_id'] ? ' is-current' : '' ?>" type="submit">
+                                <span class="project-switch-dot status-<?= $escape((string) $switcherEntry['status']) ?>" aria-hidden="true"></span>
+                                <span class="project-menu-name"><?= $escape((string) $switcherEntry['project_name']) ?></span>
+                                <?php if ($layoutProject !== null && (int) $switcherEntry['project_id'] === (int) $layoutProject['project_id']): ?>
+                                    <span class="project-menu-check" aria-hidden="true">✓</span>
+                                <?php endif; ?>
+                            </button>
+                        </form>
+                    <?php endforeach; ?>
+                    <a class="project-menu-foot" href="?page=projects">管理项目列表 →</a>
+                </div>
+            </details>
+        <?php else: ?>
+            <a class="project-switch is-empty" href="?page=projects">
+                <span class="project-switch-dot" aria-hidden="true"></span>
+                <span class="project-switch-name">选择项目</span>
+                <span class="project-switch-caret" aria-hidden="true">⌄</span>
+            </a>
+        <?php endif; ?>
         <div class="account">
-            <?php if ($canManagePlatform): ?>
-                <a class="button button-quiet" href="?page=admin">系统设置</a>
-            <?php endif; ?>
-            <a class="button button-quiet" href="?page=profile">个人设置</a>
-            <span><?= $escape($username) ?></span>
+            <span class="account-avatar" aria-hidden="true"><?= $escape($avatarMark) ?></span>
+            <span class="account-name"><?= $escape($username) ?></span>
             <form method="post" action="">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="logout">
@@ -69,6 +175,62 @@ $moduleAssetVersion = static function (array $asset): string {
         </div>
     <?php endif; ?>
 </header>
+<?php if ($username !== ''): ?>
+<div class="app-shell">
+    <aside class="app-sidebar" id="app-sidebar" data-sidebar>
+        <nav class="sidebar-nav" aria-label="主导航">
+            <?php foreach ($sidebarGroups as $groupKey => $groupLabel): ?>
+                <?php if (empty($groupedSidebar[$groupKey])) { continue; } ?>
+                <div class="sidebar-group">
+                    <p class="sidebar-label"><?= $escape($groupLabel) ?></p>
+                    <?php foreach ($groupedSidebar[$groupKey] as $sidebarItem): ?>
+                        <?php $isSidebarCurrent = ($sidebarItem['page'] ?? '') === $sidebarActivePage; ?>
+                        <a class="sidebar-item<?= $isSidebarCurrent ? ' is-active' : '' ?>" href="?page=<?= $escape((string) $sidebarItem['page']) ?>"<?= $isSidebarCurrent ? ' aria-current="page"' : '' ?>>
+                            <span class="sidebar-icon" aria-hidden="true"><?= $escape((string) ($sidebarItem['icon'] ?? '·')) ?></span>
+                            <span class="sidebar-text"><?= $escape((string) $sidebarItem['label']) ?></span>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            <?php endforeach; ?>
+            <?php if (!$layoutProjectScoped): ?>
+                <div class="sidebar-group">
+                    <p class="sidebar-label">平台</p>
+                    <a class="sidebar-item<?= $layoutPage === 'projects' ? ' is-active' : '' ?>" href="?page=projects"<?= $layoutPage === 'projects' ? ' aria-current="page"' : '' ?>>
+                        <span class="sidebar-icon" aria-hidden="true">⌂</span>
+                        <span class="sidebar-text">项目列表</span>
+                    </a>
+                </div>
+            <?php endif; ?>
+        </nav>
+        <div class="sidebar-bottom">
+            <?php if ($canManagePlatform): ?>
+                <a class="sidebar-item<?= $layoutPage === 'admin' ? ' is-active' : '' ?>" href="?page=admin"<?= $layoutPage === 'admin' ? ' aria-current="page"' : '' ?>>
+                    <span class="sidebar-icon" aria-hidden="true">⚙</span>
+                    <span class="sidebar-text">系统设置</span>
+                </a>
+            <?php endif; ?>
+            <a class="sidebar-item<?= $layoutPage === 'profile' ? ' is-active' : '' ?>" href="?page=profile"<?= $layoutPage === 'profile' ? ' aria-current="page"' : '' ?>>
+                <span class="sidebar-icon" aria-hidden="true">◉</span>
+                <span class="sidebar-text">个人设置</span>
+            </a>
+            <button class="sidebar-item sidebar-collapse" type="button" data-sidebar-collapse aria-label="收起侧边栏">
+                <span class="sidebar-icon" aria-hidden="true">«</span>
+                <span class="sidebar-text">收起侧栏</span>
+            </button>
+        </div>
+    </aside>
+    <div class="sidebar-scrim" data-sidebar-scrim hidden></div>
+    <main class="container">
+        <p class="crumb">工作区 <span aria-hidden="true">›</span> <span><?= $escape($layoutCrumb) ?></span></p>
+        <?php if (is_array($flash ?? null)): ?>
+            <div class="notice notice-<?= $escape($flash['type'] ?? 'success') ?>" role="status">
+                <?= $escape($flash['message'] ?? '') ?>
+            </div>
+        <?php endif; ?>
+        <?= $content ?>
+    </main>
+</div>
+<?php else: ?>
 <main class="container">
     <?php if (is_array($flash ?? null)): ?>
         <div class="notice notice-<?= $escape($flash['type'] ?? 'success') ?>" role="status">
@@ -77,6 +239,7 @@ $moduleAssetVersion = static function (array $asset): string {
     <?php endif; ?>
     <?= $content ?>
 </main>
+<?php endif; ?>
 <script src="<?= $escape($assetVersion('assets/app.js')) ?>" defer></script>
 <?php foreach (($pageScripts ?? []) as $pageScript): ?>
     <script src="<?= $escape($moduleAssetVersion($pageScript)) ?>" defer></script>

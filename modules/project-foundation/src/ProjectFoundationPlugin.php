@@ -8,11 +8,13 @@ use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Plugin\ProjectDirectoryProvider;
 use ProjectO\Plugin\ServicePublisher;
+use ProjectO\Plugin\SidebarNavigationProvider;
 use ProjectO\Support;
 use Throwable;
 
-final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
+final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher, SidebarNavigationProvider, ProjectDirectoryProvider
 {
     private ProjectService $projects;
     private ProjectSpaceService $spaces;
@@ -49,6 +51,66 @@ final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
             'space.room.unmap' => $this->unmapRoom($input),
             default => throw new HttpException('未找到对应操作。', 404),
         };
+    }
+
+    /**
+     * V2.1 project sidebar: workspace entries owned by this plugin. Same
+     * permission gates as the routes themselves; the layout only renders what
+     * is declared here, and the server still authorizes every request.
+     */
+    public function sidebarItems(): array
+    {
+        $items = [];
+        if (Support::hasPermission($this->context->db, 'view_projects')) {
+            $items[] = ['group' => 'workspace', 'page' => 'projects', 'label' => '项目首页', 'icon' => '⌂'];
+        }
+        if (
+            Support::hasPermission($this->context->db, 'view_projects')
+            && Support::hasPermission($this->context->db, 'view_project_spaces')
+        ) {
+            $items[] = ['group' => 'workspace', 'page' => 'spaces', 'label' => '项目空间', 'icon' => '▦'];
+        }
+
+        return $items;
+    }
+
+    /**
+     * V2.1 top-bar switcher directory: active projects the viewer may see.
+     * Same gate as the project list route; archived projects stay out.
+     */
+    public function projectDirectory(): array
+    {
+        if (!Support::hasPermission($this->context->db, 'view_projects')) {
+            return [];
+        }
+
+        return array_map(
+            static fn (array $project): array => [
+                'project_id' => (int) $project['project_id'],
+                'project_name' => (string) $project['project_name'],
+                'status' => (string) $project['status'],
+            ],
+            $this->projects->list(false)
+        );
+    }
+
+    /**
+     * Landing page after selecting a project from the home cards / switcher.
+     * Whitelisted module pages only; anything else falls back to the list.
+     */
+    private function entryPageFor(array $input): string
+    {
+        $return = $input['return'] ?? null;
+        if (!is_string($return) || !in_array($return, ['spaces', 'materials', 'documents'], true)) {
+            return 'projects';
+        }
+        $permission = match ($return) {
+            'spaces' => 'view_project_spaces',
+            'materials' => 'view_materials',
+            'documents' => 'view_issues',
+        };
+
+        return Support::hasPermission($this->context->db, $permission) ? $return : 'projects';
     }
 
     private function index(array $input): PluginResponse
@@ -226,7 +288,7 @@ final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
         $project = $this->projects->select($projectId);
         Support::flash('当前项目：' . $project['project_name']);
 
-        return PluginResponse::redirect('?page=projects');
+        return PluginResponse::redirect('?page=' . $this->entryPageFor($input));
     }
 
     private function deleteProject(array $input): PluginResponse

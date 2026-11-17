@@ -8,6 +8,7 @@ use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Plugin\SidebarNavigationProvider;
 use ProjectO\Security\FieldCipher;
 use ProjectO\Support;
 
@@ -20,7 +21,7 @@ use ProjectO\Support;
  * resolved from the server-side session — a client-submitted project id is never
  * trusted.
  */
-final class LaborCrewPlugin implements PluginInterface
+final class LaborCrewPlugin implements PluginInterface, SidebarNavigationProvider
 {
     private CrewDirectoryService $directory;
     private CrewShareService $shares;
@@ -467,5 +468,23 @@ final class LaborCrewPlugin implements PluginInterface
                 && Support::hasPermission($this->context->db, 'view_projects'),
             'types' => Support::hasPermission($this->context->db, 'view_labor_crew_types'),
         ];
+    }
+
+    /**
+     * V2.1 project sidebar: site entries. Crews are project-scoped; the crew
+     * type directory stays a shared reference catalogue. Same gates as nav().
+     */
+    public function sidebarItems(): array
+    {
+        $nav = $this->nav();
+        $items = [];
+        if (!empty($nav['crews'])) {
+            $items[] = ['group' => 'site', 'page' => 'labor-crews', 'label' => '施工班组', 'icon' => '♙'];
+        }
+        if (!empty($nav['types'])) {
+            $items[] = ['group' => 'site', 'page' => 'labor-crew-types', 'label' => '工种目录', 'icon' => '⌘'];
+        }
+
+        return $items;
     }
 }

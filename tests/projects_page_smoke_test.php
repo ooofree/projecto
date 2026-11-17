@@ -66,15 +66,20 @@ ob_start();
 $html = ob_get_clean();
 
 if (
-    !str_contains($html, '当前工作项目')
+    !str_contains($html, 'portfolio-stats')
+    || !str_contains($html, '当前工作区')
     || !str_contains($html, '&lt;script&gt;alert(1)&lt;/script&gt;')
     || str_contains($html, '<script>alert(1)</script>')
     || !str_contains($html, '全部项目')
-    || !str_contains($html, 'class="project-card is-current"')
-    || !str_contains($html, 'href="?page=samples"')
-    || !str_contains($html, '样品跟踪')
+    || !str_contains($html, 'class="project-card is-current')
+    || !str_contains($html, 'data-project-enter')
     || !str_contains($html, '删除 / 归档')
-    || str_contains($html, 'href="?page=spaces"')
+    || str_contains($html, 'quick-area')
+    || str_contains($html, 'href="?page=spaces">')
+    || !str_contains($html, 'class="app-sidebar"')
+    // With a current project in session the home page shows the project
+    // sidebar (its cards enter that project); module entries stay reachable.
+    || !str_contains($html, '项目工作区')
 ) {
     throw new RuntimeException('Projects page context, deletion controls, escaping, or permission display check failed.');
 }

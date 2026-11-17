@@ -857,9 +857,12 @@ $_GET = ['page' => 'projects'];
 ob_start();
 (new Application($db))->run();
 $renderedProjectsPage = ob_get_clean();
+// V2.1 home simplification: the home page carries only project basic info and
+// the portfolio report; module entries live in the project sidebar instead.
 documentTestCheck(
-    str_contains($renderedProjectsPage, '?page=documents'),
-    'The project page should expose the authorized document-management entry.'
+    str_contains($renderedProjectsPage, 'sidebar-item')
+        && str_contains($renderedProjectsPage, '?page=documents'),
+    'The authorized document-management entry should remain reachable via the project sidebar.'
 );
 
 unset($_SESSION['active_project_id']);
