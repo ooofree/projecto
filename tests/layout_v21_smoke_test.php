@@ -118,14 +118,14 @@ $projectsHtml = layoutRender($db, 'projects', $session);
 layoutCheck(
     str_contains($projectsHtml, 'class="app-sidebar"')
         && str_contains($projectsHtml, '项目工作区')
-        && str_contains($projectsHtml, '材料与商务'),
+        && str_contains($projectsHtml, '材料与样品'),
     'With a current project the home page must render the project sidebar.'
 );
 $noProjectHtml = layoutRender($db, 'projects', ['user_id' => 1, 'username' => 'admin', 'csrf_token' => 'layout-token']);
 layoutCheck(
     str_contains($noProjectHtml, '项目列表')
         && !str_contains($noProjectHtml, '项目工作区')
-        && !str_contains($noProjectHtml, '材料与商务'),
+        && !str_contains($noProjectHtml, '材料与样品'),
     'Without a current project only the platform bucket may render.'
 );
 layoutCheck(
@@ -145,7 +145,7 @@ layoutCheck(
 layoutGrant($db, ['view_projects', 'view_project_spaces', 'view_materials', 'view_brands', 'manage_platform']);
 $brandsHtml = layoutRender($db, 'brands', $session);
 layoutCheck(
-    str_contains($brandsHtml, '材料与商务')
+    str_contains($brandsHtml, '供应商目录')
         && str_contains($brandsHtml, 'href="?page=brands" aria-current="page"')
         && str_contains($brandsHtml, 'project-switch-name">Layout Project</span>'),
     'Shared-catalogue pages must keep the project sidebar and switcher (session-resolved project).'
@@ -165,6 +165,26 @@ layoutCheck(
 layoutCheck(
     str_contains($spacesHtml, 'href="?page=projects">项目首页</a>'),
     'The in-page module navigation contract must stay intact.'
+);
+
+// V2.1 business grouping: materials/samples together, quotes/tenders/estimates
+// together, shared supplier directory separate, construction own group.
+layoutGrant($db, ['view_projects', 'view_project_spaces', 'view_materials', 'view_material_samples', 'view_material_quotations', 'view_tenders', 'view_material_estimates', 'view_suppliers', 'view_brands', 'view_supplier_materials', 'view_labor_crews', 'view_labor_crew_types', 'manage_platform']);
+// Render on a shared-catalogue page: the sidebar is identical on every
+// project page, and brands needs no material business tables in this schema.
+$groupedHtml = layoutRender($db, 'brands', $session);
+$materialsGroup = strpos($groupedHtml, '材料与样品');
+$quotesGroup = strpos($groupedHtml, '报价与招标');
+$suppliersGroup = strpos($groupedHtml, '供应商目录');
+$constructionGroup = strpos($groupedHtml, '施工管理');
+layoutCheck(
+    $materialsGroup !== false && $quotesGroup !== false && $suppliersGroup !== false && $constructionGroup !== false
+        && $suppliersGroup < $materialsGroup && $materialsGroup < $quotesGroup && $quotesGroup < $constructionGroup
+        && strpos($groupedHtml, '供应商材料') > $suppliersGroup && strpos($groupedHtml, '供应商材料') < $materialsGroup
+        && strpos($groupedHtml, '样品跟踪') > $materialsGroup && strpos($groupedHtml, '样品跟踪') < $quotesGroup
+        && strpos($groupedHtml, '材料测算') > $quotesGroup && strpos($groupedHtml, '材料测算') < $constructionGroup
+        && strpos($groupedHtml, '工种目录') > $constructionGroup,
+    'Sidebar groups must follow the business relations: supplier directory, materials+samples, quotes+tenders+estimates, construction.'
 );
 
 // 5. Without view_projects the project groups disappear entirely.

@@ -514,33 +514,33 @@ input[type="checkbox"], input[type="radio"] { width: 17px; min-height: 17px; pad
    translucent overlays) need explicit overrides below. */
 body.theme-dark {
     color-scheme: dark;
-    --page: #191c22;
-    --page-glow: #191c22;
-    --surface-0: #232732;
-    --surface-1: #1f232c;
-    --surface-2: #2b3040;
-    --border-subtle: #363c4a;
-    --border-strong: #4a5164;
-    --overlay-strong: rgb(35 39 50 / 92%);
-    --overlay-soft: rgb(35 39 50 / 90%);
+    --page: #07090d;
+    --page-glow: #07090d;
+    --surface-0: #12151d;
+    --surface-1: #0c0f15;
+    --surface-2: #1a1f2b;
+    --border-subtle: #2a303c;
+    --border-strong: #3e4557;
+    --overlay-strong: rgb(18 21 29 / 92%);
+    --overlay-soft: rgb(18 21 29 / 90%);
     --text-primary: #e6e8ee;
     --text-secondary: #c3c8d4;
     --text-tertiary: #9aa1b2;
     --text-placeholder: #8b92a3;
     --brand: #5b6fd8;
     --brand-hover: #6d80e8;
-    --brand-soft: #2b3148;
-    --brand-soft-strong: #343b5c;
-    --brand-border-soft: #4a5164;
+    --brand-soft: #232a41;
+    --brand-soft-strong: #2c3452;
+    --brand-border-soft: #3e4557;
     --on-brand: #fff;
     --brand-strong: #aab6f5;
     --accent-text: #98a6f2;
     --focus-ring: #98a6f2;
     --input-focus-border: #7583c9;
     --input-focus-outline: rgb(152 166 242 / 22%);
-    --row-hover: #2b3040;
-    --scrollbar-thumb: #4a5164;
-    --scrollbar-thumb-hover: #5b6378;
+    --row-hover: #1a1f2b;
+    --scrollbar-thumb: #3e4557;
+    --scrollbar-thumb-hover: #565e73;
     --backdrop: rgb(0 0 0 / 68%);
     --card-hover-border: #5b6378;
     --card-current-border: #7583c9;
@@ -596,7 +596,7 @@ html:has(body.theme-dark) { background: var(--page); }
 /* Inputs sit darker than panels in dark mode (intentional, not a token flip). */
 body.theme-dark input:not([type="checkbox"]):not([type="radio"]),
 body.theme-dark select,
-body.theme-dark textarea { background: #1b1e26; }
+body.theme-dark textarea { background: #0a0d12; }
 
 @media (max-width: 900px) {
     .container { padding: 22px 20px 48px; }

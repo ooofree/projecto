@@ -478,11 +478,13 @@ final class LaborCrewPlugin implements PluginInterface, SidebarNavigationProvide
     {
         $nav = $this->nav();
         $items = [];
+        // V2.1 construction group. The task module is not built yet; per the
+        // task book no placeholder entry is invented for it.
         if (!empty($nav['crews'])) {
-            $items[] = ['group' => 'site', 'page' => 'labor-crews', 'label' => '施工班组', 'icon' => '♙'];
+            $items[] = ['group' => 'construction', 'page' => 'labor-crews', 'label' => '施工班组', 'icon' => '♙'];
         }
         if (!empty($nav['types'])) {
-            $items[] = ['group' => 'site', 'page' => 'labor-crew-types', 'label' => '工种目录', 'icon' => '⌘'];
+            $items[] = ['group' => 'construction', 'page' => 'labor-crew-types', 'label' => '工种目录', 'icon' => '⌘'];
         }
 
         return $items;

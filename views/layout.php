@@ -65,8 +65,11 @@ $projectStatusLabels = [
 ];
 $sidebarGroups = [
     'workspace' => '项目工作区',
-    'commercial' => '材料与商务',
-    'site' => '文档与现场',
+    'suppliers' => '供应商目录',
+    'materials' => '材料与样品',
+    'quotes' => '报价与招标',
+    'collab' => '文档协作',
+    'construction' => '施工管理',
 ];
 // Recycle-bin sub-views keep their parent module entry highlighted.
 $sidebarActivePage = $layoutPage;

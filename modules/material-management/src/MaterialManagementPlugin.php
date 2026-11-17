@@ -1098,19 +1098,22 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
     {
         $nav = $this->nav();
         $items = [];
+        // V2.1 grouping per business relation (user directive 2026-11-18):
+        // shared supplier directory own group; materials+samples one group;
+        // quotations+tenders+estimates one group.
         foreach ([
-            ['materials', 'materials', '材料管理', '▤'],
-            ['auxiliaries', 'auxiliary-materials', '辅材目录', '◫'],
-            ['brands', 'brands', '品牌管理', '◇'],
-            ['suppliers', 'suppliers', '供应商', '▧'],
-            ['supplierMaterials', 'supplier-materials', '供应商材料', '▱'],
-            ['quotations', 'quotations', '材料报价', '￥'],
-            ['tenders', 'tender-list', '招标清单', '☷'],
-            ['estimates', 'estimates', '材料测算', '∑'],
-            ['samples', 'samples', '样品跟踪', '◉'],
-        ] as [$key, $page, $label, $icon]) {
+            ['suppliers', 'suppliers', '供应商', '▧', 'suppliers'],
+            ['brands', 'brands', '品牌管理', '◇', 'suppliers'],
+            ['supplierMaterials', 'supplier-materials', '供应商材料', '▱', 'suppliers'],
+            ['materials', 'materials', '材料管理', '▤', 'materials'],
+            ['auxiliaries', 'auxiliary-materials', '辅材目录', '◫', 'materials'],
+            ['samples', 'samples', '样品跟踪', '◉', 'materials'],
+            ['quotations', 'quotations', '材料报价', '￥', 'quotes'],
+            ['tenders', 'tender-list', '招标清单', '☷', 'quotes'],
+            ['estimates', 'estimates', '材料测算', '∑', 'quotes'],
+        ] as [$key, $page, $label, $icon, $group]) {
             if (!empty($nav[$key])) {
-                $items[] = ['group' => 'commercial', 'page' => $page, 'label' => $label, 'icon' => $icon];
+                $items[] = ['group' => $group, 'page' => $page, 'label' => $label, 'icon' => $icon];
             }
         }
 

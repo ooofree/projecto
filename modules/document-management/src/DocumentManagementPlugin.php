@@ -518,12 +518,12 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             Support::hasPermission($this->context->db, 'view_projects')
             && Support::hasPermission($this->context->db, 'view_issues')
         ) {
-            $items[] = ['group' => 'site', 'page' => 'documents', 'label' => '文档管理', 'icon' => '▣'];
-            $items[] = ['group' => 'site', 'page' => 'issues', 'label' => '问题管理', 'icon' => '⚑'];
-            $items[] = ['group' => 'site', 'page' => 'rfis', 'label' => 'RFI 管理', 'icon' => '↗'];
+            $items[] = ['group' => 'collab', 'page' => 'documents', 'label' => '文档管理', 'icon' => '▣'];
+            $items[] = ['group' => 'collab', 'page' => 'issues', 'label' => '问题管理', 'icon' => '⚑'];
+            $items[] = ['group' => 'collab', 'page' => 'rfis', 'label' => 'RFI 管理', 'icon' => '↗'];
         }
         if ($this->canManageSettings()) {
-            $items[] = ['group' => 'site', 'page' => 'document-settings', 'label' => '文档设置', 'icon' => '⚙'];
+            $items[] = ['group' => 'collab', 'page' => 'document-settings', 'label' => '文档设置', 'icon' => '⚙'];
         }
 
         return $items;
