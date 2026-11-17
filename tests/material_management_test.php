@@ -997,6 +997,17 @@ materialTestCheck(
         && str_contains($estimateHtml, 'data-estimate-id='),
     'Estimates quick entry must render the continuous-entry workbench (location bar, unit hint, status line, recent chips).'
 );
+$tenderHtml = renderMaterialTestView($tenderPage);
+$tenderComboCount = substr_count($tenderHtml, 'data-combo-select');
+$tenderItemCount = count($tenderPage->data['items']);
+materialTestCheck(
+    str_contains($tenderHtml, 'data-combo')
+        && str_contains($tenderHtml, 'data-combo-input')
+        && str_contains($tenderHtml, 'data-combo-options')
+        && str_contains($tenderHtml, 'name="material_id" data-combo-select required')
+        && $tenderComboCount === ($tenderItemCount > 0 ? $tenderItemCount + 1 : 1),
+    'Tender list entry and every edit form must render the searchable material picker backed by the native select.'
+);
 materialTestCheck(
     str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.css'), '.combo.is-enhanced .combo-native')
         && str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.css'), '.entry-line')

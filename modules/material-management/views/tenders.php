@@ -2,6 +2,23 @@
 ob_start();
 require __DIR__ . '/_nav.php';
 $statusLabels = ['pending' => '待确认', 'approved' => '已确认', 'completed' => '已完成'];
+
+// Searchable material picker: the native select remains the submitted value,
+// while the text input and option list are the fast path used by app.js.
+$renderMaterialCombo = static function (array $materials, ?int $selectedId) use ($escape): string {
+    ob_start(); ?>
+    <div class="combo" data-combo>
+        <select name="material_id" data-combo-select required aria-label="项目材料">
+            <option value="">请选择材料</option>
+            <?php foreach ($materials as $material): ?>
+                <option value="<?= (int) $material['material_id'] ?>"<?= $selectedId !== null && (int) $material['material_id'] === $selectedId ? ' selected' : '' ?>><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ' (' . $material['unit'] . ')') ?></option>
+            <?php endforeach; ?>
+        </select>
+        <input type="text" class="combo-input" data-combo-input placeholder="输入名称或编码搜索" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-label="搜索并选择材料">
+        <ul class="combo-options" data-combo-options role="listbox" hidden></ul>
+    </div>
+    <?php return (string) ob_get_clean();
+};
 ?>
 <section class="page-heading">
     <div>
@@ -19,14 +36,7 @@ $statusLabels = ['pending' => '待确认', 'approved' => '已确认', 'completed
         <form method="post" class="form-grid">
             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
             <input type="hidden" name="action" value="material.tender.save">
-            <label>项目材料
-                <select name="material_id" required>
-                    <option value="">请选择材料</option>
-                    <?php foreach ($materials as $material): ?>
-                        <option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ' (' . $material['unit'] . ')') ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
+            <label>项目材料<?= $renderMaterialCombo($materials, null) ?></label>
             <label>招标数量<input type="number" name="tender_quantity" min="0" step="0.01" required></label>
             <label>招标单价<input type="number" name="tender_unit_price" min="0" step="0.01" required></label>
             <label>币种<select name="currency_code" required><?php foreach ($currencies as $code => $name): ?><option value="<?= $escape($code) ?>" <?= $code === $defaultCurrency ? 'selected' : '' ?>><?= $escape($name) ?></option><?php endforeach; ?></select></label>
@@ -50,13 +60,7 @@ $statusLabels = ['pending' => '待确认', 'approved' => '已确认', 'completed
                     <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                     <input type="hidden" name="action" value="material.tender.save">
                     <input type="hidden" name="tender_item_id" value="<?= (int) $item['tender_item_id'] ?>">
-                    <label>项目材料
-                        <select name="material_id" required>
-                            <?php foreach ($materials as $material): ?>
-                                <option value="<?= (int) $material['material_id'] ?>" <?= (int) $material['material_id'] === (int) $item['material_id'] ? 'selected' : '' ?>><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ' (' . $material['unit'] . ')') ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </label>
+                    <label>项目材料<?= $renderMaterialCombo($materials, (int) $item['material_id']) ?></label>
                     <label>招标数量<input type="number" name="tender_quantity" min="0" step="0.01" value="<?= $escape($item['tender_quantity']) ?>" required></label>
                     <label>招标单价<input type="number" name="tender_unit_price" min="0" step="0.01" value="<?= $escape($item['tender_unit_price']) ?>" required></label>
                     <label>币种<select name="currency_code" required><?php foreach ($currencies as $code => $name): ?><option value="<?= $escape($code) ?>" <?= $code === $item['currency_code'] ? 'selected' : '' ?>><?= $escape($name) ?></option><?php endforeach; ?></select></label>
