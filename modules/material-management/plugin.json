@@ -23,6 +23,8 @@
         "POST material.category.delete": "category.delete",
         "POST material.save": "material.save",
         "POST material.delete": "material.delete",
+        "POST material.composition.save": "material.composition.save",
+        "POST material.composition.delete": "material.composition.delete",
         "POST material.export": "material.export",
         "POST material.brand.save": "brand.save",
         "POST material.brand.delete": "brand.delete",
@@ -46,6 +48,9 @@
         "POST material.tender.save": "tender.save",
         "POST material.tender.delete": "tender.delete"
     },
+    "assets": [
+        "sample-coverage.js"
+    ],
     "migrations": [
         "database/migrations"
     ],

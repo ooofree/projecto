@@ -51,6 +51,8 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'category.delete' => $this->deleteCategory($input),
             'material.save' => $this->saveMaterial($input),
             'material.delete' => $this->deleteMaterial($input),
+            'material.composition.save' => $this->saveComposition($input),
+            'material.composition.delete' => $this->deleteComposition($input),
             'material.export' => $this->exportMaterials($input),
             'brand.save' => $this->saveBrand($input),
             'brand.delete' => $this->deleteBrand($input),
@@ -83,10 +85,21 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
         Support::requirePermission($this->context->db, 'view_materials');
         Support::requirePermission($this->context->db, 'view_projects');
         $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $materialData = $this->catalog->materialData($projectId);
+        // 组成关系按父材料分组，供编辑对话框渲染；与送样要求相互独立。
+        $compositionsByParent = [];
+        foreach ($materialData['materials'] as $material) {
+            if ((int) ($material['child_count'] ?? 0) > 0) {
+                $compositionsByParent[(int) $material['material_id']] =
+                    $this->catalog->compositionsForParent($projectId, (int) $material['material_id']);
+            }
+        }
         return $this->context->view('materials.php', [
             'title' => '材料管理',
             'currentProject' => $project,
-            'data' => $this->catalog->materialData((int) $project['project_id']),
+            'data' => $materialData,
+            'compositionsByParent' => $compositionsByParent,
             'canEdit' => Support::hasPermission($this->context->db, 'edit_materials'),
             'canDelete' => Support::hasPermission($this->context->db, 'delete_materials'),
             'nav' => $this->nav(),
@@ -172,11 +185,23 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
 
         $canManageSettings = Support::hasPermission($this->context->db, 'manage_document_settings')
             || Support::hasPermission($this->context->db, 'manage_platform');
+        $readiness = $this->projectMaterials->compositionReadiness($projectId);
+        // 组成明细（子材料 × 数量系数）仅展示，不参与齐套判定。
+        foreach ($readiness as &$readinessRow) {
+            $detailParts = [];
+            foreach ($this->projectMaterials->compositionChildren($projectId, (int) $readinessRow['material_id']) as $child) {
+                $detailParts[] = $child['material_name'] . ' ×' . rtrim(rtrim((string) $child['quantity'], '0'), '.')
+                    . ($child['covered'] ? '（已覆盖）' : '（未覆盖）');
+            }
+            $readinessRow['composition_detail'] = implode('；', $detailParts);
+        }
+        unset($readinessRow);
         return $this->context->view('samples.php', [
             'title' => '材料样品跟踪',
             'currentProject' => $project,
             'samples' => $samples,
             'coverage' => $this->projectMaterials->sampleCoverage($projectId),
+            'readiness' => $readiness,
             'choices' => $this->projectMaterials->sampleChoices($projectId, $canViewQuotations),
             'locations' => $this->projectMaterials->locations($projectId),
             'canCreate' => Support::hasPermission($this->context->db, 'add_sample'),
@@ -190,6 +215,9 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
                 ? $this->imageStorage->configurationStatus()
                 : null,
             'imageStorageReady' => $this->imageStorage->isConfigured(),
+            'moduleAssetVersions' => [
+                'sample-coverage.js' => $this->context->assetVersion('material.management', 'sample-coverage.js'),
+            ],
             'nav' => $this->nav(),
         ]);
     }
@@ -284,6 +312,21 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
         $id = $this->requiredId($input, 'material_id');
         $this->catalog->deleteMaterial($projectId, $id);
         return $this->complete('material.delete', '材料已删除。', $id, '?page=materials');
+    }
+
+    private function saveComposition(array $input): PluginResponse
+    {
+        $projectId = $this->requireMaterialEdit();
+        $id = $this->catalog->saveComposition($projectId, $input);
+        return $this->complete('material.composition.save', '材料组成已保存。', $id, '?page=materials');
+    }
+
+    private function deleteComposition(array $input): PluginResponse
+    {
+        $projectId = $this->requireMaterialEdit();
+        $id = $this->requiredId($input, 'composition_id');
+        $this->catalog->deleteComposition($projectId, $id);
+        return $this->complete('material.composition.delete', '材料组成已删除。', $id, '?page=materials');
     }
 
     private function saveBrand(array $input): PluginResponse

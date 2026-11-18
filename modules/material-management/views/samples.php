@@ -153,6 +153,52 @@ require __DIR__ . '/_nav.php';
     <?php endif; ?>
 </section>
 
+<?php
+// Read-only readiness roll-up for custom assemblies (parent materials). Pure
+// aggregate over the children's own sample records; composition edges never
+// create sample obligations and quantities are display-only.
+$readinessRows = is_array($readiness ?? null) ? $readiness : [];
+$readinessLabels = ['none' => '未齐套', 'partial' => '部分齐套', 'complete' => '齐套'];
+$readinessTones = ['none' => 'red', 'partial' => 'amber', 'complete' => 'green'];
+?>
+<?php if ($readinessRows !== []): ?>
+<section class="panel" id="composition-readiness">
+    <div class="panel-heading">
+        <div>
+            <h2>定制项组件齐套汇总</h2>
+            <p class="muted">定制整合产品（如玻璃门）本身无需送样，此处只读汇总其组成子材料的送样情况；子材料已送样且未被拒即计为已覆盖，被拒需重送。数量系数仅供核对，不参与齐套判定。</p>
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table class="report-table" id="composition-readiness-table">
+            <thead>
+            <tr>
+                <th scope="col">定制项</th>
+                <th scope="col">组件齐套</th>
+                <th scope="col">已覆盖 / 组件数</th>
+                <th scope="col">含被拒组件</th>
+                <th scope="col">组成明细（数量系数）</th>
+            </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($readinessRows as $readinessRow): ?>
+                <tr>
+                    <td>
+                        <span class="material-primary"><?= $escape($readinessRow['material_name']) ?></span>
+                        <span class="material-secondary"><?= $escape(($readinessRow['material_code'] ? $readinessRow['material_code'] . ' · ' : '') . $readinessRow['unit']) ?></span>
+                    </td>
+                    <td><span class="status-badge is-<?= $escape($readinessTones[$readinessRow['readiness_status']]) ?>"><?= $escape($readinessLabels[$readinessRow['readiness_status']]) ?></span></td>
+                    <td><?= (int) $readinessRow['covered_count'] ?> / <?= (int) $readinessRow['child_count'] ?></td>
+                    <td><?= (int) $readinessRow['rejected_child_count'] > 0 ? (int) $readinessRow['rejected_child_count'] . ' 项' : '—' ?></td>
+                    <td><?= $escape($readinessRow['composition_detail'] ?? '—') ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</section>
+<?php endif; ?>
+
 <section class="panel">
     <div class="panel-heading">
         <div>
@@ -285,7 +331,7 @@ require __DIR__ . '/_nav.php';
                     <?php endforeach; ?>
                 </select>
             </label>
-            <label>送样日期<input type="date" name="sent_date"></label>
+            <label>送样日期<input type="date" name="sent_date" value="<?= $escape(\ProjectO\Support::nowLocal('Y-m-d')) ?>"></label>
             <label>业主审批状态
                 <select name="owner_approval_status">
                     <?php foreach ($approvalLabels as $value => $label): ?>
@@ -317,8 +363,17 @@ require __DIR__ . '/_nav.php';
                 <?php
                 $currentLocationValue = $sample['location_type'] . ':' . $sample['location_id'];
                 $currentLocationFound = in_array($currentLocationValue, array_column($locationOptions, 'value'), true);
+                // 材料后来被设为无需送样时不在登记候选中；编辑对话框保留当前
+                // 材料选项，服务端对材料不变的编辑放行，保证历史样品可维护。
+                $editMaterialOptions = $sampleMaterialOptions;
+                if (!in_array((int) $sample['material_id'], array_column($sampleMaterialOptions, 'value'), true)) {
+                    $editMaterialOptions[] = [
+                        'value' => (int) $sample['material_id'],
+                        'label' => ($sample['material_code'] ? $sample['material_code'] . ' · ' : '') . $sample['material_name'] . '（无需送样 · 仅保留历史样品）',
+                    ];
+                }
                 ?>
-                <label>材料<?= $renderSampleCombo('material_id', $sampleMaterialOptions, (string) $sample['material_id'], '请选择材料', '材料', '材料') ?></label>
+                <label>材料<?= $renderSampleCombo('material_id', $editMaterialOptions, (string) $sample['material_id'], '请选择材料', '材料', '材料') ?></label>
                 <label>供样供应商<?= $renderSampleCombo('supplier_id', $sampleSupplierOptions, (string) $sample['supplier_id'], '请选择供应商', '供应商', '供样供应商') ?></label>
                 <?php if ($canEditSampleQuotation): ?>
                     <label>关联报价（可选）<?= $renderSampleCombo('quotation_id', $sampleQuotationOptions, $sample['quotation_id'] !== null ? (string) $sample['quotation_id'] : null, '暂未报价', '报价', '关联报价', false) ?></label>
@@ -461,43 +516,14 @@ require __DIR__ . '/_nav.php';
     <?php endforeach; ?>
 <?php endif; ?>
 
-<?php if ($canCreate || $canEdit): ?>
-<script>
-// Enhance the sample dialog pickers with the shared searchable combo from
-// app.js (same behaviour as the estimates/tender pages). Runs after the
-// deferred bundle; without JavaScript the native selects still work.
-if (typeof window.projectOInitCombos === 'function') window.projectOInitCombos();
-</script>
-<?php endif; ?>
 <?php if ($canCreateSample): ?>
-<script>
-// Sample coverage helpers: preselect the material when a coverage row opens
-// the create dialog, and show that material's coverage hint inside the dialog.
-// Progressive enhancement only — the dialog and form work without this script.
-(() => {
-    const dialog = document.getElementById('sample-create');
-    if (!dialog) return;
-    const select = dialog.querySelector('[data-sample-material-select]');
-    const hint = dialog.querySelector('[data-sample-material-hint]');
-    const annotations = <?= json_encode($coverageAnnotations, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
-    const updateHint = () => {
-        if (!hint || !select) return;
-        const text = annotations[select.value] || '';
-        hint.textContent = text === '' ? '' : '该材料当前：' + text + '。被拒后重送或换色重送可直接新增一版，无需修改旧记录。';
-        hint.hidden = text === '';
-    };
-    document.addEventListener('click', (event) => {
-        const trigger = event.target.closest('[data-dialog-open="sample-create"][data-sample-material]');
-        if (trigger && select) {
-            select.value = trigger.dataset.sampleMaterial;
-            // Keep the searchable combo input in sync with the preselection.
-            select.dispatchEvent(new Event('change', { bubbles: true }));
-            updateHint();
-        }
-    });
-    if (select) select.addEventListener('change', updateHint);
-})();
-</script>
+<script type="application/json" id="sample-coverage-config"><?= json_encode($coverageAnnotations, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <?php endif; ?>
 
-<?php $content = ob_get_clean(); require dirname(__DIR__, 3) . '/views/layout.php'; ?>
+<?php
+$content = ob_get_clean();
+// Deferred module asset: the layout loads app.js first, then this file, so the
+// shared combo initializer and the coverage preselection always run in order.
+$pageScripts = [['module' => 'material.management', 'file' => 'sample-coverage.js', 'version' => $moduleAssetVersions['sample-coverage.js'] ?? '0']];
+require dirname(__DIR__, 3) . '/views/layout.php';
+?>

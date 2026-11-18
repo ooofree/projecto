@@ -31,7 +31,11 @@ final class MaterialCatalogService
             'materials' => $this->projectQuery(
                 'SELECT m.material_id, m.material_code, m.material_name, m.unit,
                         m.specifications, m.material_description_detailed, m.category_id,
-                        m.default_quotation_id, c.category_name
+                        m.default_quotation_id, m.sample_required, c.category_name,
+                        (SELECT COUNT(*) FROM Material_Compositions cc
+                          WHERE cc.project_id = m.project_id AND cc.parent_material_id = m.material_id) AS child_count,
+                        (SELECT COUNT(*) FROM Material_Compositions pc
+                          WHERE pc.project_id = m.project_id AND pc.child_material_id = m.material_id) AS parent_count
                  FROM Materials m
                  LEFT JOIN Material_Categories c
                    ON c.category_id = m.category_id AND c.project_id = m.project_id
@@ -68,7 +72,11 @@ final class MaterialCatalogService
             'materials' => $this->projectQuery(
                 'SELECT m.material_id, m.material_code, m.material_name, m.unit,
                         m.specifications, m.material_description_detailed, m.category_id,
-                        m.default_quotation_id, c.category_name
+                        m.default_quotation_id, m.sample_required, c.category_name,
+                        (SELECT COUNT(*) FROM Material_Compositions cc
+                          WHERE cc.project_id = m.project_id AND cc.parent_material_id = m.material_id) AS child_count,
+                        (SELECT COUNT(*) FROM Material_Compositions pc
+                          WHERE pc.project_id = m.project_id AND pc.child_material_id = m.material_id) AS parent_count
                  FROM Materials m
                  LEFT JOIN Material_Categories c
                    ON c.category_id = m.category_id AND c.project_id = m.project_id
@@ -299,12 +307,15 @@ final class MaterialCatalogService
         if ($categoryId !== null) {
             $this->requireProjectCategory($projectId, $categoryId, '材料分类');
         }
+        // 送样要求：显式传值优先；新建未传默认需送样；编辑未传保留原值
+        // （快速录入等不带该字段的入口不改变既有口径）。
+        $sampleRequired = $this->optionalSampleRequirement($data['sample_required'] ?? null);
 
         if ($id === null) {
             $stmt = $this->db->prepare(
                 'INSERT INTO Materials
-                    (project_id, material_code, material_name, unit, specifications, material_description_detailed, category_id)
-                 VALUES (:project_id, :code, :name, :unit, :specifications, :description, :category_id)'
+                    (project_id, material_code, material_name, unit, specifications, material_description_detailed, category_id, sample_required, sample_requirement_explicit)
+                 VALUES (:project_id, :code, :name, :unit, :specifications, :description, :category_id, :sample_required, :explicit)'
             );
             try {
                 $stmt->execute([
@@ -315,6 +326,9 @@ final class MaterialCatalogService
                     'specifications' => $specifications,
                     'description' => $description,
                     'category_id' => $categoryId,
+                    'sample_required' => $sampleRequired ?? 'required',
+                    // 新建即显式选择送样要求视为人工决定，组成不再覆盖。
+                    'explicit' => $sampleRequired !== null ? 1 : 0,
                 ]);
             } catch (\PDOException $exception) {
                 $this->throwIfDuplicateMaterialCode($exception, $projectId, $code, $id);
@@ -324,24 +338,29 @@ final class MaterialCatalogService
         }
 
         $this->requireProjectMaterial($projectId, $id, '材料');
-        $stmt = $this->db->prepare(
-            'UPDATE Materials
+        $sql = 'UPDATE Materials
              SET material_code = :code, material_name = :name, unit = :unit,
                  specifications = :specifications, material_description_detailed = :description,
-                 category_id = :category_id
-             WHERE material_id = :id AND project_id = :project_id'
-        );
+                 category_id = :category_id';
+        $params = [
+            'code' => $code,
+            'name' => $name,
+            'unit' => $unit,
+            'specifications' => $specifications,
+            'description' => $description,
+            'category_id' => $categoryId,
+            'id' => $id,
+            'project_id' => $projectId,
+        ];
+        if ($sampleRequired !== null) {
+            // 人工显式设置持久化：此后组成增删不再自动覆盖送样要求。
+            $sql .= ', sample_required = :sample_required, sample_requirement_explicit = 1';
+            $params['sample_required'] = $sampleRequired;
+        }
+        $sql .= ' WHERE material_id = :id AND project_id = :project_id';
+        $stmt = $this->db->prepare($sql);
         try {
-            $stmt->execute([
-                'code' => $code,
-                'name' => $name,
-                'unit' => $unit,
-                'specifications' => $specifications,
-                'description' => $description,
-                'category_id' => $categoryId,
-                'id' => $id,
-                'project_id' => $projectId,
-            ]);
+            $stmt->execute($params);
         } catch (\PDOException $exception) {
             $this->throwIfDuplicateMaterialCode($exception, $projectId, $code, $id);
             throw $exception;
@@ -371,6 +390,14 @@ final class MaterialCatalogService
                 'sql' => 'SELECT COUNT(*) FROM Tender_List WHERE project_id = :project_id AND material_id = :id',
                 'message' => '该材料已用于招标清单，不能删除。',
             ],
+            [
+                'sql' => 'SELECT COUNT(*) FROM Material_Compositions WHERE project_id = :project_id AND parent_material_id = :id',
+                'message' => '该材料仍有组成子材料，请先移除组成关系再删除。',
+            ],
+            [
+                'sql' => 'SELECT COUNT(*) FROM Material_Compositions WHERE project_id = :project_id AND child_material_id = :id',
+                'message' => '该材料已被其他材料的组成引用，请先移除组成关系再删除。',
+            ],
         ] as $check) {
             $stmt = $this->db->prepare($check['sql']);
             $stmt->execute(['project_id' => $projectId, 'id' => $materialId]);
@@ -385,6 +412,254 @@ final class MaterialCatalogService
         if ($stmt->rowCount() !== 1) {
             throw new HttpException('材料不存在或不属于当前项目。', 404);
         }
+    }
+
+    /**
+     * Composition rows of one parent material (BOM-style, single level). The
+     * quantity coefficient mirrors the legacy BOM_Components.quantity: how many
+     * child units one parent unit consumes; the unit comes from Materials.unit.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function compositionsForParent(int $projectId, int $parentMaterialId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT cc.composition_id, cc.parent_material_id, cc.child_material_id, cc.quantity,
+                    m.material_code, m.material_name, m.unit, m.sample_required
+             FROM Material_Compositions cc
+             JOIN Materials m ON m.material_id = cc.child_material_id AND m.project_id = cc.project_id
+             WHERE cc.project_id = :project_id AND cc.parent_material_id = :parent_id
+             ORDER BY m.material_name, m.material_id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'parent_id' => $parentMaterialId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Create or update one parent→child composition edge. Enforces the confirmed
+     * single-level rule in both directions inside a transaction: a material that
+     * already has children cannot become a child, and a material already used as
+     * a child cannot gain children. Composition never derives sample obligations;
+     * only the material's first-ever edge flips sample_required to exempt, gated
+     * by the persistent sample_requirement_explicit flag so a manual choice is
+     * never overwritten again (even after all edges are removed and re-added).
+     *
+     * Concurrency: both endpoint material rows are locked FOR UPDATE in ascending
+     * id order (MySQL) before any re-check, so conflicting requests serialise on
+     * the same locks regardless of direction; the single-level and duplicate
+     * checks then run on committed state. Unique keys remain as a last resort and
+     * their violations are translated into business errors.
+     */
+    public function saveComposition(int $projectId, array $data): int
+    {
+        $id = $this->optionalId($data['composition_id'] ?? null);
+        $parentId = $this->requiredId($data['parent_material_id'] ?? null, '父材料');
+        $childId = $this->requiredId($data['child_material_id'] ?? null, '子材料');
+        $quantity = $this->requiredDecimal($data['quantity'] ?? null, 8, 2, '数量系数');
+        if ((float) $quantity <= 0) {
+            throw new HttpException('数量系数必须大于 0。', 422);
+        }
+        if ($parentId === $childId) {
+            throw new HttpException('材料不能作为自己的组成子材料。', 422);
+        }
+        $this->requireProjectMaterial($projectId, $parentId, '父材料');
+        $this->requireProjectMaterial($projectId, $childId, '子材料');
+
+        $this->db->beginTransaction();
+        try {
+            // 锁住两端材料行（升序，避免死锁），随后在已提交状态上复查。
+            $this->lockCompositionMaterials($projectId, $parentId, $childId);
+            $existing = null;
+            if ($id !== null) {
+                $stmt = $this->db->prepare(
+                    'SELECT composition_id, parent_material_id, child_material_id
+                     FROM Material_Compositions
+                     WHERE composition_id = :id AND project_id = :project_id'
+                );
+                $stmt->execute(['id' => $id, 'project_id' => $projectId]);
+                $existing = $stmt->fetch();
+                if ($existing === false) {
+                    throw new HttpException('组成关系不存在或不属于当前项目。', 404);
+                }
+                if ((int) $existing['parent_material_id'] !== $parentId) {
+                    throw new HttpException('组成关系的父材料不能变更；请删除后重新添加。', 422);
+                }
+                if ((int) $existing['child_material_id'] !== $childId) {
+                    // 换绑子件同样要锁定新旧两端，防止与并发写入交错。
+                    $this->lockCompositionMaterials($projectId, (int) $existing['child_material_id'], $childId);
+                }
+            }
+            $this->requireSingleLevelComposition($projectId, $parentId, $childId);
+            $duplicate = $this->db->prepare(
+                'SELECT composition_id FROM Material_Compositions
+                 WHERE project_id = :project_id AND parent_material_id = :parent_id AND child_material_id = :child_id'
+            );
+            $duplicate->execute(['project_id' => $projectId, 'parent_id' => $parentId, 'child_id' => $childId]);
+            $duplicateId = $duplicate->fetchColumn();
+            if ($duplicateId !== false && ($id === null || (int) $duplicateId !== $id)) {
+                throw new HttpException('该子材料已在组成清单中，请直接修改其数量系数。', 409);
+            }
+
+            if ($id === null) {
+                $stmt = $this->db->prepare(
+                    'INSERT INTO Material_Compositions (project_id, parent_material_id, child_material_id, quantity)
+                     VALUES (:project_id, :parent_id, :child_id, :quantity)'
+                );
+                try {
+                    $stmt->execute([
+                        'project_id' => $projectId,
+                        'parent_id' => $parentId,
+                        'child_id' => $childId,
+                        'quantity' => $quantity,
+                    ]);
+                } catch (\PDOException $exception) {
+                    $this->throwIfDuplicateComposition($exception);
+                    throw $exception;
+                }
+                $id = (int) $this->db->lastInsertId();
+                // 首次组成默认翻转：以持久化标记为准，而非当前边数。
+                // 人工改回需送样会置 explicit=1，此后任何组成增删都不再覆盖。
+                $flip = $this->db->prepare(
+                    "UPDATE Materials SET sample_required = 'exempt'
+                     WHERE project_id = :project_id AND material_id = :id
+                       AND sample_required = 'required' AND sample_requirement_explicit = 0"
+                );
+                $flip->execute(['project_id' => $projectId, 'id' => $parentId]);
+            } else {
+                $stmt = $this->db->prepare(
+                    'UPDATE Material_Compositions
+                     SET child_material_id = :child_id, quantity = :quantity
+                     WHERE composition_id = :id AND project_id = :project_id'
+                );
+                try {
+                    $stmt->execute([
+                        'child_id' => $childId,
+                        'quantity' => $quantity,
+                        'id' => $id,
+                        'project_id' => $projectId,
+                    ]);
+                } catch (\PDOException $exception) {
+                    $this->throwIfDuplicateComposition($exception);
+                    throw $exception;
+                }
+            }
+            $this->db->commit();
+            return $id;
+        } catch (Throwable $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $exception;
+        }
+    }
+
+    public function deleteComposition(int $projectId, int $compositionId): void
+    {
+        $this->db->beginTransaction();
+        try {
+            $edge = $this->db->prepare(
+                'SELECT parent_material_id, child_material_id FROM Material_Compositions
+                 WHERE composition_id = :id AND project_id = :project_id'
+            );
+            $edge->execute(['id' => $compositionId, 'project_id' => $projectId]);
+            $row = $edge->fetch();
+            if ($row === false) {
+                throw new HttpException('组成关系不存在或不属于当前项目。', 404);
+            }
+            // 与创建/改绑共用同一组行锁，避免删除与写入交错产生层级或重复。
+            $this->lockCompositionMaterials($projectId, (int) $row['parent_material_id'], (int) $row['child_material_id']);
+            $stmt = $this->db->prepare(
+                'DELETE FROM Material_Compositions WHERE composition_id = :id AND project_id = :project_id'
+            );
+            $stmt->execute(['id' => $compositionId, 'project_id' => $projectId]);
+            if ($stmt->rowCount() !== 1) {
+                throw new HttpException('组成关系不存在或不属于当前项目。', 404);
+            }
+            $this->db->commit();
+        } catch (Throwable $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $exception;
+        }
+        // 删除组成不自动翻转送样要求：是否恢复送样由人工在材料表单决定。
+    }
+
+    /**
+     * Lock the endpoint material rows in ascending id order so any two requests
+     * touching the same materials acquire locks in the same order (no deadlock).
+     * MySQL only: SQLite serialises writers at commit time and the service
+     * re-checks plus unique keys keep the invariants there.
+     */
+    private function lockCompositionMaterials(int $projectId, int ...$materialIds): void
+    {
+        if ($this->db->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'mysql') {
+            return;
+        }
+        $ids = array_values(array_unique(array_map('intval', $materialIds)));
+        sort($ids);
+        $stmt = $this->db->prepare(
+            'SELECT material_id FROM Materials
+             WHERE project_id = :project_id AND material_id = :id FOR UPDATE'
+        );
+        foreach ($ids as $materialId) {
+            $stmt->execute(['project_id' => $projectId, 'id' => $materialId]);
+            $stmt->fetchColumn();
+        }
+    }
+
+    /**
+     * Translate a composition unique-key violation (the last-resort guard under
+     * concurrency) into the same business error as the pre-check.
+     */
+    private function throwIfDuplicateComposition(\PDOException $exception): void
+    {
+        if ((string) $exception->getCode() !== '23000') {
+            return;
+        }
+        $message = $exception->getMessage();
+        $driver = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $isDuplicate = ($driver === 'mysql' && str_contains($message, 'uq_composition_project_parent_child'))
+            || ($driver === 'sqlite' && str_contains($message, 'UNIQUE constraint failed'));
+        if ($isDuplicate) {
+            throw new HttpException('该子材料已在组成清单中，请直接修改其数量系数。', 409);
+        }
+    }
+
+    /**
+     * Single-level guard in both directions. Callers hold the endpoint row locks
+     * (MySQL) so these checks run on committed state; the unique key remains the
+     * final backstop.
+     */
+    private function requireSingleLevelComposition(int $projectId, int $parentId, int $childId): void
+    {
+        $childHasChildren = $this->db->prepare(
+            'SELECT COUNT(*) FROM Material_Compositions
+             WHERE project_id = :project_id AND parent_material_id = :id'
+        );
+        $childHasChildren->execute(['project_id' => $projectId, 'id' => $childId]);
+        if ((int) $childHasChildren->fetchColumn() > 0) {
+            throw new HttpException('该子材料自身已有组成子项；仅支持父—子单层，不能多层嵌套。', 422);
+        }
+        $parentIsChild = $this->db->prepare(
+            'SELECT COUNT(*) FROM Material_Compositions
+             WHERE project_id = :project_id AND child_material_id = :id'
+        );
+        $parentIsChild->execute(['project_id' => $projectId, 'id' => $parentId]);
+        if ((int) $parentIsChild->fetchColumn() > 0) {
+            throw new HttpException('父材料已是其他材料的组成子项；仅支持父—子单层，不能多层嵌套。', 422);
+        }
+    }
+
+    private function optionalSampleRequirement(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_string($value) || !in_array($value, ['required', 'exempt'], true)) {
+            throw new HttpException('送样要求无效。', 422);
+        }
+        return $value;
     }
 
     public function saveBrand(array $data): int

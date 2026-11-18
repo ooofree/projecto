@@ -208,7 +208,22 @@ $db->exec(
         material_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER,
         material_code TEXT, material_name TEXT NOT NULL, unit TEXT NOT NULL, specifications TEXT,
         material_description_detailed TEXT, category_id INTEGER, default_quotation_id INTEGER,
+        sample_required TEXT NOT NULL DEFAULT "required",
+        sample_requirement_explicit INTEGER NOT NULL DEFAULT 0,
         UNIQUE (project_id, material_code)
+    )'
+);
+// SQLite mirror of 202611180001_material_compositions.sql (same columns,
+// composite project-scoped uniqueness; single-level rules live in the service).
+$db->exec(
+    'CREATE TABLE Material_Compositions (
+        composition_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
+        parent_material_id INTEGER NOT NULL, child_material_id INTEGER NOT NULL,
+        quantity NUMERIC NOT NULL DEFAULT 1.00,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (project_id, parent_material_id, child_material_id),
+        CHECK (parent_material_id <> child_material_id),
+        CHECK (quantity > 0)
     )'
 );
 $db->exec('CREATE TABLE Brands (brand_id INTEGER PRIMARY KEY AUTOINCREMENT, brand_name TEXT UNIQUE, external_link TEXT)');
@@ -980,19 +995,37 @@ materialTestCheck(
 // Searchable pickers: create + edit dialogs each carry material/supplier/
 // quotation/location combos; the native selects remain the submitted values.
 materialTestCheck(
-    substr_count($sampleTestHtml, 'data-combo-select') === (count($samplePage->data['samples']) + 1) * 4
+    substr_count($sampleTestHtml, '<div class="combo" data-combo') === (count($samplePage->data['samples']) + 1) * 4
         && str_contains($sampleTestHtml, 'name="material_id" data-combo-select required aria-label="材料" data-sample-material-select')
         && str_contains($sampleTestHtml, 'name="supplier_id" data-combo-select required')
         && str_contains($sampleTestHtml, 'name="location" data-combo-select required')
         && str_contains($sampleTestHtml, 'name="quotation_id" data-combo-select aria-label="关联报价"')
-        && substr_count($sampleTestHtml, 'data-combo-input') === substr_count($sampleTestHtml, 'data-combo-select')
-        && str_contains($sampleTestHtml, 'window.projectOInitCombos'),
+        && substr_count($sampleTestHtml, 'class="combo-input" data-combo-input') === (count($samplePage->data['samples']) + 1) * 4
+        && str_contains($sampleTestHtml, 'page=module-asset&amp;module=material.management&amp;file=sample-coverage.js'),
     'Sample dialogs must render searchable combos for material, supplier, quotation and location, wired to the shared initializer.'
 );
 materialTestCheck(
     str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.js'), 'window.projectOInitCombos = initCombos')
         && str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.js'), 'combo.dataset.comboNoun'),
     'The shared bundle must expose the combo initializer and per-field validation nouns.'
+);
+materialTestCheck(
+    str_contains($sampleTestHtml, 'name="sent_date" value="' . Support::nowLocal('Y-m-d') . '"'),
+    'The create dialog must prefill the sent date with today.'
+);
+$samplePageScript = (string) file_get_contents(dirname(__DIR__) . '/modules/material-management/public/sample-coverage.js');
+materialTestCheck(
+    str_contains($sampleTestHtml, 'id="sample-coverage-config"')
+        && str_contains($samplePageScript, 'window.projectOInitCombos')
+        && str_contains($samplePageScript, 'form.reset()')
+        && str_contains($samplePageScript, 'trigger.dataset.sampleMaterial')
+        && str_contains($samplePageScript, 'setComboValue(select, trigger.dataset.sampleMaterial)'),
+    'The deferred page script must initialize combos, reset stale fields and prefill the coverage material directly.'
+);
+materialTestCheck(
+    str_contains($sampleTestHtml, 'sample-coverage.js')
+        && strpos($sampleTestHtml, 'assets/app.js') < strpos($sampleTestHtml, 'sample-coverage.js'),
+    'The layout must load app.js before the sample page script so the initializer exists.'
 );
 $coverageProjectTwoMaterialId = $catalog->saveMaterial(2, [
     'material_name' => '项目二覆盖材料',
@@ -1015,6 +1048,518 @@ materialTestCheck(
 // so the catalogue export assertions below keep their expected row counts.
 $catalog->deleteMaterial(1, $coverageOnlyMaterialId);
 $catalog->deleteMaterial(2, $coverageProjectTwoMaterialId);
+// ---------------------------------------------------------------------------
+// 材料组成（BOM 式父—子单层）与送样要求（2026-11-18 业务确认）。
+// 组成与送样是两套数据：组成边不派生送样义务；首条组成把父项默认翻转为
+// 无需送样（可人工改回）；覆盖一览隐藏无需送样材料，另设只读齐套汇总。
+// ---------------------------------------------------------------------------
+$compDoorId = $catalog->saveMaterial(1, ['material_name' => '定制玻璃门', 'unit' => '樘']);
+$compGlassId = $catalog->saveMaterial(1, ['material_name' => '门用玻璃', 'unit' => 'm2']);
+$compSteelId = $catalog->saveMaterial(1, ['material_name' => '门用不锈钢', 'unit' => 'kg']);
+$compHandleId = $catalog->saveMaterial(1, ['material_name' => '门用拉手', 'unit' => '套']);
+$compNestedParentId = $catalog->saveMaterial(1, ['material_name' => '嵌套测试框', 'unit' => '樘']);
+$compProjectTwoChildId = $catalog->saveMaterial(2, ['material_name' => '项目二子件', 'unit' => '件']);
+
+$compGlassEdgeId = $catalog->saveComposition(1, [
+    'parent_material_id' => (string) $compDoorId,
+    'child_material_id' => (string) $compGlassId,
+    'quantity' => '1.50',
+]);
+materialTestCheck($compGlassEdgeId > 0, 'Composition edge must be created.');
+$compDoorRow = null;
+foreach ($catalog->materialData(1)['materials'] as $compCatalogRow) {
+    if ((int) $compCatalogRow['material_id'] === $compDoorId) {
+        $compDoorRow = $compCatalogRow;
+    }
+}
+materialTestCheck(
+    $compDoorRow !== null
+        && $compDoorRow['sample_required'] === 'exempt'
+        && (int) $compDoorRow['child_count'] === 1,
+    'The first composition edge must default the parent to exempt and expose child_count.'
+);
+materialTestCheck(
+    (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$compGlassId}")->fetchColumn() === 'required',
+    'Composition edges must never change the child sample requirement.'
+);
+$compEdgeRows = $catalog->compositionsForParent(1, $compDoorId);
+materialTestCheck(
+    count($compEdgeRows) === 1
+        && (int) $compEdgeRows[0]['child_material_id'] === $compGlassId
+        && (float) $compEdgeRows[0]['quantity'] === 1.5,
+    'Composition rows must expose the child material and its quantity coefficient.'
+);
+// 显式覆盖默认：父项可以人工改回需送样；再加组成不重复翻转。
+$catalog->saveMaterial(1, ['material_id' => (string) $compDoorId, 'material_name' => '定制玻璃门', 'unit' => '樘', 'sample_required' => 'required']);
+materialTestCheck(
+    (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$compDoorId}")->fetchColumn() === 'required',
+    'An explicit sample requirement must override the composition default.'
+);
+$compSteelEdgeId = $catalog->saveComposition(1, [
+    'parent_material_id' => (string) $compDoorId,
+    'child_material_id' => (string) $compSteelId,
+    'quantity' => '2.00',
+]);
+materialTestCheck(
+    (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$compDoorId}")->fetchColumn() === 'required',
+    'Later composition edges must not re-flip an explicitly set sample requirement.'
+);
+// 编辑未传送样要求时保留原值。
+$catalog->saveMaterial(1, ['material_id' => (string) $compDoorId, 'material_name' => '定制玻璃门', 'unit' => '樘']);
+materialTestCheck(
+    (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$compDoorId}")->fetchColumn() === 'required',
+    'Editing a material without the sample field must keep its current requirement.'
+);
+// 人工设置持久性（验收场景 1）：显式标记落库；删除全部组成后重新添加，
+// 不得再次覆盖人工设置——判定依据是持久化标记，而非当前是否存在组成。
+materialTestCheck(
+    (int) $db->query("SELECT sample_requirement_explicit FROM Materials WHERE material_id = {$compDoorId}")->fetchColumn() === 1,
+    'An explicit sample requirement must persist the explicit flag.'
+);
+$catalog->deleteComposition(1, $compGlassEdgeId);
+$catalog->deleteComposition(1, $compSteelEdgeId);
+materialTestCheck(
+    (int) $db->query("SELECT COUNT(*) FROM Material_Compositions WHERE parent_material_id = {$compDoorId}")->fetchColumn() === 0,
+    'All composition edges must be removable for the persistence scenario.'
+);
+$compGlassEdgeId = $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compGlassId, 'quantity' => '1.50']);
+$compSteelEdgeId = $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compSteelId, 'quantity' => '2.00']);
+materialTestCheck(
+    (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$compDoorId}")->fetchColumn() === 'required',
+    'Re-adding compositions after deleting them all must never override the manual sample requirement.'
+);
+// 新建时显式选择送样要求同样视为人工决定。
+$compExplicitNewId = $catalog->saveMaterial(1, ['material_name' => '显式新建定制项', 'unit' => '樘', 'sample_required' => 'required']);
+$catalog->saveComposition(1, ['parent_material_id' => (string) $compExplicitNewId, 'child_material_id' => (string) $compHandleId, 'quantity' => '1']);
+materialTestCheck(
+    (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$compExplicitNewId}")->fetchColumn() === 'required'
+        && (int) $db->query("SELECT sample_requirement_explicit FROM Materials WHERE material_id = {$compExplicitNewId}")->fetchColumn() === 1,
+    'Creating a material with an explicit requirement must keep it when compositions are added.'
+);
+// 系数修改与重复/单层/自引用/跨项目校验。
+$catalog->saveComposition(1, ['composition_id' => (string) $compGlassEdgeId, 'parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compGlassId, 'quantity' => '1.75']);
+materialTestCheck(
+    (float) $db->query("SELECT quantity FROM Material_Compositions WHERE composition_id = {$compGlassEdgeId}")->fetchColumn() === 1.75,
+    'Updating a composition edge must persist the new quantity coefficient.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compGlassId, 'quantity' => '1']),
+    409,
+    'Duplicate composition edges must be rejected with 409.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compDoorId, 'quantity' => '1']),
+    422,
+    'Self-referencing composition must be rejected.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compGlassId, 'quantity' => '0']),
+    422,
+    'Zero quantity coefficients must be rejected.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compGlassId, 'quantity' => '-1']),
+    422,
+    'Negative quantity coefficients must be rejected.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compGlassId, 'quantity' => '1.234']),
+    422,
+    'Quantity coefficients beyond two decimals must be rejected.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compProjectTwoChildId, 'quantity' => '1']),
+    404,
+    'Cross-project composition children must be rejected.'
+);
+$catalog->saveComposition(1, ['parent_material_id' => (string) $compNestedParentId, 'child_material_id' => (string) $compHandleId, 'quantity' => '1']);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compNestedParentId, 'quantity' => '1']),
+    422,
+    'A material that already has children cannot become a child (single level).'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compGlassId, 'child_material_id' => (string) $compHandleId, 'quantity' => '1']),
+    422,
+    'A material already used as a child cannot gain children (single level).'
+);
+// 删除保护：作为父或子被组成引用的材料拒绝硬删除。
+materialTestExpectStatus(
+    fn () => $catalog->deleteMaterial(1, $compDoorId),
+    409,
+    'Materials referenced as a composition parent must not be hard-deleted.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->deleteMaterial(1, $compGlassId),
+    409,
+    'Materials referenced as a composition child must not be hard-deleted.'
+);
+// 样品口径：无需送样材料拒绝新建/改绑；材料不变的存量编辑放行。
+$compExemptId = $catalog->saveMaterial(1, ['material_name' => '免送样测试件', 'unit' => '件', 'sample_required' => 'exempt']);
+materialTestExpectStatus(
+    fn () => $projectMaterials->saveSample(1, 1, [
+        'material_id' => (string) $compExemptId,
+        'supplier_id' => (string) $supplierId,
+        'sample_quantity' => '1',
+        'location_type' => 'building',
+        'location_id' => (string) $buildingId,
+    ]),
+    422,
+    'Creating a sample for an exempt material must be rejected.'
+);
+$compLegacySampleId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $compHandleId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+]);
+$db->exec("UPDATE Materials SET sample_required = 'exempt' WHERE material_id = {$compHandleId}");
+$projectMaterials->saveSample(1, 1, [
+    'sample_id' => (string) $compLegacySampleId,
+    'material_id' => (string) $compHandleId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '2',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'quotation_id' => '',
+]);
+materialTestCheck(
+    (int) $db->query("SELECT sample_quantity FROM Material_Samples WHERE sample_id = {$compLegacySampleId}")->fetchColumn() === 2,
+    'Editing a legacy sample whose material became exempt must stay possible when the material is unchanged.'
+);
+materialTestExpectStatus(
+    fn () => $projectMaterials->saveSample(1, 1, [
+        'sample_id' => (string) $compLegacySampleId,
+        'material_id' => (string) $compExemptId,
+        'supplier_id' => (string) $supplierId,
+        'sample_quantity' => '1',
+        'location_type' => 'building',
+        'location_id' => (string) $buildingId,
+        'quotation_id' => '',
+    ]),
+    422,
+    'Rebinding a sample to an exempt material must be rejected.'
+);
+$compChoiceIds = array_map(
+    static fn (array $choice): int => (int) $choice['material_id'],
+    $projectMaterials->sampleChoices(1, true)['materials']
+);
+materialTestCheck(
+    !in_array($compExemptId, $compChoiceIds, true) && !in_array($compHandleId, $compChoiceIds, true),
+    'Sample choices must exclude exempt materials.'
+);
+// 覆盖一览隐藏无需送样材料；齐套汇总只读派生。
+$compCoverageIds = array_map(
+    static fn (array $row): int => (int) $row['material_id'],
+    $projectMaterials->sampleCoverage(1)
+);
+materialTestCheck(
+    !in_array($compExemptId, $compCoverageIds, true)
+        && !in_array($compHandleId, $compCoverageIds, true)
+        && in_array($compDoorId, $compCoverageIds, true)
+        && in_array($compGlassId, $compCoverageIds, true),
+    'Coverage must hide exempt materials but keep required ones, including parents explicitly set back to required.'
+);
+$compReadinessNone = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessNone[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    isset($compReadinessNone[$compDoorId])
+        && $compReadinessNone[$compDoorId]['readiness_status'] === 'none'
+        && $compReadinessNone[$compDoorId]['child_count'] === 2
+        && $compReadinessNone[$compDoorId]['covered_count'] === 0,
+    'A parent whose children have no sent samples must read as not ready.'
+);
+$compGlassSampleId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $compGlassId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'sent_status' => 'sent',
+    'sent_date' => '2026-11-18',
+]);
+$compReadinessPartial = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessPartial[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    $compReadinessPartial[$compDoorId]['readiness_status'] === 'partial'
+        && $compReadinessPartial[$compDoorId]['covered_count'] === 1,
+    'One covered child out of two must read as partially ready (sent-but-pending counts as covered).'
+);
+$projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $compSteelId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'sent_status' => 'sent',
+    'sent_date' => '2026-11-18',
+    'owner_approval_status' => 'rejected',
+]);
+$compReadinessRejected = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessRejected[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    $compReadinessRejected[$compDoorId]['readiness_status'] === 'partial'
+        && $compReadinessRejected[$compDoorId]['rejected_child_count'] === 1,
+    'A rejected child sample must not count as covered and must be surfaced separately.'
+);
+$db->exec("UPDATE Material_Samples SET owner_approval_status = 'approved' WHERE material_id = {$compSteelId} AND project_id = 1");
+$compReadinessComplete = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessComplete[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    $compReadinessComplete[$compDoorId]['readiness_status'] === 'complete'
+        && $compReadinessComplete[$compDoorId]['covered_count'] === 2,
+    'All children covered must read as fully ready.'
+);
+// 多条样品记录按最新有效送样判定（验收场景 3）。
+// 给玻璃追加一条更新的被拒送样（created_at 显式更晚）：历史已通过不能掩盖最新被拒。
+// 显式固定两条记录的新旧顺序（created_at 为秒级，避免同秒歧义）。
+$db->exec("UPDATE Material_Samples SET created_at = '2026-11-18 08:00:00' WHERE sample_id = {$compGlassSampleId}");
+$compGlassRejectedNewId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $compGlassId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'sent_status' => 'sent',
+    'sent_date' => '2026-11-18',
+    'owner_approval_status' => 'rejected',
+]);
+$db->exec("UPDATE Material_Samples SET created_at = '2026-11-18 12:00:00' WHERE sample_id = {$compGlassRejectedNewId}");
+$compReadinessLatestRejected = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessLatestRejected[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    $compReadinessLatestRejected[$compDoorId]['readiness_status'] === 'partial'
+        && $compReadinessLatestRejected[$compDoorId]['covered_count'] === 1
+        && $compReadinessLatestRejected[$compDoorId]['rejected_child_count'] >= 1,
+    'A newer rejected sent sample must block coverage even when an older version was approved.'
+);
+$compGlassChildren = $projectMaterials->compositionChildren(1, $compDoorId);
+$compGlassChildCovered = null;
+foreach ($compGlassChildren as $compChildRow) {
+    if ((int) $compChildRow['child_material_id'] === $compGlassId) {
+        $compGlassChildCovered = $compChildRow['covered'];
+    }
+}
+materialTestCheck($compGlassChildCovered === false, 'The readiness detail must mark the child with a rejected latest sample as uncovered.');
+// 再登记一版更新的待审批送样：最新有效记录非被拒即恢复覆盖。
+$compGlassPendingNewId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $compGlassId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'sent_status' => 'sent',
+    'sent_date' => '2026-11-18',
+]);
+$db->exec("UPDATE Material_Samples SET created_at = '2026-11-18 13:00:00' WHERE sample_id = {$compGlassPendingNewId}");
+$compReadinessLatestPending = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessLatestPending[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    $compReadinessLatestPending[$compDoorId]['readiness_status'] === 'complete'
+        && $compReadinessLatestPending[$compDoorId]['covered_count'] === 2
+        && $compReadinessLatestPending[$compDoorId]['rejected_child_count'] === 0,
+    'A newer sent-but-pending sample must restore coverage after an older rejection.'
+);
+// 最新送样改为已通过：同样计入覆盖。
+$projectMaterials->saveSample(1, 1, [
+    'sample_id' => (string) $compGlassPendingNewId,
+    'material_id' => (string) $compGlassId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'sent_status' => 'sent',
+    'sent_date' => '2026-11-18',
+    'owner_approval_status' => 'approved',
+    'quotation_id' => '',
+]);
+$compReadinessLatestApproved = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessLatestApproved[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    $compReadinessLatestApproved[$compDoorId]['readiness_status'] === 'complete'
+        && $compReadinessLatestApproved[$compDoorId]['covered_count'] === 2,
+    'A newer approved sent sample must count as covered.'
+);
+// 仅有未送样登记（无有效送样记录）的子件不计入覆盖：拉手此时只有 not_sent 样品。
+$compReadinessUnsent = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compReadinessUnsent[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    isset($compReadinessUnsent[$compNestedParentId])
+        && $compReadinessUnsent[$compNestedParentId]['readiness_status'] === 'none'
+        && $compReadinessUnsent[$compNestedParentId]['covered_count'] === 0,
+    'A child with only unsent registrations must not count as covered.'
+);
+// 路由与权限：组成编辑复用 edit_materials。
+$compRouteResponse = $registry->dispatch('POST', 'material.composition.save', [
+    'parent_material_id' => (string) $compDoorId,
+    'child_material_id' => (string) $compHandleId,
+    'quantity' => '4',
+]);
+materialTestCheck($compRouteResponse instanceof PluginResponse, 'Composition save must be registered as a plugin route.');
+$compHandleEdgeId = (int) $db->query("SELECT composition_id FROM Material_Compositions WHERE parent_material_id = {$compDoorId} AND child_material_id = {$compHandleId}")->fetchColumn();
+materialTestCheck($compHandleEdgeId > 0, 'Composition route must persist the edge.');
+$compPermissionRow = $db->query("SELECT permission_id FROM Permissions WHERE permission_name = 'edit_materials'")->fetch();
+materialTestCheck(is_array($compPermissionRow), 'The material edit permission must exist for the composition denial test.');
+$db->exec('DELETE FROM Role_Permissions WHERE role_id = 1 AND permission_id = ' . (int) $compPermissionRow['permission_id']);
+materialTestExpectStatus(
+    fn () => $plugin->dispatch('material.composition.save', ['parent_material_id' => (string) $compDoorId, 'child_material_id' => (string) $compHandleId, 'quantity' => '1']),
+    403,
+    'Composition save must enforce the material edit permission.'
+);
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, ' . (int) $compPermissionRow['permission_id'] . ')');
+// 父材料历史样品（验收场景 4）：已有审批通过的样品，首次组成自动转为无需送样后，
+// 历史记录与审批信息完整保留；候选过滤；存量编辑兼容。
+$compHistoryParentId = $catalog->saveMaterial(1, ['material_name' => '历史样品定制项', 'unit' => '樘']);
+$compHistorySampleId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $compHistoryParentId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'sent_status' => 'sent',
+    'sent_date' => '2026-11-01',
+    'owner_approval_status' => 'approved',
+    'owner_approval_date' => '2026-11-05',
+]);
+$catalog->saveComposition(1, ['parent_material_id' => (string) $compHistoryParentId, 'child_material_id' => (string) $compGlassId, 'quantity' => '1']);
+materialTestCheck(
+    (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$compHistoryParentId}")->fetchColumn() === 'exempt',
+    'A parent with legacy samples must still auto-flip to exempt on its first composition.'
+);
+$compHistoryRow = $db->query("SELECT sent_status, owner_approval_status, owner_approval_date, archived_at FROM Material_Samples WHERE sample_id = {$compHistorySampleId}")->fetch();
+materialTestCheck(
+    $compHistoryRow['sent_status'] === 'sent'
+        && $compHistoryRow['owner_approval_status'] === 'approved'
+        && $compHistoryRow['owner_approval_date'] === '2026-11-05'
+        && $compHistoryRow['archived_at'] === null,
+    'Auto-flipping a parent to exempt must never delete or alter its legacy sample and approval data.'
+);
+$compHistoryChoiceIds = array_map(
+    static fn (array $choice): int => (int) $choice['material_id'],
+    $projectMaterials->sampleChoices(1, true)['materials']
+);
+materialTestCheck(
+    !in_array($compHistoryParentId, $compHistoryChoiceIds, true),
+    'After the auto-flip the parent must disappear from new-sample choices.'
+);
+$projectMaterials->saveSample(1, 1, [
+    'sample_id' => (string) $compHistorySampleId,
+    'material_id' => (string) $compHistoryParentId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '3',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+    'sent_status' => 'sent',
+    'sent_date' => '2026-11-01',
+    'owner_approval_status' => 'approved',
+    'owner_approval_date' => '2026-11-05',
+    'quotation_id' => '',
+]);
+materialTestCheck(
+    (int) $db->query("SELECT sample_quantity FROM Material_Samples WHERE sample_id = {$compHistorySampleId}")->fetchColumn() === 3,
+    'Legacy samples of an exempt parent must remain editable when the material is unchanged.'
+);
+$compHistoryHtml = renderMaterialTestView($plugin->dispatch('samples', []));
+materialTestCheck(
+    str_contains($compHistoryHtml, '历史样品定制项（无需送样 · 仅保留历史样品）'),
+    'The edit dialog must keep the exempt parent selectable for its legacy sample.'
+);
+// 多父材料引用（验收场景 5）：同一子材料可被多个父项共享，单层约束不受影响。
+$compPartitionId = $catalog->saveMaterial(1, ['material_name' => '玻璃隔断', 'unit' => 'm2']);
+$compColumnId = $catalog->saveMaterial(1, ['material_name' => '玻璃装饰柱', 'unit' => '根']);
+$compPartitionEdgeId = $catalog->saveComposition(1, ['parent_material_id' => (string) $compPartitionId, 'child_material_id' => (string) $compGlassId, 'quantity' => '2.50']);
+$compColumnEdgeId = $catalog->saveComposition(1, ['parent_material_id' => (string) $compColumnId, 'child_material_id' => (string) $compGlassId, 'quantity' => '1.20']);
+materialTestCheck(
+    $compPartitionEdgeId > 0 && $compColumnEdgeId > 0
+        && (int) $db->query("SELECT COUNT(*) FROM Material_Compositions WHERE child_material_id = {$compGlassId}")->fetchColumn() === 4,
+    'One child material must be shareable across multiple parents (door, history parent, partition, column).'
+);
+$compMultiReadiness = [];
+foreach ($projectMaterials->compositionReadiness(1) as $compReadinessRow) {
+    $compMultiReadiness[(int) $compReadinessRow['material_id']] = $compReadinessRow;
+}
+materialTestCheck(
+    isset($compMultiReadiness[$compPartitionId], $compMultiReadiness[$compColumnId])
+        && $compMultiReadiness[$compPartitionId]['covered_count'] === 1
+        && $compMultiReadiness[$compColumnId]['covered_count'] === 1,
+    'Each parent sharing a covered child must independently read as ready for that child.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->saveComposition(1, ['parent_material_id' => (string) $compGlassId, 'child_material_id' => (string) $compHandleId, 'quantity' => '1']),
+    422,
+    'A shared child must still be barred from gaining its own children (single level).'
+);
+// 页面渲染：材料编辑对话框含送样要求与组成面板；样品页含齐套汇总。
+$compMaterialsHtml = renderMaterialTestView($plugin->dispatch('materials', []));
+materialTestCheck(
+    str_contains($compMaterialsHtml, 'name="sample_required"')
+        && str_contains($compMaterialsHtml, '组成关系（定制项 · 父—子单层）')
+        && str_contains($compMaterialsHtml, 'material.composition.save')
+        && str_contains($compMaterialsHtml, 'material.composition.delete')
+        && str_contains($compMaterialsHtml, '无需送样')
+        && str_contains($compMaterialsHtml, '送样 / 组成'),
+    'The material edit dialog must expose the sample requirement and composition management.'
+);
+$compSamplesHtml = renderMaterialTestView($plugin->dispatch('samples', []));
+materialTestCheck(
+    str_contains($compSamplesHtml, 'id="composition-readiness-table"')
+        && str_contains($compSamplesHtml, '定制项组件齐套汇总')
+        && str_contains($compSamplesHtml, '定制玻璃门')
+        && str_contains($compSamplesHtml, '仅保留历史样品'),
+    'The samples page must render the readiness roll-up and keep legacy exempt materials selectable in edit dialogs.'
+);
+materialTestCheck(
+    !str_contains($compSamplesHtml, 'data-sample-material="' . $compExemptId . '"')
+        && !str_contains($compSamplesHtml, 'data-sample-material="' . $compHandleId . '"'),
+    'Exempt materials must not appear in the coverage create shortcuts.'
+);
+// 清理组成夹具：先验证归档样品仍构成删除保护，再直接移除本夹具自产的
+// 样品行（仅内存测试库），随后删边、删材料，恢复后续导出断言的行数基数。
+$projectMaterials->archiveSample(1, $compLegacySampleId, 1);
+$projectMaterials->archiveSample(1, $compGlassSampleId, 1);
+$compSteelSampleId = (int) $db->query("SELECT sample_id FROM Material_Samples WHERE project_id = 1 AND material_id = {$compSteelId}")->fetchColumn();
+$projectMaterials->archiveSample(1, $compSteelSampleId, 1);
+materialTestExpectStatus(
+    fn () => $catalog->deleteMaterial(1, $compGlassId),
+    409,
+    'Archived samples must still protect their material from hard deletion.'
+);
+$compFixtureSampleIds = implode(', ', [
+    $compLegacySampleId, $compGlassSampleId, $compSteelSampleId,
+    $compGlassRejectedNewId, $compGlassPendingNewId, $compHistorySampleId,
+]);
+$db->exec("DELETE FROM Sample_Location_Map WHERE sample_id IN ({$compFixtureSampleIds})");
+$db->exec("DELETE FROM Material_Samples WHERE sample_id IN ({$compFixtureSampleIds})");
+foreach ($db->query("SELECT composition_id FROM Material_Compositions WHERE project_id = 1")->fetchAll() as $compEdgeRow) {
+    $catalog->deleteComposition(1, (int) $compEdgeRow['composition_id']);
+}
+materialTestExpectStatus(
+    fn () => $catalog->deleteComposition(1, $compGlassEdgeId),
+    404,
+    'Deleting a composition edge twice must report 404.'
+);
+foreach ([$compDoorId, $compGlassId, $compSteelId, $compHandleId, $compNestedParentId, $compExemptId, $compExplicitNewId, $compHistoryParentId, $compPartitionId, $compColumnId] as $compCleanupId) {
+    $catalog->deleteMaterial(1, $compCleanupId);
+}
+$catalog->deleteMaterial(2, $compProjectTwoChildId);
+
 $sampleExport = $plugin->dispatch('sample.export', []);
 materialTestCheck(
     $sampleExport->type === 'download'

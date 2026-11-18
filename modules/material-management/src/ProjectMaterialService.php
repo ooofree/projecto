@@ -21,10 +21,12 @@ final class ProjectMaterialService
 
     public function sampleChoices(int $projectId, bool $includeQuotations): array
     {
+        // 无需送样的材料（定制父项等）不进入样品登记候选；历史样品编辑时
+        // 由视图保留其当前材料选项，服务端对材料不变的编辑放行。
         $materials = $this->db->prepare(
-            'SELECT material_id, material_code, material_name
-             FROM Materials WHERE project_id = :project_id
-             ORDER BY material_name, material_id'
+            "SELECT material_id, material_code, material_name
+             FROM Materials WHERE project_id = :project_id AND sample_required = 'required'
+             ORDER BY material_name, material_id"
         );
         $materials->execute(['project_id' => $projectId]);
         $quotations = $this->db->prepare(
@@ -260,7 +262,10 @@ final class ProjectMaterialService
      * which are registered but not sent yet, and which already have a sent
      * sample. Aggregates the full table in SQL so the 200-row list cap never
      * hides a gap, and touches no commercial quotation data. Materials are
-     * ordered by urgency: no record, registered but unsent, sent.
+     * ordered by urgency: no record, registered but unsent, sent. Materials
+     * marked exempt from sampling (custom assemblies whose components are
+     * sampled individually) are hidden here; their component readiness is
+     * reported separately by compositionReadiness().
      *
      * @return list<array<string, mixed>>
      */
@@ -277,7 +282,7 @@ final class ProjectMaterialService
              LEFT JOIN Material_Samples s
                ON s.material_id = m.material_id AND s.project_id = m.project_id
               AND s.archived_at IS NULL
-             WHERE m.project_id = :project_id
+             WHERE m.project_id = :project_id AND m.sample_required = 'required'
              GROUP BY m.material_id, m.material_code, m.material_name, m.unit
              ORDER BY CASE
                  WHEN COUNT(s.sample_id) = 0 THEN 0
@@ -295,6 +300,110 @@ final class ProjectMaterialService
             $row['coverage_status'] = $row['sample_count'] === 0
                 ? 'none'
                 : ($row['sent_count'] === 0 ? 'registered' : 'sent');
+        }
+        unset($row);
+        return $rows;
+    }
+
+    /**
+     * Read-only component readiness per parent material (custom assembly).
+     * Judged by each child's LATEST valid sent sample (active, sent/partially_sent,
+     * newest by created_at then sample_id — the same chronology the sample list
+     * uses): covered when that record is not rejected (sent-but-pending counts as
+     * covered), a rejected latest record blocks coverage even if older versions
+     * were approved, and children without any valid sent record are not covered.
+     * The quantity coefficient is display-only: samples carry no per-parent
+     * demand, so readiness never multiplies quantities. Composition edges never
+     * derive sample obligations — this is a pure aggregate over the children's
+     * own sample records.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function compositionReadiness(int $projectId): array
+    {
+        $stmt = $this->db->prepare(
+            "SELECT p.material_id, p.material_code, p.material_name, p.unit,
+                    COUNT(cc.composition_id) AS child_count,
+                    COALESCE(SUM(CASE WHEN latest.owner_approval_status IS NOT NULL
+                                       AND latest.owner_approval_status <> 'rejected'
+                                      THEN 1 ELSE 0 END), 0) AS covered_count,
+                    COALESCE(SUM(CASE WHEN latest.owner_approval_status = 'rejected'
+                                      THEN 1 ELSE 0 END), 0) AS rejected_child_count
+             FROM Material_Compositions cc
+             JOIN Materials p ON p.material_id = cc.parent_material_id AND p.project_id = cc.project_id
+             LEFT JOIN Material_Samples latest
+               ON latest.project_id = cc.project_id AND latest.material_id = cc.child_material_id
+              AND latest.archived_at IS NULL
+              AND latest.sent_status IN ('sent', 'partially_sent')
+              AND NOT EXISTS (
+                  SELECT 1 FROM Material_Samples newer
+                  WHERE newer.project_id = latest.project_id AND newer.material_id = latest.material_id
+                    AND newer.archived_at IS NULL
+                    AND newer.sent_status IN ('sent', 'partially_sent')
+                    AND (newer.created_at > latest.created_at
+                         OR (newer.created_at = latest.created_at AND newer.sample_id > latest.sample_id))
+              )
+             WHERE cc.project_id = :project_id
+             GROUP BY p.material_id, p.material_code, p.material_name, p.unit
+             ORDER BY CASE
+                 WHEN COALESCE(SUM(CASE WHEN latest.owner_approval_status IS NOT NULL
+                                         AND latest.owner_approval_status <> 'rejected'
+                                        THEN 1 ELSE 0 END), 0) = 0 THEN 0
+                 WHEN COALESCE(SUM(CASE WHEN latest.owner_approval_status IS NOT NULL
+                                         AND latest.owner_approval_status <> 'rejected'
+                                        THEN 1 ELSE 0 END), 0) < COUNT(cc.composition_id) THEN 1
+                 ELSE 2
+             END, p.material_name, p.material_id"
+        );
+        $stmt->execute(['project_id' => $projectId]);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$row) {
+            $row['child_count'] = (int) $row['child_count'];
+            $row['covered_count'] = (int) $row['covered_count'];
+            $row['rejected_child_count'] = (int) $row['rejected_child_count'];
+            $row['readiness_status'] = $row['covered_count'] === 0
+                ? 'none'
+                : ($row['covered_count'] < $row['child_count'] ? 'partial' : 'complete');
+        }
+        unset($row);
+        return $rows;
+    }
+
+    /**
+     * Child rows with their own coverage status for the readiness detail view.
+     * Coverage uses the same latest-valid-sent-sample rule as compositionReadiness.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function compositionChildren(int $projectId, int $parentMaterialId): array
+    {
+        $stmt = $this->db->prepare(
+            "SELECT cc.composition_id, cc.child_material_id, cc.quantity,
+                    m.material_code, m.material_name, m.unit,
+                    CASE WHEN latest.owner_approval_status IS NOT NULL
+                          AND latest.owner_approval_status <> 'rejected'
+                         THEN 1 ELSE 0 END AS covered
+             FROM Material_Compositions cc
+             JOIN Materials m ON m.material_id = cc.child_material_id AND m.project_id = cc.project_id
+             LEFT JOIN Material_Samples latest
+               ON latest.project_id = cc.project_id AND latest.material_id = cc.child_material_id
+              AND latest.archived_at IS NULL
+              AND latest.sent_status IN ('sent', 'partially_sent')
+              AND NOT EXISTS (
+                  SELECT 1 FROM Material_Samples newer
+                  WHERE newer.project_id = latest.project_id AND newer.material_id = latest.material_id
+                    AND newer.archived_at IS NULL
+                    AND newer.sent_status IN ('sent', 'partially_sent')
+                    AND (newer.created_at > latest.created_at
+                         OR (newer.created_at = latest.created_at AND newer.sample_id > latest.sample_id))
+              )
+             WHERE cc.project_id = :project_id AND cc.parent_material_id = :parent_id
+             ORDER BY m.material_name, m.material_id"
+        );
+        $stmt->execute(['project_id' => $projectId, 'parent_id' => $parentMaterialId]);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$row) {
+            $row['covered'] = (int) $row['covered'] === 1;
         }
         unset($row);
         return $rows;
@@ -326,6 +435,7 @@ final class ProjectMaterialService
         $this->db->beginTransaction();
         try {
             if ($sampleId === null) {
+                $this->requireSampleableMaterial($projectId, $materialId);
                 if ($quotationId !== null) {
                     $this->requireSampleQuotation($projectId, $quotationId, $materialId, $supplierId);
                 }
@@ -369,6 +479,17 @@ final class ProjectMaterialService
                 ]);
             } else {
                 $this->requireActiveSample($projectId, $sampleId);
+                // 改绑到无需送样材料同样拒绝；材料不变的存量编辑放行，
+                // 保证历史样品（材料后来被设为无需送样）仍可维护。
+                $currentMaterial = $this->db->prepare(
+                    'SELECT material_id FROM Material_Samples
+                     WHERE sample_id = :sample_id AND project_id = :project_id'
+                );
+                $currentMaterial->execute(['sample_id' => $sampleId, 'project_id' => $projectId]);
+                $currentMaterialId = $currentMaterial->fetchColumn();
+                if ($currentMaterialId !== false && (int) $currentMaterialId !== $materialId) {
+                    $this->requireSampleableMaterial($projectId, $materialId);
+                }
                 if (!$quotationProvided) {
                     $currentQuotation = $this->db->prepare(
                         'SELECT quotation_id FROM Material_Samples
@@ -872,6 +993,21 @@ final class ProjectMaterialService
         $stmt->execute(['project_id' => $projectId, 'id' => $materialId]);
         if ($stmt->fetchColumn() === false) {
             throw new HttpException($label . '不存在或不属于当前项目。', 404);
+        }
+    }
+
+    private function requireSampleableMaterial(int $projectId, int $materialId): void
+    {
+        $stmt = $this->db->prepare(
+            'SELECT sample_required FROM Materials WHERE project_id = :project_id AND material_id = :id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'id' => $materialId]);
+        $requirement = $stmt->fetchColumn();
+        if ($requirement === false) {
+            throw new HttpException('材料不存在或不属于当前项目。', 404);
+        }
+        if ($requirement === 'exempt') {
+            throw new HttpException('该材料已设为无需送样（如定制整合产品），请对其组成子材料分别登记样品。', 422);
         }
     }
 
