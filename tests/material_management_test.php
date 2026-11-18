@@ -873,6 +873,148 @@ materialTestCheck(
         && !str_contains($sampleTestHtml, 'A 1F'),
     'Sample locations must show building and floor names instead of their numbers.'
 );
+
+// Sample coverage aggregate: catalogue materials vs active samples, ordered by
+// urgency (no record, registered but unsent, sent), ignoring archived samples.
+$coverageOnlyMaterialId = $catalog->saveMaterial(1, [
+    'material_name' => '覆盖统计专用板',
+    'unit' => '张',
+]);
+$coverage = $projectMaterials->sampleCoverage(1);
+$coverageByMaterial = [];
+$coverageTierLastIndex = ['none' => -1, 'registered' => -1, 'sent' => -1];
+$coverageTierFirstIndex = ['none' => PHP_INT_MAX, 'registered' => PHP_INT_MAX, 'sent' => PHP_INT_MAX];
+$coverageOrdered = true;
+foreach ($coverage as $coverageIndex => $coverageRow) {
+    $coverageByMaterial[(int) $coverageRow['material_id']] = $coverageRow;
+    $coverageTier = $coverageRow['coverage_status'];
+    $coverageTierFirstIndex[$coverageTier] = min($coverageTierFirstIndex[$coverageTier], $coverageIndex);
+    $coverageTierLastIndex[$coverageTier] = $coverageIndex;
+}
+$coverageOrdered = $coverageTierLastIndex['none'] < $coverageTierFirstIndex['registered']
+    && $coverageTierLastIndex['registered'] < $coverageTierFirstIndex['sent'];
+materialTestCheck(
+    isset($coverageByMaterial[$coverageOnlyMaterialId], $coverageByMaterial[$otherMaterialId], $coverageByMaterial[$materialId])
+        && $coverageByMaterial[$coverageOnlyMaterialId]['coverage_status'] === 'none'
+        && $coverageByMaterial[$coverageOnlyMaterialId]['sample_count'] === 0
+        && $coverageByMaterial[$otherMaterialId]['coverage_status'] === 'none'
+        && $coverageByMaterial[$materialId]['coverage_status'] === 'sent'
+        && $coverageOrdered,
+    'Sample coverage must list every catalogue material and order gaps before sent materials.'
+);
+materialTestCheck(
+    $coverageByMaterial[$materialId]['sample_count'] === 2
+        && $coverageByMaterial[$materialId]['sent_count'] === 1
+        && $coverageByMaterial[$materialId]['unsent_count'] === 1
+        && $coverageByMaterial[$materialId]['last_sent_date'] === null,
+    'Sample coverage must count active samples only, split sent/unsent, and ignore sent rows without a date.'
+);
+$pendingCoverageSampleId = $projectMaterials->saveSample(1, 1, [
+    'material_id' => (string) $otherMaterialId,
+    'supplier_id' => (string) $supplierId,
+    'sample_quantity' => '1',
+    'location_type' => 'building',
+    'location_id' => (string) $buildingId,
+]);
+$registeredCoverage = [];
+$registeredNoneLast = -1;
+$registeredFirst = PHP_INT_MAX;
+foreach ($projectMaterials->sampleCoverage(1) as $coverageIndex => $coverageRow) {
+    $registeredCoverage[(int) $coverageRow['material_id']] = $coverageRow;
+    if ($coverageRow['coverage_status'] === 'none') {
+        $registeredNoneLast = $coverageIndex;
+    }
+    if ($coverageRow['coverage_status'] === 'registered') {
+        $registeredFirst = min($registeredFirst, $coverageIndex);
+    }
+}
+materialTestCheck(
+    $registeredCoverage[$otherMaterialId]['coverage_status'] === 'registered'
+        && $registeredCoverage[$otherMaterialId]['unsent_count'] === 1
+        && $registeredCoverage[$otherMaterialId]['sent_count'] === 0
+        && $registeredCoverage[$coverageOnlyMaterialId]['coverage_status'] === 'none'
+        && $registeredNoneLast < $registeredFirst,
+    'A material with only unsent samples must rank as registered-but-unsent, after materials with no record.'
+);
+$registeredCoverageHtml = renderMaterialTestView($plugin->dispatch('samples', []));
+materialTestCheck(
+    str_contains($registeredCoverageHtml, '已登记未送样')
+        && str_contains($registeredCoverageHtml, '已登记 1 条，未送样'),
+    'The coverage overview and create dialog must flag registered-but-unsent materials.'
+);
+$projectMaterials->archiveSample(1, $pendingCoverageSampleId, 1);
+$archivedCoverage = [];
+foreach ($projectMaterials->sampleCoverage(1) as $coverageRow) {
+    $archivedCoverage[(int) $coverageRow['material_id']] = $coverageRow;
+}
+materialTestCheck(
+    $archivedCoverage[$otherMaterialId]['coverage_status'] === 'none'
+        && $archivedCoverage[$otherMaterialId]['sample_count'] === 0,
+    'Archived samples must not count towards material coverage.'
+);
+$db->exec("UPDATE Material_Samples SET owner_approval_status = 'rejected' WHERE sample_id = {$linkedSampleId}");
+$rejectedCoverage = [];
+foreach ($projectMaterials->sampleCoverage(1) as $coverageRow) {
+    $rejectedCoverage[(int) $coverageRow['material_id']] = $coverageRow;
+}
+materialTestCheck(
+    $rejectedCoverage[$materialId]['rejected_count'] === 1,
+    'Sample coverage must surface rejected samples so re-submissions can be prioritised.'
+);
+$db->exec("UPDATE Material_Samples SET owner_approval_status = 'approved' WHERE sample_id = {$linkedSampleId}");
+materialTestCheck(
+    str_contains($sampleTestHtml, 'id="sample-coverage-table"')
+        && str_contains($sampleTestHtml, '样品覆盖一览')
+        && str_contains($sampleTestHtml, '无样品记录')
+        && str_contains($sampleTestHtml, '已送样')
+        && str_contains($sampleTestHtml, 'data-sample-material="' . $otherMaterialId . '"')
+        && str_contains($sampleTestHtml, '登记样品')
+        && str_contains($sampleTestHtml, '再登记一版'),
+    'Sample tracking should render the coverage overview with per-material create shortcuts.'
+);
+materialTestCheck(
+    str_contains($sampleTestHtml, '（无样品记录）')
+        && str_contains($sampleTestHtml, 'data-sample-material-hint'),
+    'The create dialog must annotate materials with their coverage and expose a hint element.'
+);
+// Searchable pickers: create + edit dialogs each carry material/supplier/
+// quotation/location combos; the native selects remain the submitted values.
+materialTestCheck(
+    substr_count($sampleTestHtml, 'data-combo-select') === (count($samplePage->data['samples']) + 1) * 4
+        && str_contains($sampleTestHtml, 'name="material_id" data-combo-select required aria-label="材料" data-sample-material-select')
+        && str_contains($sampleTestHtml, 'name="supplier_id" data-combo-select required')
+        && str_contains($sampleTestHtml, 'name="location" data-combo-select required')
+        && str_contains($sampleTestHtml, 'name="quotation_id" data-combo-select aria-label="关联报价"')
+        && substr_count($sampleTestHtml, 'data-combo-input') === substr_count($sampleTestHtml, 'data-combo-select')
+        && str_contains($sampleTestHtml, 'window.projectOInitCombos'),
+    'Sample dialogs must render searchable combos for material, supplier, quotation and location, wired to the shared initializer.'
+);
+materialTestCheck(
+    str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.js'), 'window.projectOInitCombos = initCombos')
+        && str_contains((string) file_get_contents(dirname(__DIR__) . '/public/assets/app.js'), 'combo.dataset.comboNoun'),
+    'The shared bundle must expose the combo initializer and per-field validation nouns.'
+);
+$coverageProjectTwoMaterialId = $catalog->saveMaterial(2, [
+    'material_name' => '项目二覆盖材料',
+    'unit' => '件',
+]);
+$projectTwoCoverage = [];
+foreach ($projectMaterials->sampleCoverage(2) as $coverageRow) {
+    $projectTwoCoverage[(int) $coverageRow['material_id']] = $coverageRow;
+}
+materialTestCheck(
+    count($projectTwoCoverage) === 2
+        && isset($projectTwoCoverage[$coverageProjectTwoMaterialId], $projectTwoCoverage[$otherProjectMaterialId])
+        && $projectTwoCoverage[$coverageProjectTwoMaterialId]['coverage_status'] === 'none'
+        && $projectTwoCoverage[$coverageProjectTwoMaterialId]['sample_count'] === 0
+        && $projectTwoCoverage[$otherProjectMaterialId]['sample_count'] === 0
+        && !isset($projectTwoCoverage[$materialId]),
+    'Sample coverage must only include the current project catalogue and never leak other projects samples.'
+);
+// The coverage-only test materials carry no samples or estimates; remove them
+// so the catalogue export assertions below keep their expected row counts.
+$catalog->deleteMaterial(1, $coverageOnlyMaterialId);
+$catalog->deleteMaterial(2, $coverageProjectTwoMaterialId);
 $sampleExport = $plugin->dispatch('sample.export', []);
 materialTestCheck(
     $sampleExport->type === 'download'
@@ -1328,6 +1470,14 @@ materialTestCheck(
         && $linkedSampleWithoutCommercialDetails[0]['purchase_unit_price'] === null
         && !str_contains(renderMaterialTestView($sampleWithoutCommercialPermission), '商业报价：'),
     'Sample tracking should remain available without exposing commercial quotation data.'
+);
+$technicalCoverage = $sampleWithoutCommercialPermission->data['coverage'] ?? null;
+materialTestCheck(
+    is_array($technicalCoverage)
+        && count($technicalCoverage) === count($sampleWithoutCommercialPermission->data['choices']['materials'])
+        && !array_key_exists('purchase_unit_price', $technicalCoverage[0])
+        && !array_key_exists('quotation_id', $technicalCoverage[0]),
+    'Sample coverage must stay available to technical users without exposing commercial quotation fields.'
 );
 
 $privacySheetXml = materialTestXlsxSheet($plugin->dispatch('sample.export', []));

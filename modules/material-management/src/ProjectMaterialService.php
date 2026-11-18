@@ -254,6 +254,52 @@ final class ProjectMaterialService
         return $name !== '' ? $name : trim((string) $floorNumber);
     }
 
+    /**
+     * Read-only coverage of the project's material catalogue against its active
+     * (non-archived) samples: which materials have no sample record at all,
+     * which are registered but not sent yet, and which already have a sent
+     * sample. Aggregates the full table in SQL so the 200-row list cap never
+     * hides a gap, and touches no commercial quotation data. Materials are
+     * ordered by urgency: no record, registered but unsent, sent.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function sampleCoverage(int $projectId): array
+    {
+        $stmt = $this->db->prepare(
+            "SELECT m.material_id, m.material_code, m.material_name, m.unit,
+                    COUNT(s.sample_id) AS sample_count,
+                    COALESCE(SUM(CASE WHEN s.sent_status = 'not_sent' THEN 1 ELSE 0 END), 0) AS unsent_count,
+                    COALESCE(SUM(CASE WHEN s.sent_status IN ('sent', 'partially_sent') THEN 1 ELSE 0 END), 0) AS sent_count,
+                    COALESCE(SUM(CASE WHEN s.owner_approval_status = 'rejected' THEN 1 ELSE 0 END), 0) AS rejected_count,
+                    MAX(CASE WHEN s.sent_status IN ('sent', 'partially_sent') THEN s.sent_date END) AS last_sent_date
+             FROM Materials m
+             LEFT JOIN Material_Samples s
+               ON s.material_id = m.material_id AND s.project_id = m.project_id
+              AND s.archived_at IS NULL
+             WHERE m.project_id = :project_id
+             GROUP BY m.material_id, m.material_code, m.material_name, m.unit
+             ORDER BY CASE
+                 WHEN COUNT(s.sample_id) = 0 THEN 0
+                 WHEN COALESCE(SUM(CASE WHEN s.sent_status IN ('sent', 'partially_sent') THEN 1 ELSE 0 END), 0) = 0 THEN 1
+                 ELSE 2
+             END, m.material_name, m.material_id"
+        );
+        $stmt->execute(['project_id' => $projectId]);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$row) {
+            $row['sample_count'] = (int) $row['sample_count'];
+            $row['unsent_count'] = (int) $row['unsent_count'];
+            $row['sent_count'] = (int) $row['sent_count'];
+            $row['rejected_count'] = (int) $row['rejected_count'];
+            $row['coverage_status'] = $row['sample_count'] === 0
+                ? 'none'
+                : ($row['sent_count'] === 0 ? 'registered' : 'sent');
+        }
+        unset($row);
+        return $rows;
+    }
+
     public function saveSample(int $projectId, int $userId, array $data): int
     {
         $sampleId = $this->optionalId($data['sample_id'] ?? null, '样品');

@@ -749,6 +749,9 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
             select.classList.add('combo-native');
             // The native select stays the submitted value but is not the focus
             // target any more; the visible input carries the validation.
+            // Optional pickers (e.g. the sample quotation link) keep their
+            // empty choice valid and skip the required-field submit guard.
+            const isRequired = select.required;
             select.required = false;
             select.tabIndex = -1;
             select.setAttribute('aria-hidden', 'true');
@@ -804,7 +807,7 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
                 if (matches.length === 0) {
                     const empty = document.createElement('li');
                     empty.className = 'combo-empty';
-                    empty.textContent = '没有匹配的材料';
+                    empty.textContent = combo.dataset.comboEmpty || '没有匹配的材料';
                     list.appendChild(empty);
                 }
                 active = -1;
@@ -890,7 +893,7 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
                 });
             }
 
-            if (form) {
+            if (form && isRequired) {
                 form.addEventListener('submit', event => {
                     if (select.value !== '') return;
                     const needle = normalize(input.value);
@@ -907,7 +910,8 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
                         }
                     }
                     event.preventDefault();
-                    input.setCustomValidity(needle !== '' ? '请从搜索结果中选择材料。' : '请选择材料。');
+                    const noun = combo.dataset.comboNoun || '材料';
+                    input.setCustomValidity(needle !== '' ? '请从搜索结果中选择' + noun + '。' : '请选择' + noun + '。');
                     input.reportValidity();
                     input.focus();
                     open(needle);
@@ -1191,6 +1195,10 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
         });
     }
 
+    // Exposed so other pages (e.g. the sample dialogs) can enhance their own
+    // [data-combo] pickers with the exact same behaviour; the registry and the
+    // per-combo init flag keep repeated calls idempotent.
+    window.projectOInitCombos = initCombos;
     initCombos();
     initCascades();
     initLedgerFilter();

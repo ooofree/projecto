@@ -176,6 +176,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'title' => '材料样品跟踪',
             'currentProject' => $project,
             'samples' => $samples,
+            'coverage' => $this->projectMaterials->sampleCoverage($projectId),
             'choices' => $this->projectMaterials->sampleChoices($projectId, $canViewQuotations),
             'locations' => $this->projectMaterials->locations($projectId),
             'canCreate' => Support::hasPermission($this->context->db, 'add_sample'),

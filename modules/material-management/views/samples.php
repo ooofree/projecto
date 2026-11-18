@@ -19,6 +19,68 @@ foreach ($locations['rooms'] as $location) {
     $locationOptions[] = ['value' => 'room:' . $location['room_id'], 'label' => trim($location['building_name'] . ' ' . ($location['floor_name'] ?: $location['floor_number']) . ' ' . $location['room_number'])];
 }
 $canCreateSample = $canCreate && $choices['materials'] !== [] && $choices['suppliers'] !== [] && $locationOptions !== [];
+// Coverage overview: every catalogue material against its active samples.
+// Counts come from the server-side aggregate (full table, not the 200-row
+// list), so gaps stay visible even on large projects.
+$coverageRows = is_array($coverage ?? null) ? $coverage : [];
+$coverageCounts = ['none' => 0, 'registered' => 0, 'sent' => 0];
+$coverageAnnotations = [];
+$coverageLabels = ['none' => '无样品记录', 'registered' => '已登记未送样', 'sent' => '已送样'];
+$coverageTones = ['none' => 'red', 'registered' => 'amber', 'sent' => 'green'];
+foreach ($coverageRows as $coverageRow) {
+    $coverageCounts[$coverageRow['coverage_status']]++;
+    if ($coverageRow['coverage_status'] === 'none') {
+        $annotation = '无样品记录';
+    } elseif ($coverageRow['coverage_status'] === 'registered') {
+        $annotation = '已登记 ' . $coverageRow['sample_count'] . ' 条，未送样';
+    } else {
+        $annotation = '已送样 ' . $coverageRow['sent_count'] . ' 条';
+        if ($coverageRow['unsent_count'] > 0) {
+            $annotation .= '，另 ' . $coverageRow['unsent_count'] . ' 条未送';
+        }
+    }
+    if ($coverageRow['rejected_count'] > 0) {
+        $annotation .= '，含被拒 ' . $coverageRow['rejected_count'] . ' 条';
+    }
+    $coverageAnnotations[(int) $coverageRow['material_id']] = $annotation;
+}
+// Searchable picker shared by the create/edit dialogs: the native select stays
+// the submitted value (and the no-JavaScript fallback), while app.js enhances
+// the [data-combo] wrapper into a type-to-search input. Same pattern as the
+// estimates and tender pages.
+$renderSampleCombo = static function (string $name, array $options, ?string $selectedValue, string $placeholder, string $noun, string $ariaLabel, bool $required = true, string $extraSelectAttrs = '') use ($escape): string {
+    ob_start(); ?>
+    <div class="combo" data-combo data-combo-noun="<?= $escape($noun) ?>" data-combo-empty="没有匹配的<?= $escape($noun) ?>">
+        <select name="<?= $escape($name) ?>" data-combo-select<?= $required ? ' required' : '' ?> aria-label="<?= $escape($ariaLabel) ?>"<?= $extraSelectAttrs !== '' ? ' ' . $extraSelectAttrs : '' ?>>
+            <option value=""><?= $escape($placeholder) ?></option>
+            <?php foreach ($options as $option): ?>
+                <option value="<?= $escape((string) $option['value']) ?>"<?= $selectedValue !== null && (string) $option['value'] === $selectedValue ? ' selected' : '' ?>><?= $escape($option['label']) ?></option>
+            <?php endforeach; ?>
+        </select>
+        <input type="text" class="combo-input" data-combo-input placeholder="输入关键词搜索" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-label="<?= $escape('搜索并选择' . $ariaLabel) ?>">
+        <ul class="combo-options" data-combo-options role="listbox" hidden></ul>
+    </div>
+    <?php return (string) ob_get_clean();
+};
+$sampleMaterialOptions = [];
+foreach ($choices['materials'] as $material) {
+    $materialAnnotation = $coverageAnnotations[(int) $material['material_id']] ?? '';
+    $sampleMaterialOptions[] = [
+        'value' => (int) $material['material_id'],
+        'label' => ($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ($materialAnnotation !== '' ? '（' . $materialAnnotation . '）' : ''),
+    ];
+}
+$sampleSupplierOptions = [];
+foreach ($choices['suppliers'] as $supplier) {
+    $sampleSupplierOptions[] = ['value' => (int) $supplier['supplier_id'], 'label' => $supplier['supplier_name']];
+}
+$sampleQuotationOptions = [];
+foreach ($choices['quotations'] as $quote) {
+    $sampleQuotationOptions[] = [
+        'value' => (int) $quote['quotation_id'],
+        'label' => ($quote['material_code'] ? $quote['material_code'] . ' · ' : '') . $quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code'] . ' · ' . $quote['quotation_date'],
+    ];
+}
 ob_start();
 require __DIR__ . '/_nav.php';
 ?>
@@ -39,6 +101,57 @@ require __DIR__ . '/_nav.php';
         <div class="notice notice-info">R2 图片存储尚未配置；样品资料可维护，但图片上传和查看暂不可用。<?= !empty($canManageSettings) ? '图片存储由文件模块“系统设置”统一配置，<a href="?page=document-settings">前往配置</a>。' : '' ?></div>
     <?php endif; ?>
 <?php endif; ?>
+
+<section class="panel" id="sample-coverage">
+    <div class="panel-heading">
+        <div>
+            <h2>样品覆盖一览</h2>
+            <p class="muted">按当前项目材料清单全量统计（不受列表 200 条上限影响），优先补充排在前面的材料；已删除（归档）的样品不计入。</p>
+        </div>
+        <span class="muted">无记录 <?= $coverageCounts['none'] ?> · 未送样 <?= $coverageCounts['registered'] ?> · 已送样 <?= $coverageCounts['sent'] ?></span>
+    </div>
+    <?php if ($coverageRows === []): ?>
+        <p class="report-empty">当前项目尚无材料，先在“材料管理”建立材料清单后即可在此跟踪送样覆盖。</p>
+    <?php else: ?>
+        <div class="table-wrap">
+            <table class="report-table" id="sample-coverage-table">
+                <thead>
+                <tr>
+                    <th scope="col">材料</th>
+                    <th scope="col">样品覆盖</th>
+                    <th scope="col">样品记录</th>
+                    <th scope="col">未送样</th>
+                    <th scope="col">最近送样日期</th>
+                    <th scope="col" class="actions">操作</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($coverageRows as $coverageRow): ?>
+                    <tr>
+                        <td>
+                            <span class="material-primary"><?= $escape($coverageRow['material_name']) ?></span>
+                            <span class="material-secondary"><?= $escape(($coverageRow['material_code'] ? $coverageRow['material_code'] . ' · ' : '') . $coverageRow['unit']) ?></span>
+                        </td>
+                        <td><span class="status-badge is-<?= $escape($coverageTones[$coverageRow['coverage_status']]) ?>"><?= $escape($coverageLabels[$coverageRow['coverage_status']]) ?></span></td>
+                        <td><?= (int) $coverageRow['sample_count'] ?></td>
+                        <td><?= (int) $coverageRow['unsent_count'] ?></td>
+                        <td><?= $escape($coverageRow['last_sent_date'] ?: '—') ?></td>
+                        <td>
+                            <?php if ($canCreateSample): ?>
+                                <div class="row-actions">
+                                    <button class="button <?= $coverageRow['coverage_status'] === 'sent' ? 'button-quiet' : 'button-secondary' ?>" type="button" data-dialog-open="sample-create" data-sample-material="<?= (int) $coverageRow['material_id'] ?>"><?= $coverageRow['coverage_status'] === 'none' ? '登记样品' : '再登记一版' ?></button>
+                                </div>
+                            <?php else: ?>
+                                —
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</section>
 
 <section class="panel">
     <div class="panel-heading">
@@ -149,40 +262,13 @@ require __DIR__ . '/_nav.php';
         <form method="post" action="" class="form-grid">
             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
             <input type="hidden" name="action" value="material.sample.save">
-            <label>材料
-                <select name="material_id" required>
-                    <option value="">请选择材料</option>
-                    <?php foreach ($choices['materials'] as $material): ?>
-                        <option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name']) ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
-            <label>供样供应商
-                <select name="supplier_id" required>
-                    <option value="">请选择供应商</option>
-                    <?php foreach ($choices['suppliers'] as $supplier): ?>
-                        <option value="<?= (int) $supplier['supplier_id'] ?>"><?= $escape($supplier['supplier_name']) ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
+            <label>材料<?= $renderSampleCombo('material_id', $sampleMaterialOptions, null, '请选择材料', '材料', '材料', true, 'data-sample-material-select') ?></label>
+            <div class="field-wide notice notice-info" data-sample-material-hint hidden></div>
+            <label>供样供应商<?= $renderSampleCombo('supplier_id', $sampleSupplierOptions, null, '请选择供应商', '供应商', '供样供应商') ?></label>
             <?php if ($canEditSampleQuotation): ?>
-                <label>关联报价（可选）
-                    <select name="quotation_id">
-                        <option value="">暂未报价</option>
-                        <?php foreach ($choices['quotations'] as $quote): ?>
-                            <option value="<?= (int) $quote['quotation_id'] ?>"><?= $escape(($quote['material_code'] ? $quote['material_code'] . ' · ' : '') . $quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code'] . ' · ' . $quote['quotation_date']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
+                <label>关联报价（可选）<?= $renderSampleCombo('quotation_id', $sampleQuotationOptions, null, '暂未报价', '报价', '关联报价', false) ?></label>
             <?php endif; ?>
-            <label>使用位置
-                <select name="location" required>
-                    <option value="">请选择当前项目位置</option>
-                    <?php foreach ($locationOptions as $location): ?>
-                        <option value="<?= $escape($location['value']) ?>"><?= $escape($location['label']) ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
+            <label>使用位置<?= $renderSampleCombo('location', $locationOptions, null, '请选择当前项目位置', '位置', '使用位置') ?></label>
             <label>送样数量<input type="number" name="sample_quantity" min="0" step="1" value="0" required></label>
             <label>颜色<input name="color" maxlength="50" value=""></label>
             <label>资料状态
@@ -228,44 +314,16 @@ require __DIR__ . '/_nav.php';
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="material.sample.save">
                 <input type="hidden" name="sample_id" value="<?= (int) $sample['sample_id'] ?>">
-                <label>材料
-                    <select name="material_id" required>
-                        <option value="">请选择材料</option>
-                        <?php foreach ($choices['materials'] as $material): ?>
-                            <option value="<?= (int) $material['material_id'] ?>" <?= (int) $material['material_id'] === (int) $sample['material_id'] ? 'selected' : '' ?>><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
-                <label>供样供应商
-                    <select name="supplier_id" required>
-                        <option value="">请选择供应商</option>
-                        <?php foreach ($choices['suppliers'] as $supplier): ?>
-                            <option value="<?= (int) $supplier['supplier_id'] ?>" <?= (int) $supplier['supplier_id'] === (int) $sample['supplier_id'] ? 'selected' : '' ?>><?= $escape($supplier['supplier_name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
+                <?php
+                $currentLocationValue = $sample['location_type'] . ':' . $sample['location_id'];
+                $currentLocationFound = in_array($currentLocationValue, array_column($locationOptions, 'value'), true);
+                ?>
+                <label>材料<?= $renderSampleCombo('material_id', $sampleMaterialOptions, (string) $sample['material_id'], '请选择材料', '材料', '材料') ?></label>
+                <label>供样供应商<?= $renderSampleCombo('supplier_id', $sampleSupplierOptions, (string) $sample['supplier_id'], '请选择供应商', '供应商', '供样供应商') ?></label>
                 <?php if ($canEditSampleQuotation): ?>
-                    <label>关联报价（可选）
-                        <select name="quotation_id">
-                            <option value="">暂未报价</option>
-                            <?php foreach ($choices['quotations'] as $quote): ?>
-                                <option value="<?= (int) $quote['quotation_id'] ?>" <?= (int) $quote['quotation_id'] === (int) $sample['quotation_id'] ? 'selected' : '' ?>><?= $escape($quote['material_name'] . ' · ' . $quote['supplier_name'] . ' · ' . $quote['purchase_unit_price'] . ' ' . $quote['currency_code'] . ' · ' . $quote['quotation_date']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </label>
+                    <label>关联报价（可选）<?= $renderSampleCombo('quotation_id', $sampleQuotationOptions, $sample['quotation_id'] !== null ? (string) $sample['quotation_id'] : null, '暂未报价', '报价', '关联报价', false) ?></label>
                 <?php endif; ?>
-                <label>使用位置
-                    <select name="location" required>
-                        <?php
-                        $currentLocationValue = $sample['location_type'] . ':' . $sample['location_id'];
-                        $currentLocationFound = in_array($currentLocationValue, array_column($locationOptions, 'value'), true);
-                        ?>
-                        <option value="" <?= $currentLocationFound ? '' : 'selected' ?>><?= $currentLocationFound ? '请选择当前项目位置' : '原位置已归档，请重新选择' ?></option>
-                        <?php foreach ($locationOptions as $location): ?>
-                            <option value="<?= $escape($location['value']) ?>" <?= $location['value'] === $currentLocationValue ? 'selected' : '' ?>><?= $escape($location['label']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
+                <label>使用位置<?= $renderSampleCombo('location', $locationOptions, $currentLocationFound ? $currentLocationValue : null, $currentLocationFound ? '请选择当前项目位置' : '原位置已归档，请重新选择', '位置', '使用位置') ?></label>
                 <label>送样数量<input type="number" name="sample_quantity" min="0" step="1" value="<?= (int) $sample['sample_quantity'] ?>" required></label>
                 <label>颜色<input name="color" maxlength="50" value="<?= $escape($sample['color'] ?? '') ?>"></label>
                 <label>资料状态
@@ -401,6 +459,45 @@ require __DIR__ . '/_nav.php';
             </form>
         </dialog>
     <?php endforeach; ?>
+<?php endif; ?>
+
+<?php if ($canCreate || $canEdit): ?>
+<script>
+// Enhance the sample dialog pickers with the shared searchable combo from
+// app.js (same behaviour as the estimates/tender pages). Runs after the
+// deferred bundle; without JavaScript the native selects still work.
+if (typeof window.projectOInitCombos === 'function') window.projectOInitCombos();
+</script>
+<?php endif; ?>
+<?php if ($canCreateSample): ?>
+<script>
+// Sample coverage helpers: preselect the material when a coverage row opens
+// the create dialog, and show that material's coverage hint inside the dialog.
+// Progressive enhancement only — the dialog and form work without this script.
+(() => {
+    const dialog = document.getElementById('sample-create');
+    if (!dialog) return;
+    const select = dialog.querySelector('[data-sample-material-select]');
+    const hint = dialog.querySelector('[data-sample-material-hint]');
+    const annotations = <?= json_encode($coverageAnnotations, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const updateHint = () => {
+        if (!hint || !select) return;
+        const text = annotations[select.value] || '';
+        hint.textContent = text === '' ? '' : '该材料当前：' + text + '。被拒后重送或换色重送可直接新增一版，无需修改旧记录。';
+        hint.hidden = text === '';
+    };
+    document.addEventListener('click', (event) => {
+        const trigger = event.target.closest('[data-dialog-open="sample-create"][data-sample-material]');
+        if (trigger && select) {
+            select.value = trigger.dataset.sampleMaterial;
+            // Keep the searchable combo input in sync with the preselection.
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            updateHint();
+        }
+    });
+    if (select) select.addEventListener('change', updateHint);
+})();
+</script>
 <?php endif; ?>
 
 <?php $content = ob_get_clean(); require dirname(__DIR__, 3) . '/views/layout.php'; ?>
