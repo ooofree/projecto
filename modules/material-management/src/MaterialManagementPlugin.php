@@ -918,8 +918,9 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
      * Excel export of the current project's estimate records, narrowed to the
      * page's search box when a keyword is submitted. Columns cover the location
      * space, the material code, specification and the quantity (plus name/unit
-     * for usability).
-     * File name follows 材料测算明细_项目名_日期_当天序号.xlsx.
+     * for usability), followed by a per-code quantity summary block.
+     * File name follows 筛选词_材料测算明细_项目名_日期_当天序号.xlsx; the
+     * 筛选词_ prefix is present only when a search keyword is submitted.
      */
     private function exportEstimates(array $input): PluginResponse
     {
@@ -939,6 +940,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
 
         $headers = ['序号', '位置空间', '材料编号', '材料名称', '规格', '测算数量', '单位'];
         $rows = [];
+        $summaryByCode = [];
         foreach ($records as $index => $record) {
             $rows[] = [
                 $index + 1,
@@ -949,12 +951,55 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
                 (float) $record['estimated_quantity'],
                 (string) $record['unit'],
             ];
+            // Sum quantities per material code (2026-11-18 requirement): rows
+            // sharing a code collapse into one summary line. Quantities are
+            // stored with 4 decimals, so accumulate scaled integers to avoid
+            // float drift instead of adding the floats directly.
+            $code = self::exportText($record['material_code'] ?? null);
+            $name = (string) $record['material_name'];
+            $unit = (string) $record['unit'];
+            if (!isset($summaryByCode[$code])) {
+                $summaryByCode[$code] = ['name' => $name, 'unit' => $unit, 'scaled' => 0, 'count' => 0];
+            }
+            $summaryByCode[$code]['scaled'] += (int) round(((float) $record['estimated_quantity']) * 10000);
+            $summaryByCode[$code]['count']++;
+        }
+        ksort($summaryByCode, SORT_STRING);
+
+        if ($rows !== []) {
+            // Blank spacer row, then the summary block on the same sheet so the
+            // detail rows above keep their original column layout.
+            $rows[] = ['', '', '', '', '', '', ''];
+            $rows[] = ['同编号材料汇总', '', '', '', '', '', ''];
+            $rows[] = ['序号', '材料编号', '材料名称', '记录条数', '总数量', '单位', ''];
+            $summaryIndex = 0;
+            foreach ($summaryByCode as $code => $summary) {
+                $summaryIndex++;
+                $rows[] = [
+                    $summaryIndex,
+                    $code,
+                    $summary['name'],
+                    $summary['count'],
+                    $summary['scaled'] / 10000,
+                    $summary['unit'],
+                    '',
+                ];
+            }
         }
 
         $exportDay = Support::nowLocal('Ymd');
         $exportSequence = Support::nextDailySequence($this->context->db, 'material.estimate.export_sequence', $exportDay);
         $projectLabel = Support::safeFileSegment((string) $project['project_name']) ?: '项目';
         $fileName = '材料测算明细_' . $projectLabel . '_' . $exportDay . '_' . $exportSequence . '.xlsx';
+        if ($search !== '') {
+            // The page's filter keyword leads the file name (2026-11-18
+            // requirement); sanitise it like the project label and skip the
+            // prefix when nothing usable survives.
+            $searchLabel = Support::safeFileSegment($search);
+            if ($searchLabel !== '') {
+                $fileName = $searchLabel . '_' . $fileName;
+            }
+        }
 
         $body = XlsxWorkbook::build('材料测算明细', $headers, $rows, [
             'title' => '📐 ' . $project['project_name'] . '材料测算明细',

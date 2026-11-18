@@ -2425,6 +2425,12 @@ materialTestCheck(
 );
 $estimateExportSheet = materialTestXlsxSheet($estimateExport);
 $estimateRowCount = count($projectMaterials->estimateData(1));
+$estimateExportRecords = $projectMaterials->estimateData(1);
+$estimateCodeCount = count(array_unique(array_map(
+    static fn (array $record): string => trim((string) ($record['material_code'] ?? '')) === '' ? '-' : trim((string) $record['material_code']),
+    $estimateExportRecords
+)));
+$estimateSummaryRowCount = $estimateRowCount > 0 ? $estimateCodeCount + 3 : 0;
 materialTestCheck(
     str_contains($estimateExportSheet, '位置空间')
         && str_contains($estimateExportSheet, '材料编号')
@@ -2434,8 +2440,37 @@ materialTestCheck(
         && str_contains($estimateExportSheet, '测算数量')
         && str_contains($estimateExportSheet, 'A栋已更新 · 1F · 首层')
         && str_contains($estimateExportSheet, '12.3456')
-        && substr_count($estimateExportSheet, '<row r=') === $estimateRowCount + 6,
+        && substr_count($estimateExportSheet, '<row r=') === $estimateRowCount + 6 + $estimateSummaryRowCount,
     'Estimate export must contain location space, material code, specification and quantity for every record.'
+);
+// Per-code totals: DG-001 appears on two estimate records (2 + 3.5), FL-001
+// on one (12.3456). The summary block collapses each code into one total row.
+materialTestCheck(
+    str_contains($estimateExportSheet, '同编号材料汇总')
+        && str_contains($estimateExportSheet, '总数量')
+        && str_contains($estimateExportSheet, '<v>5.5</v>')
+        && str_contains($estimateExportSheet, '<v>12.3456</v>'),
+    'Estimate export must total the quantities of records sharing the same material code.'
+);
+$estimateSummaryDgRow = '';
+$estimateSummaryFlRow = '';
+foreach (explode('<row ', $estimateExportSheet) as $estimateExportRowChunk) {
+    if (str_contains($estimateExportRowChunk, '总数量')) {
+        continue;
+    }
+    if (str_contains($estimateExportRowChunk, '>DG-001<')) {
+        $estimateSummaryDgRow = $estimateExportRowChunk;
+    }
+    if (str_contains($estimateExportRowChunk, '>FL-001<')) {
+        $estimateSummaryFlRow = $estimateExportRowChunk;
+    }
+}
+materialTestCheck(
+    str_contains($estimateSummaryDgRow, '<v>5.5</v>')
+        && str_contains($estimateSummaryDgRow, '<v>2</v>')
+        && str_contains($estimateSummaryFlRow, '<v>12.3456</v>')
+        && str_contains($estimateSummaryFlRow, '<v>1</v>'),
+    'Estimate summary rows must carry the exact per-code total quantity and record count.'
 );
 materialTestCheck(
     str_contains($estimateExportSheet, '<col min="2" max="2" width="30"')
@@ -2445,12 +2480,18 @@ materialTestCheck(
 $estimateSearchExport = $plugin->dispatch('estimate.export', ['search' => '灯具']);
 $estimateSearchSheet = materialTestXlsxSheet($estimateSearchExport);
 materialTestCheck(
+    preg_match('/^灯具_材料测算明细_Project One_\d{8}_\d+\.xlsx$/u', (string) ($estimateSearchExport->data['filename'] ?? '')) === 1,
+    'Estimate export file name must start with the page filter keyword when one is submitted.'
+);
+materialTestCheck(
     str_contains($estimateSearchSheet, 'DG-001')
         && str_contains($estimateSearchSheet, '筒灯')
         && str_contains($estimateSearchSheet, '9W 暖光')
         && !str_contains($estimateSearchSheet, 'FL-001')
         && !str_contains($estimateSearchSheet, '地砖')
-        && str_contains($estimateSearchSheet, '导出范围: 搜索「灯具」匹配的测算记录'),
+        && str_contains($estimateSearchSheet, '导出范围: 搜索「灯具」匹配的测算记录')
+        && str_contains($estimateSearchSheet, '同编号材料汇总')
+        && str_contains($estimateSearchSheet, '<v>5.5</v>'),
     'Estimate export must follow the page search keyword and report the filtered scope.'
 );
 $estimateCaseExport = $plugin->dispatch('estimate.export', ['search' => '  灯具  ']);
@@ -2461,7 +2502,8 @@ materialTestCheck(
 $estimateNoMatchExport = $plugin->dispatch('estimate.export', ['search' => '不存在的关键词xyz']);
 materialTestCheck(
     substr_count(materialTestXlsxSheet($estimateNoMatchExport), '<row r=') === 6
-        && str_contains(materialTestXlsxSheet($estimateNoMatchExport), '记录总数: 0'),
+        && str_contains(materialTestXlsxSheet($estimateNoMatchExport), '记录总数: 0')
+        && !str_contains(materialTestXlsxSheet($estimateNoMatchExport), '同编号材料汇总'),
     'Estimate export with no matching records must produce an empty, well-formed workbook.'
 );
 materialTestExpectStatus(
