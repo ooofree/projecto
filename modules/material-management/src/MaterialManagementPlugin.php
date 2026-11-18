@@ -5,6 +5,7 @@ namespace ProjectO\Modules\MaterialManagement;
 
 use ProjectO\CurrencyCatalog;
 use ProjectO\Export\ExportImage;
+use ProjectO\Export\XlsxFormula;
 use ProjectO\Export\XlsxWorkbook;
 use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
@@ -917,8 +918,10 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
     /**
      * Excel export of the current project's estimate records, narrowed to the
      * page's search box when a keyword is submitted. Columns cover the location
-     * space, the material code, specification and the quantity (plus name/unit
-     * for usability), followed by a per-code quantity summary block.
+     * space, the material code, specification, the quantity (plus name/unit)
+     * and remarks. One summary row per material code follows the detail rows
+     * on the same sheet, reusing the same columns; its quantity is an Excel
+     * SUM formula over that code's detail rows and its remarks say 不含损耗.
      * File name follows 筛选词_材料测算明细_项目名_日期_当天序号.xlsx; the
      * 筛选词_ prefix is present only when a search keyword is submitted.
      */
@@ -938,9 +941,12 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             ));
         }
 
-        $headers = ['序号', '位置空间', '材料编号', '材料名称', '规格', '测算数量', '单位'];
+        $headers = ['序号', '位置空间', '材料编号', '材料名称', '规格', '测算数量', '单位', '备注'];
         $rows = [];
         $summaryByCode = [];
+        // Title + meta lines + blank row + header row; detail rows start right
+        // after, so detail row N sits on sheet row $headerRowNumber + N.
+        $headerRowNumber = 6;
         foreach ($records as $index => $record) {
             $rows[] = [
                 $index + 1,
@@ -950,39 +956,58 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
                 self::exportText($record['specifications'] ?? null),
                 (float) $record['estimated_quantity'],
                 (string) $record['unit'],
+                (string) ($record['remarks'] ?? ''),
             ];
-            // Sum quantities per material code (2026-11-18 requirement): rows
-            // sharing a code collapse into one summary line. Quantities are
-            // stored with 4 decimals, so accumulate scaled integers to avoid
-            // float drift instead of adding the floats directly.
+            // One summary row per material code (2026-11-18 requirement): the
+            // total quantity is computed by an Excel SUM formula over that
+            // code's detail rows. Quantities are stored with 4 decimals, so
+            // accumulate scaled integers for the cached value to avoid float
+            // drift instead of adding the floats directly.
             $code = self::exportText($record['material_code'] ?? null);
-            $name = (string) $record['material_name'];
-            $unit = (string) $record['unit'];
             if (!isset($summaryByCode[$code])) {
-                $summaryByCode[$code] = ['name' => $name, 'unit' => $unit, 'scaled' => 0, 'count' => 0];
+                $summaryByCode[$code] = [
+                    'name' => (string) $record['material_name'],
+                    'spec' => self::exportText($record['specifications'] ?? null),
+                    'unit' => (string) $record['unit'],
+                    'scaled' => 0,
+                    'detailRows' => [],
+                ];
             }
             $summaryByCode[$code]['scaled'] += (int) round(((float) $record['estimated_quantity']) * 10000);
-            $summaryByCode[$code]['count']++;
+            $summaryByCode[$code]['detailRows'][] = $headerRowNumber + $index + 1;
         }
         ksort($summaryByCode, SORT_STRING);
 
+        $detailCount = count($rows);
         if ($rows !== []) {
-            // Blank spacer row, then the summary block on the same sheet so the
-            // detail rows above keep their original column layout.
-            $rows[] = ['', '', '', '', '', '', ''];
-            $rows[] = ['同编号材料汇总', '', '', '', '', '', ''];
-            $rows[] = ['序号', '材料编号', '材料名称', '记录条数', '总数量', '单位', ''];
+            // Blank spacer row, then one summary row per code on the same
+            // sheet, reusing the detail columns (no extra block title).
+            $rows[] = ['', '', '', '', '', '', '', ''];
             $summaryIndex = 0;
             foreach ($summaryByCode as $code => $summary) {
                 $summaryIndex++;
+                $ranges = [];
+                $start = $summary['detailRows'][0];
+                $previous = $start;
+                foreach (array_slice($summary['detailRows'], 1) as $detailRow) {
+                    if ($detailRow === $previous + 1) {
+                        $previous = $detailRow;
+                        continue;
+                    }
+                    $ranges[] = $start === $previous ? 'F' . $start : 'F' . $start . ':F' . $previous;
+                    $start = $detailRow;
+                    $previous = $detailRow;
+                }
+                $ranges[] = $start === $previous ? 'F' . $start : 'F' . $start . ':F' . $previous;
                 $rows[] = [
                     $summaryIndex,
+                    '',
                     $code,
                     $summary['name'],
-                    $summary['count'],
-                    $summary['scaled'] / 10000,
+                    $summary['spec'],
+                    new XlsxFormula('SUM(' . implode(',', $ranges) . ')', $summary['scaled'] / 10000),
                     $summary['unit'],
-                    '',
+                    '不含损耗',
                 ];
             }
         }
@@ -1005,7 +1030,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'title' => '📐 ' . $project['project_name'] . '材料测算明细',
             'meta' => [
                 '导出时间: ' . Support::nowLocal('Y-m-d H:i:s'),
-                '记录总数: ' . count($rows),
+                '记录总数: ' . $detailCount,
                 '导出范围: ' . ($search === '' ? '全部测算记录（最近 500 条内）' : '搜索「' . $search . '」匹配的测算记录'),
             ],
             'fixedWidths' => [
@@ -1016,12 +1041,13 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
                 4 => 32.0,
                 5 => 12.0,
                 6 => 8.0,
+                7 => 24.0,
             ],
         ]);
         Support::audit(
             $this->context->db,
             'material.estimate.export',
-            'Exported ' . count($rows) . ' estimate rows for project ' . $projectId
+            'Exported ' . $detailCount . ' estimate rows for project ' . $projectId
                 . ($search === '' ? ' (all records).' : ' (search filter applied).')
         );
 

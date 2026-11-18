@@ -43,7 +43,7 @@ final class XlsxWorkbook
 
     /**
      * @param array<int, string> $headers
-     * @param array<int, array<int, string|int|float|null>> $rows
+     * @param array<int, array<int, string|int|float|XlsxFormula|null>> $rows
      * @param array{
      *     title?: string,
      *     meta?: list<string>,
@@ -196,7 +196,7 @@ final class XlsxWorkbook
     }
 
     /**
-     * @param list<string|int|float|null> $values
+     * @param list<string|int|float|XlsxFormula|null> $values
      */
     private static function rowCells(int $rowNumber, array $values, int $style): string
     {
@@ -208,9 +208,13 @@ final class XlsxWorkbook
         return $cells;
     }
 
-    private static function cellXml(int $rowNumber, int $columnIndex, string|int|float|null $value, int $style): string
+    private static function cellXml(int $rowNumber, int $columnIndex, string|int|float|XlsxFormula|null $value, int $style): string
     {
         $reference = self::columnName($columnIndex + 1) . $rowNumber;
+        if ($value instanceof XlsxFormula) {
+            return '<c r="' . $reference . '" s="' . $style . '"><f>' . self::xml($value->formula) . '</f>'
+                . '<v>' . self::number($value->cachedValue) . '</v></c>';
+        }
         if (is_int($value) || is_float($value)) {
             return '<c r="' . $reference . '" s="' . $style . '"><v>' . self::number($value) . '</v></c>';
         }
