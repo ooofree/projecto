@@ -920,8 +920,9 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
      * page's search box when a keyword is submitted. Columns cover the location
      * space, the material code, specification, the quantity (plus name/unit)
      * and remarks. One summary row per material code follows the detail rows
-     * on the same sheet, reusing the same columns; its quantity is an Excel
-     * SUM formula over that code's detail rows and its remarks say 不含损耗.
+     * on the same sheet, reusing the same columns with 汇总 in the location
+     * column and a light highlight background; its quantity is an Excel SUM
+     * formula over that code's detail rows and its remarks say 不含损耗.
      * File name follows 筛选词_材料测算明细_项目名_日期_当天序号.xlsx; the
      * 筛选词_ prefix is present only when a search keyword is submitted.
      */
@@ -979,6 +980,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
         ksort($summaryByCode, SORT_STRING);
 
         $detailCount = count($rows);
+        $summarySheetRows = [];
         if ($rows !== []) {
             // Blank spacer row, then one summary row per code on the same
             // sheet, reusing the detail columns (no extra block title).
@@ -986,6 +988,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             $summaryIndex = 0;
             foreach ($summaryByCode as $code => $summary) {
                 $summaryIndex++;
+                $summarySheetRows[] = $headerRowNumber + count($rows) + 1;
                 $ranges = [];
                 $start = $summary['detailRows'][0];
                 $previous = $start;
@@ -1001,7 +1004,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
                 $ranges[] = $start === $previous ? 'F' . $start : 'F' . $start . ':F' . $previous;
                 $rows[] = [
                     $summaryIndex,
-                    '',
+                    '汇总',
                     $code,
                     $summary['name'],
                     $summary['spec'],
@@ -1043,6 +1046,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
                 6 => 8.0,
                 7 => 24.0,
             ],
+            'highlightRows' => $summarySheetRows,
         ]);
         Support::audit(
             $this->context->db,

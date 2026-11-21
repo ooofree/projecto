@@ -1,0 +1,67 @@
+{
+    "id": "bom.costing",
+    "name": "BOM 组价与成本",
+    "version": "0.1.0",
+    "class": "ProjectO\\Modules\\BomCosting\\BomCostingPlugin",
+    "enabled": true,
+    "requires": [
+        "platform.core",
+        "project.foundation",
+        "material.management"
+    ],
+    "routes": {
+        "GET costings": "costings",
+        "GET costing-detail": "costing.detail",
+        "GET cost-catalog": "catalog.index",
+        "GET cost-prices": "prices.index",
+        "GET actual-costs": "actual.index",
+        "POST costing.create": "costing.create",
+        "POST costing.resource.save": "resource.save",
+        "POST costing.resource.delete": "resource.delete",
+        "POST costing.confirm": "costing.confirm",
+        "POST costing.recalc": "costing.recalc",
+        "POST cost.catalog.save": "catalog.save",
+        "POST cost.catalog.delete": "catalog.delete",
+        "POST cost.price.save": "price.save",
+        "POST cost.price.delete": "price.delete",
+        "POST actual.record.save": "actual.record.save",
+        "POST actual.reversal.save": "actual.reversal.save",
+        "POST actual.adjustment.save": "actual.adjustment.save",
+        "POST actual.allocation.save": "actual.allocation.save"
+    },
+    "migrations": [
+        "database/migrations"
+    ],
+    "permissions": [
+        {
+            "name": "view_costings",
+            "display_name": "查看组价",
+            "description": "查看当前项目的 BOM 组价、当前态明细与缺项"
+        },
+        {
+            "name": "edit_costings",
+            "display_name": "编辑组价",
+            "description": "维护组价资源行、数量与来源，确认组价结构"
+        },
+        {
+            "name": "view_cost_catalog",
+            "display_name": "查看资源目录",
+            "description": "查看共享的加工/机械/人工资源目录"
+        },
+        {
+            "name": "edit_cost_catalog",
+            "display_name": "编辑资源目录",
+            "description": "维护共享加工/机械/人工目录项"
+        },
+        {
+            "name": "view_actual_costs",
+            "display_name": "查看实际费用",
+            "description": "查看当前项目实际费用、冲销调整与分摊统计"
+        },
+        {
+            "name": "edit_actual_costs",
+            "display_name": "登记实际费用",
+            "description": "录入实际费用、冲销、调整与分摊"
+        }
+    ]
+}

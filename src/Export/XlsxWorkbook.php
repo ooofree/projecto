@@ -23,6 +23,7 @@ final class XlsxWorkbook
     private const STYLE_TITLE = 1;
     private const STYLE_HEADER = 2;
     private const STYLE_BODY = 3;
+    private const STYLE_SUMMARY = 4;
 
     private const TITLE_ROW_HEIGHT = 30;
     private const IMAGE_ROW_HEIGHT = 85;
@@ -48,7 +49,8 @@ final class XlsxWorkbook
      *     title?: string,
      *     meta?: list<string>,
      *     images?: list<array{row: int, column: int, bytes: string, extension: string, hyperlink?: string}>,
-     *     fixedWidths?: array<int, float>
+     *     fixedWidths?: array<int, float>,
+     *     highlightRows?: list<int>
      * } $options
      */
     public static function build(string $sheetName, array $headers, array $rows, array $options = []): string
@@ -67,6 +69,12 @@ final class XlsxWorkbook
         }
         $images = self::images($options['images'] ?? []);
         $fixedWidths = self::fixedWidths($options['fixedWidths'] ?? []);
+        $highlightRows = [];
+        foreach (is_array($options['highlightRows'] ?? null) ? $options['highlightRows'] : [] as $highlightRow) {
+            if (is_int($highlightRow)) {
+                $highlightRows[$highlightRow] = true;
+            }
+        }
 
         $reportLayout = $title !== null || $meta !== [];
         $headerRowNumber = $reportLayout ? count($meta) + 3 : 1;
@@ -100,8 +108,9 @@ final class XlsxWorkbook
             $height = isset($imageRows[$rowNumber])
                 ? ' ht="' . self::IMAGE_ROW_HEIGHT . '" customHeight="1"'
                 : '';
+            $rowStyle = isset($highlightRows[$rowNumber]) ? self::STYLE_SUMMARY : self::STYLE_BODY;
             $xmlRows[] = '<row r="' . $rowNumber . '"' . $height . '>'
-                . self::rowCells($rowNumber, $values, self::STYLE_BODY)
+                . self::rowCells($rowNumber, $values, $rowStyle)
                 . '</row>';
         }
         $lastRowNumber = max($rowNumber, $headerRowNumber);
@@ -426,10 +435,11 @@ final class XlsxWorkbook
             . '<font><b/><sz val="16"/><name val="Calibri"/></font>'
             . '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'
             . '</fonts>'
-            . '<fills count="3">'
+            . '<fills count="4">'
             . '<fill><patternFill patternType="none"/></fill>'
             . '<fill><patternFill patternType="gray125"/></fill>'
             . '<fill><patternFill patternType="solid"><fgColor rgb="FF4F81BD"/><bgColor indexed="64"/></patternFill></fill>'
+            . '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill>'
             . '</fills>'
             . '<borders count="2">'
             . '<border><left/><right/><top/><bottom/><diagonal/></border>'
@@ -442,11 +452,12 @@ final class XlsxWorkbook
             . '</border>'
             . '</borders>'
             . '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-            . '<cellXfs count="4">'
+            . '<cellXfs count="5">'
             . '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
             . '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
             . '<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
             . '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+            . '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
             . '</cellXfs>'
             . '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
             . '</styleSheet>';

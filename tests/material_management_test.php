@@ -2469,7 +2469,8 @@ materialTestCheck(
     !str_contains($estimateExportSheet, '同编号材料汇总')
         && !str_contains($estimateExportSheet, '总数量')
         && !str_contains($estimateExportSheet, '记录条数')
-        && substr_count($estimateExportSheet, '>不含损耗<') === $estimateCodeCount,
+        && substr_count($estimateExportSheet, '>不含损耗<') === $estimateCodeCount
+        && substr_count($estimateExportSheet, '>汇总<') === $estimateCodeCount,
     'Estimate export must append one untitled summary row per code with 不含损耗 remarks.'
 );
 $estimateSummaryDgRow = '';
@@ -2487,11 +2488,29 @@ materialTestCheck(
         && str_contains($estimateSummaryDgRow, '<v>5.5</v>')
         && str_contains($estimateSummaryDgRow, '>9W 暖光<')
         && str_contains($estimateSummaryDgRow, '>个<')
+        && preg_match('/<c r="B\d+"[^>]*t="inlineStr"><is><t[^>]*>汇总<\/t>/', $estimateSummaryDgRow) === 1
         && str_contains($estimateSummaryFlRow, '<f>SUM(F9)</f>')
         && str_contains($estimateSummaryFlRow, '<v>12.3456</v>')
         && str_contains($estimateSummaryFlRow, '>600×600<')
-        && str_contains($estimateSummaryFlRow, '>m2<'),
+        && str_contains($estimateSummaryFlRow, '>m2<')
+        && preg_match('/<c r="B\d+"[^>]*t="inlineStr"><is><t[^>]*>汇总<\/t>/', $estimateSummaryFlRow) === 1,
     'Estimate summary rows must compute the per-code total with a SUM formula and mirror the detail columns.'
+);
+// Summary rows carry a light highlight background so they stand out from the
+// detail rows; the highlight must cover the whole row (including the formula
+// cell) and must not leak onto detail or spacer rows.
+$estimateStylesXml = materialTestXlsxPart($estimateExport, 'xl/styles.xml');
+materialTestCheck(
+    str_contains($estimateStylesXml, 'FFFFF2CC')
+        && preg_match('/<xf[^>]*fillId="3"[^>]*borderId="1"/', $estimateStylesXml) === 1,
+    'Estimate export styles must define the light summary highlight fill.'
+);
+materialTestCheck(
+    preg_match_all('/s="4"/', $estimateSummaryDgRow) === 8
+        && preg_match_all('/s="4"/', $estimateSummaryFlRow) === 8
+        && str_contains($estimateSummaryDgRow, '<c r="F11" s="4"><f>SUM(F7:F8)</f>')
+        && substr_count($estimateExportSheet, 's="4"') === $estimateCodeCount * 8,
+    'Estimate summary rows must use the highlight style on every cell while detail rows keep the plain style.'
 );
 materialTestCheck(
     str_contains($estimateExportSheet, '<col min="2" max="2" width="30"')
@@ -2512,6 +2531,8 @@ materialTestCheck(
         && !str_contains($estimateSearchSheet, '地砖')
         && str_contains($estimateSearchSheet, '导出范围: 搜索「灯具」匹配的测算记录')
         && str_contains($estimateSearchSheet, '>不含损耗<')
+        && str_contains($estimateSearchSheet, '>汇总<')
+        && substr_count($estimateSearchSheet, 's="4"') === 8
         && str_contains($estimateSearchSheet, '<f>SUM(F7:F8)</f>')
         && str_contains($estimateSearchSheet, '记录总数: 2')
         && str_contains($estimateSearchSheet, '<v>5.5</v>'),
