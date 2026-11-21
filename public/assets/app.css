@@ -1107,3 +1107,170 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 
 /* Dark residuals for the materials workbench: none — all colors resolve via
    the semantic token flip in body.theme-dark above. */
+/* == SECTION 5k: BOM 组价 — 清单 + 成本预览（.cost-*） ======================
+   沿用旧系统 bom_viewer 的信息架构：左清单、右“成本预览”（环形占比图 ＋
+   成本汇总 ＋ 成本明细）。配色全部取自语义 token（状态色深浅色会一起翻转），
+   所以这里不出现硬编码颜色。
+   ========================================================================= */
+.cost-workspace { display: grid; grid-template-columns: minmax(0, 5fr) minmax(320px, 4fr); gap: var(--space-4); align-items: start; margin: var(--space-4) 0; }
+.cost-workspace > .panel { margin: 0; }
+.cost-preview-panel { position: sticky; top: calc(var(--topbar-h) + 64px); max-height: calc(100vh - var(--topbar-h) - 88px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.cost-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 17px 0; }
+.cost-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; color: var(--text-secondary); background: var(--surface-2); border: 1px solid var(--border-subtle); border-radius: 999px; font-size: .76rem; font-weight: 600; text-decoration: none; }
+.cost-chip:hover { color: var(--text-primary); border-color: var(--chip-border); }
+.cost-chip-count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.cost-list-table .cost-num, .cost-summary-table .cost-num, .cost-detail-table .cost-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cost-list-panel .data-table { min-width: 0; }
+/* 窄屏下“打开”按钮会被挤成竖排，操作列与状态徽标都不参与收缩。 */
+.cost-list-table th:last-child, .cost-list-table td:last-child { width: 1%; white-space: nowrap; }
+.cost-list-table .button { white-space: nowrap; }
+.cost-list-table .cost-status-cell { flex-wrap: nowrap; }
+.cost-list-table th:nth-child(2), .cost-list-table td:nth-child(2) { white-space: nowrap; }
+/* 右栏只有 4fr，汇总/明细表要跟着栏宽收，否则会把面板顶出视口（640 的 data-table 最小宽度）。 */
+.cost-preview-panel { min-width: 0; }
+.cost-preview .table-wrap { width: auto; max-width: 100%; }
+.cost-preview .data-table { min-width: 0; }
+.cost-status-cell { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.cost-row-link { font-weight: 650; color: var(--text-primary); text-decoration: none; }
+.cost-row-link:hover { color: var(--accent-text); text-decoration: underline; }
+.cost-row .record-meta, .cost-detail-table .record-meta { display: block; margin: 2px 0 0; font-size: .74rem; }
+.cost-row.is-selected td { background: var(--accent-soft); }
+.cost-row.is-selected td:first-child { box-shadow: inset 3px 0 0 var(--brand); }
+.cost-group-head td { padding: 7px 12px; background: var(--surface-2); color: var(--text-secondary); font-size: .78rem; scroll-margin-top: 80px; }
+.cost-group-name { margin-right: 8px; font-weight: 700; }
+
+.cost-preview { display: grid; gap: var(--space-4); padding: 14px 17px 16px; }
+.cost-preview-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.cost-preview-head h2 { margin-bottom: 2px; }
+.cost-preview-head .muted { display: block; font-size: .78rem; }
+.cost-preview-empty { padding: 26px 12px; }
+.cost-badge-warn { flex: 0 0 auto; color: var(--status-warning-text); background: var(--status-warning-bg); }
+.cost-currency { display: grid; gap: var(--space-3); }
+.cost-currency-secondary { padding-top: var(--space-4); border-top: 1px dashed var(--border-subtle); }
+.cost-total { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 10px 12px; background: var(--surface-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.cost-total-label { color: var(--text-tertiary); font-size: .74rem; font-weight: 650; letter-spacing: .05em; }
+.cost-total-value { font-size: 1.375rem; font-weight: 720; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.cost-total-code { color: var(--text-secondary); font-size: .78rem; font-weight: 650; }
+.cost-total-meta { margin-left: auto; color: var(--text-tertiary); font-size: .74rem; }
+
+.cost-chart { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-4); }
+.cost-donut { flex: 0 0 150px; width: 150px; height: auto; }
+/* 详情页整幅面板更宽，图放大一点才不显空。 */
+.cost-preview-wide .cost-donut { flex-basis: 204px; width: 204px; }
+.cost-preview-wide .cost-legend { max-width: 420px; }
+.cost-donut text { fill: var(--text-primary); }
+.cost-donut-total { font-size: 17px; font-weight: 700; }
+.cost-donut-code { fill: var(--text-tertiary); font-size: 10px; letter-spacing: .1em; }
+.cost-seg { transition: opacity .14s ease; }
+.cost-seg:hover { opacity: .8; }
+
+.cost-preview { --cost-c1: var(--brand); --cost-c2: var(--status-info-text); --cost-c3: var(--status-success-text); --cost-c4: var(--status-warning-text); --cost-c5: var(--status-purple-text); --cost-c6: var(--status-orange-text); --cost-c7: var(--status-danger-text); }
+.cost-seg-1 { stroke: var(--cost-c1); }
+.cost-seg-2 { stroke: var(--cost-c2); }
+.cost-seg-3 { stroke: var(--cost-c3); }
+.cost-seg-4 { stroke: var(--cost-c4); }
+.cost-seg-5 { stroke: var(--cost-c5); }
+.cost-seg-6 { stroke: var(--cost-c6); }
+.cost-seg-7 { stroke: var(--cost-c7); }
+.cost-seg-bg-1 { background: var(--cost-c1); }
+.cost-seg-bg-2 { background: var(--cost-c2); }
+.cost-seg-bg-3 { background: var(--cost-c3); }
+.cost-seg-bg-4 { background: var(--cost-c4); }
+.cost-seg-bg-5 { background: var(--cost-c5); }
+.cost-seg-bg-6 { background: var(--cost-c6); }
+.cost-seg-bg-7 { background: var(--cost-c7); }
+
+.cost-legend { flex: 1 1 180px; min-width: 0; max-width: 340px; display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.cost-legend li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; font-size: .78rem; }
+.cost-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: middle; }
+.cost-legend-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cost-legend-amount { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.cost-legend-percent { min-width: 52px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; text-align: right; }
+
+.cost-preview .data-table { min-width: 0; }
+.cost-preview .table-wrap { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+/* .cost-preview 是 grid，子项默认 min-width:auto 会被表格的 min-content 撑宽，
+   1280 下右栏只有 408px，“成本明细”的 5 列就会被裁掉。这里放开收缩并按窄栏配紧凑列宽。 */
+.cost-preview > * { min-width: 0; }
+.cost-preview th, .cost-preview td { padding: 6px 7px; }
+.cost-preview .cost-summary-table { font-size: .74rem; }
+.cost-preview .cost-detail-table { font-size: .72rem; }
+.cost-summary-table td:first-child { white-space: nowrap; }
+.cost-summary-table .cost-legend-dot { margin-right: 6px; }
+.cost-summary-total td { background: var(--surface-1); font-weight: 700; }
+.cost-detail-title { margin: 0 0 8px; font-size: .95rem; }
+.cost-detail-table { font-size: .78rem; }
+.cost-detail-table .cost-detail-kind { white-space: nowrap; }
+.cost-preview .cost-detail-table th, .cost-preview .cost-detail-table td { padding: 6px 6px; }
+.cost-detail-table .cost-detail-name { display: block; white-space: normal; overflow-wrap: anywhere; }
+.cost-detail-table .cost-unit { margin-left: 3px; font-size: .66rem; }
+.cost-badge-missing { color: var(--status-danger-text); background: var(--status-danger-bg); }
+.cost-note { margin: 0; color: var(--text-tertiary); font-size: .74rem; line-height: 1.55; }
+.cost-inline-warn { margin: 0; color: var(--text-tertiary); font-size: .76rem; }
+
+.cost-create-panel { margin-top: var(--space-4); }
+.cost-create-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 13px 17px; cursor: pointer; list-style: none; }
+.cost-create-summary::-webkit-details-marker { display: none; }
+.cost-create-summary::after { content: "+"; display: grid; width: 23px; height: 23px; flex: 0 0 auto; margin-left: auto; align-self: center; place-items: center; color: var(--accent-text); background: var(--accent-soft); border-radius: 7px; font-size: 1rem; }
+.cost-create-panel[open] > summary::after { content: "−"; }
+.cost-create-title { font-weight: 700; }
+.cost-create-panel > .form-grid { padding: 0 17px 17px; }
+
+@media (max-width: 1024px) {
+    .cost-workspace { grid-template-columns: 1fr; gap: 12px; }
+    .cost-preview-panel { position: static; max-height: none; overflow: visible; }
+}
+@media (max-width: 720px) {
+    .cost-chart { gap: 12px; }
+    .cost-donut { flex-basis: 150px; width: 150px; }
+    .cost-legend { width: 100%; max-width: none; }
+}
+
+/* 组价详情＝编辑台：左“编辑”（材料组成 ＋ 资源行 ＋ 添加行），右“成本预览”
+   （合价 ＋ 环形占比图 ＋ 成本汇总 ＋ 成本明细），沿用旧系统 bom_editor 的 3fr/2fr。 */
+.cost-editor-workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(380px, 2.4fr); gap: var(--space-4); align-items: start; margin: var(--space-4) 0; }
+.cost-editor-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; }
+.cost-editor-main > .panel, .cost-editor-preview { margin: 0; min-width: 0; }
+.cost-editor-main .data-table { min-width: 0; }
+/* .panel 给直系子元素加了左右 17px 外边距，而 .table-wrap 自带 width:100%：
+   两者相加会让表框比面板宽 34px 顶出去，这里改回 auto 让宽度吃掉外边距。 */
+.cost-editor-main .table-wrap, .cost-list-panel > .table-wrap { width: auto; }
+.cost-editor-table { font-size: .82rem; table-layout: fixed; width: 100%; }
+/* fixed 布局下按列给固定比例，长名称与缺价原因在格内折行，表格永远不会顶出面板。 */
+.cost-comp-table th:nth-child(1) { width: 40%; }
+.cost-comp-table th:nth-child(2) { width: 12%; }
+.cost-comp-table th:nth-child(3) { width: 15%; }
+.cost-comp-table th:nth-child(4) { width: 33%; }
+.cost-res-table th:nth-child(1) { width: 15%; }
+.cost-res-table th:nth-child(2) { width: 29%; }
+.cost-res-table th:nth-child(3) { width: 15%; }
+.cost-res-table th:nth-child(4) { width: 29%; }
+.cost-editor-table .cost-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cost-editor-table .cost-actions { width: 1%; text-align: right; white-space: nowrap; }
+.cost-editor-table .cost-detail-kind { color: var(--text-secondary); white-space: nowrap; }
+.cost-editor-table td { white-space: normal; overflow-wrap: anywhere; }
+/* 单价与取价合成一列：金额在上，状态徽标与来源/缺价原因在下，和旧系统“名称下挂单价”一致。 */
+.cost-price-cell .cost-price-amount { display: block; font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
+.cost-price-cell .badge { margin-top: 3px; }
+.cost-row-name { font-weight: 650; }
+.cost-row-note { display: block; margin-top: 2px; font-size: .72rem; line-height: 1.35; }
+.cost-editor-add { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--border-subtle); }
+/* 右栏只有 2.4fr，图表、汇总、明细都压到紧凑尺寸，避免横向溢出面板。 */
+.cost-editor-preview { overflow-x: hidden; }
+.cost-editor-preview .cost-chart { gap: 10px; }
+.cost-editor-preview .cost-donut { flex-basis: 128px; width: 128px; }
+.cost-editor-preview .cost-donut-total { font-size: 13px; }
+.cost-editor-preview .cost-donut-code { font-size: 9px; }
+.cost-editor-preview .cost-legend { flex: 1 1 132px; min-width: 0; max-width: none; }
+.cost-editor-preview .cost-legend-percent { min-width: 44px; }
+.cost-editor-preview .cost-total { padding: 8px 10px; }
+.cost-editor-preview .cost-total-value { font-size: 1.15rem; }
+.cost-editor-preview .cost-total-meta { flex-basis: 100%; margin-left: 0; }
+.cost-editor-preview th, .cost-editor-preview td { padding: 6px 8px; }
+.cost-editor-preview .cost-summary-table, .cost-editor-preview .cost-detail-table { font-size: .72rem; }
+.cost-editor-preview .cost-detail-table th, .cost-editor-preview .cost-detail-table td { padding: 6px 6px; }
+.cost-editor-preview .cost-detail-table .cost-unit { font-size: .66rem; }
+
+@media (max-width: 1024px) {
+    .cost-editor-workspace { grid-template-columns: 1fr; gap: 12px; }
+}

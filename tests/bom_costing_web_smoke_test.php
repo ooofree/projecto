@@ -25,7 +25,8 @@ $db->exec('CREATE TABLE Plugin_States (plugin_id TEXT PRIMARY KEY, is_enabled IN
 $db->exec('CREATE TABLE System_Settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_by INTEGER, updated_at TEXT)');
 $db->exec('CREATE TABLE audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER, entity_type TEXT, entity_id INTEGER, action TEXT, details TEXT)');
 $db->exec('CREATE TABLE Buildings (building_id INTEGER PRIMARY KEY, project_id INTEGER, building_number TEXT, building_name TEXT)');
-$db->exec('CREATE TABLE Materials (material_id INTEGER PRIMARY KEY, project_id INTEGER, material_code TEXT, material_name TEXT NOT NULL, unit TEXT NOT NULL, default_quotation_id INTEGER, UNIQUE(project_id, material_code))');
+$db->exec('CREATE TABLE Material_Categories (category_id INTEGER PRIMARY KEY AUTOINCREMENT, category_name TEXT NOT NULL, parent_category_id INTEGER, sort_order INTEGER NOT NULL DEFAULT 0)');
+$db->exec('CREATE TABLE Materials (material_id INTEGER PRIMARY KEY, project_id INTEGER, material_code TEXT, material_name TEXT NOT NULL, unit TEXT NOT NULL, category_id INTEGER, default_quotation_id INTEGER, UNIQUE(project_id, material_code))');
 $db->exec('CREATE TABLE Material_Compositions (composition_id INTEGER PRIMARY KEY, project_id INTEGER, parent_material_id INTEGER, child_material_id INTEGER, quantity NUMERIC NOT NULL, UNIQUE(project_id, parent_material_id, child_material_id), UNIQUE(project_id, composition_id))');
 $db->exec('CREATE TABLE Auxiliary_Materials (aux_id INTEGER PRIMARY KEY, project_id INTEGER, aux_name TEXT NOT NULL, unit TEXT NOT NULL)');
 $db->exec('CREATE TABLE Material_Quotations (quotation_id INTEGER PRIMARY KEY, project_id INTEGER, supplier_material_id INTEGER, material_id INTEGER, purchase_unit_price NUMERIC NOT NULL, quotation_date TEXT, currency_code TEXT, confirmed_tax_rate NUMERIC NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1, valid_from TEXT, valid_to TEXT, status TEXT, tax_status TEXT, pricing_unit TEXT, UNIQUE(project_id, quotation_id))');
@@ -33,7 +34,7 @@ $db->exec('CREATE TABLE resource_catalog (catalog_id INTEGER PRIMARY KEY, catalo
 $db->exec('CREATE TABLE project_cost_prices (price_id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, aux_id INTEGER, catalog_id INTEGER, unit_price NUMERIC NOT NULL, currency_code TEXT, pricing_unit TEXT, valid_from TEXT, valid_to TEXT, status TEXT, created_by INTEGER, UNIQUE(project_id, price_id))');
 $db->exec('CREATE TABLE bom_costings (costing_id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, parent_material_id INTEGER NOT NULL, status TEXT, calc_status TEXT, version BIGINT NOT NULL DEFAULT 0, confirmed_by INTEGER, confirmed_at TEXT, created_by INTEGER, created_at TEXT, updated_at TEXT, UNIQUE(project_id, parent_material_id), UNIQUE(project_id, costing_id))');
 $db->exec('CREATE TABLE bom_costing_resources (resource_line_id INTEGER PRIMARY KEY, costing_id INTEGER, project_id INTEGER, resource_type TEXT, aux_id INTEGER, catalog_id INTEGER, material_id INTEGER, resource_key TEXT, quantity NUMERIC NOT NULL, UNIQUE(project_id, resource_line_id))');
-$db->exec('CREATE TABLE cost_line_results (result_id INTEGER PRIMARY KEY, costing_id INTEGER, project_id INTEGER, composition_id INTEGER, resource_line_id INTEGER, quantity NUMERIC NOT NULL, unit_price NUMERIC NOT NULL, currency_code TEXT, pricing_unit TEXT, quotation_id INTEGER, project_cost_price_id INTEGER, manual_price NUMERIC, source_tax_status TEXT, UNIQUE(project_id, result_id), UNIQUE(costing_id, composition_id), UNIQUE(costing_id, resource_line_id))');
+$db->exec('CREATE TABLE cost_line_results (result_id INTEGER PRIMARY KEY, costing_id INTEGER, project_id INTEGER, composition_id INTEGER, resource_line_id INTEGER, quantity NUMERIC NOT NULL, unit_price NUMERIC NOT NULL, currency_code TEXT, pricing_unit TEXT, quotation_id INTEGER, project_cost_price_id INTEGER, manual_price NUMERIC, manual_confirmed_by INTEGER, source_tax_status TEXT, mgmt_rate NUMERIC, profit_rate NUMERIC, tax_rate NUMERIC, trans_rate NUMERIC, ins_rate NUMERIC, subtotal NUMERIC, mgmt_amount NUMERIC, profit_amount NUMERIC, tax_amount NUMERIC, comprehensive NUMERIC, formula_version TEXT, rounding_spec_version TEXT, calculated_at TEXT, calculated_by INTEGER, UNIQUE(project_id, result_id), UNIQUE(costing_id, composition_id), UNIQUE(costing_id, resource_line_id))');
 $db->exec('CREATE TABLE cost_settings (setting_id INTEGER PRIMARY KEY, project_id INTEGER, scope_type TEXT, building_id INTEGER, building_key TEXT, mgmt_rate NUMERIC DEFAULT 0, profit_rate NUMERIC DEFAULT 0, tax_rate NUMERIC DEFAULT 0, trans_rate NUMERIC DEFAULT 0, ins_rate NUMERIC DEFAULT 0, UNIQUE(project_id, building_key))');
 $db->exec('CREATE TABLE actual_cost_records (record_id INTEGER PRIMARY KEY, project_id INTEGER, building_id INTEGER, cost_category TEXT, material_id INTEGER, aux_id INTEGER, catalog_id INTEGER, cost_object_key TEXT, description TEXT, quantity NUMERIC, unit TEXT, unit_price NUMERIC, amount NUMERIC NOT NULL, record_type TEXT, reversal_of_record_id INTEGER, adjustment_of_record_id INTEGER, currency_code TEXT, tax_status TEXT, occurred_at TEXT, recorded_by INTEGER, UNIQUE(project_id, record_id))');
 $db->exec('CREATE TABLE actual_cost_allocations (allocation_id INTEGER PRIMARY KEY, project_id INTEGER, record_id INTEGER, costing_id INTEGER, allocated_amount NUMERIC NOT NULL, allocated_by INTEGER, UNIQUE(record_id, costing_id))');
@@ -61,9 +62,9 @@ if (!in_array('view_projects', $granted, true)) {
 
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1, 'csrf_token' => 'web-smoke-token'];
 
-function renderPage(PDO $db, string $page): string
+function renderPage(PDO $db, string $page, array $params = []): string
 {
-    $_GET = ['page' => $page];
+    $_GET = ['page' => $page] + $params;
     $_POST = [];
     $_SERVER['REQUEST_METHOD'] = 'GET';
     ob_start();
@@ -91,5 +92,29 @@ foreach ($pages as $page => $heading) {
     }
     echo 'PASS  GET ' . $page . ' 渲染正常（' . $heading . "，布局完整）\n";
 }
+
+// 右栏成本预览冒烟：造一份“材料组成”组价，验证选中后真的渲染出环形占比图、
+// 成本汇总（含占比）与成本明细，而不是只有空状态。
+$db->exec("INSERT INTO Material_Categories (category_id, category_name, sort_order) VALUES (1, '灯具', 10)");
+$db->exec("INSERT INTO Materials (material_id, project_id, material_code, material_name, unit, category_id) VALUES
+    (1, 1, 'DG-001', '筒灯', '套', 1), (2, 1, 'PZ-001', '灯珠', '个', 1)");
+$db->exec('INSERT INTO Material_Compositions (composition_id, project_id, parent_material_id, child_material_id, quantity) VALUES (1, 1, 1, 2, 3)');
+$db->exec("INSERT INTO bom_costings (costing_id, project_id, parent_material_id, status, calc_status, version) VALUES (1, 1, 1, 'draft', 'complete', 1)");
+$db->exec("INSERT INTO cost_line_results (result_id, costing_id, project_id, composition_id, resource_line_id, quantity, unit_price, currency_code, pricing_unit, manual_price, source_tax_status)
+    VALUES (1, 1, 1, 1, NULL, 3, 12.5, 'CNY', '个', 12.5, 'taxable')");
+
+$previewHtml = renderPage($db, 'costings', ['costing_id' => 1]);
+foreach (['cost-donut', '材料组成', '37.50', '100.00%', '成本明细'] as $needle) {
+    if (!str_contains($previewHtml, $needle)) {
+        throw new RuntimeException("组价列表右栏成本预览缺少「{$needle}」。");
+    }
+}
+echo "PASS  GET costings?costing_id=1 右栏成本预览（环形图 + 汇总 + 明细）渲染正常\n";
+
+$detailHtml = renderPage($db, 'costing-detail', ['costing_id' => 1]);
+if (!str_contains($detailHtml, '成本预览') || !str_contains($detailHtml, '成本项小计占比')) {
+    throw new RuntimeException('组价详情页缺少成本预览区块。');
+}
+echo "PASS  GET costing-detail 详情页带成本预览区块\n";
 
 echo "BOM costing web smoke passed.\n";

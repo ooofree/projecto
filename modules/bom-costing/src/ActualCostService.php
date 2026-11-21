@@ -275,13 +275,20 @@ final class ActualCostService
     private function netAmount(int $projectId, int $recordId): string
     {
         $stmt = $this->db->prepare(
+            // 同一个取值参与三处匹配，必须各自命名：PDO 关闭模拟预处理时同名占位符
+            // 重复出现而只绑定一次会抛 SQLSTATE[HY093]。
             'SELECT COALESCE(SUM(amount), 0) FROM actual_cost_records
              WHERE project_id = :project_id
-               AND (record_id = :record_id
-                    OR reversal_of_record_id = :record_id
-                    OR adjustment_of_record_id = :record_id)'
+               AND (record_id = :self_id
+                    OR reversal_of_record_id = :reversal_id
+                    OR adjustment_of_record_id = :adjustment_id)'
         );
-        $stmt->execute(['project_id' => $projectId, 'record_id' => $recordId]);
+        $stmt->execute([
+            'project_id' => $projectId,
+            'self_id' => $recordId,
+            'reversal_id' => $recordId,
+            'adjustment_id' => $recordId,
+        ]);
 
         return (string) $stmt->fetchColumn();
     }

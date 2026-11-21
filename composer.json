@@ -23,6 +23,7 @@
             "php tests/profile_service_test.php",
             "php tests/labor_crew_test.php",
             "php tests/bom_costing_test.php",
+            "php tests/bom_costing_sql_placeholder_test.php",
             "php tests/bom_costing_web_smoke_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php",

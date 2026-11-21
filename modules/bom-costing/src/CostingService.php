@@ -24,22 +24,51 @@ final class CostingService
     {
     }
 
-    /** 组价列表（含父材料信息、双态、缺项数、更新时间）。 */
+    /**
+     * 组价列表（含父材料信息、材料分类、双态、缺项数、参考合计、更新时间）。
+     *
+     * reference_total 是“数量×单价”的当前态小计汇总（未含管理费/利润/税费），
+     * 仅供清单栏快速对照；精确分解见详情页与右栏预览。
+     */
     public function listCostings(int $projectId): array
     {
         $stmt = $this->db->prepare(
-            'SELECT c.costing_id, c.parent_material_id, c.status, c.calc_status, c.version,
+            'SELECT c.costing_id, c.project_id, c.parent_material_id, c.status, c.calc_status, c.version,
                     c.confirmed_at, c.updated_at,
-                    m.material_code, m.material_name, m.unit
+                    m.material_code, m.material_name, m.unit, m.category_id,
+                    COALESCE(mc.category_name, \'未分类\') AS category_name,
+                    COALESCE(mc.sort_order, 0) AS category_sort
              FROM bom_costings c
              JOIN Materials m ON m.material_id = c.parent_material_id AND m.project_id = c.project_id
+             LEFT JOIN Material_Categories mc ON mc.category_id = m.category_id
              WHERE c.project_id = :project_id
-             ORDER BY m.material_name, c.costing_id'
+             ORDER BY category_sort, category_name, m.material_name, c.costing_id'
         );
         $stmt->execute(['project_id' => $projectId]);
         $rows = $stmt->fetchAll();
 
+        // 一次聚合全部组价的参考小计，避免逐行查明细。
+        $totalsStmt = $this->db->prepare(
+            'SELECT costing_id, currency_code, SUM(quantity * unit_price) AS amount
+             FROM cost_line_results
+             WHERE project_id = :project_id
+             GROUP BY costing_id, currency_code'
+        );
+        $totalsStmt->execute(['project_id' => $projectId]);
+        $totalsByCosting = [];
+        foreach ($totalsStmt->fetchAll() as $total) {
+            $totalsByCosting[(int) $total['costing_id']][] = [
+                'code' => (string) $total['currency_code'],
+                'amount' => (float) $total['amount'],
+            ];
+        }
+
         foreach ($rows as &$row) {
+            $totals = $totalsByCosting[(int) $row['costing_id']] ?? [];
+            usort($totals, static fn (array $a, array $b): int => $b['amount'] <=> $a['amount']);
+            $row['reference_total'] = $totals === [] ? 0.0 : (float) $totals[0]['amount'];
+            $row['reference_currency'] = $totals === [] ? '' : (string) $totals[0]['code'];
+            $row['currency_count'] = count($totals);
             $row['missing_count'] = $this->missingCount(
                 (int) $row['project_id'],
                 (int) $row['costing_id'],

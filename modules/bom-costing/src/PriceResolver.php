@@ -74,12 +74,14 @@ final class PriceResolver
     public function forAuxiliary(int $projectId, int $auxId, string $today): array
     {
         $stmt = $this->db->prepare(
+            // 注：PDO 关闭模拟预处理（ATTR_EMULATE_PREPARES=false）时，命名占位符会被
+            // 逐位置展开，同名占位符重复出现而只绑定一次就会抛 HY093，故两端分别命名。
             'SELECT price_id, unit_price, currency_code, pricing_unit
              FROM project_cost_prices
              WHERE project_id = :project_id AND aux_id = :aux_id
                AND status = :active
-               AND (valid_from IS NULL OR valid_from <= :today)
-               AND (valid_to IS NULL OR valid_to >= :today)
+               AND (valid_from IS NULL OR valid_from <= :today_from)
+               AND (valid_to IS NULL OR valid_to >= :today_to)
              ORDER BY price_id DESC
              LIMIT 1'
         );
@@ -87,7 +89,8 @@ final class PriceResolver
             'project_id' => $projectId,
             'aux_id' => $auxId,
             'active' => 'active',
-            'today' => $today,
+            'today_from' => $today,
+            'today_to' => $today,
         ]);
         $row = $stmt->fetch();
         if ($row === false) {
@@ -116,8 +119,8 @@ final class PriceResolver
              FROM project_cost_prices p
              WHERE p.project_id = :project_id AND p.catalog_id = :catalog_id
                AND p.status = :active
-               AND (p.valid_from IS NULL OR p.valid_from <= :today)
-               AND (p.valid_to IS NULL OR p.valid_to >= :today)
+               AND (p.valid_from IS NULL OR p.valid_from <= :today_from)
+               AND (p.valid_to IS NULL OR p.valid_to >= :today_to)
              ORDER BY p.price_id DESC
              LIMIT 1'
         );
@@ -125,7 +128,8 @@ final class PriceResolver
             'project_id' => $projectId,
             'catalog_id' => $catalogId,
             'active' => 'active',
-            'today' => $today,
+            'today_from' => $today,
+            'today_to' => $today,
         ]);
         $row = $stmt->fetch();
         if ($row === false) {
@@ -154,15 +158,16 @@ final class PriceResolver
                AND q.material_id = :material_id
                AND m.default_quotation_id = q.quotation_id
                AND q.status = :active
-               AND (q.valid_from IS NULL OR q.valid_from <= :today)
-               AND (q.valid_to IS NULL OR q.valid_to >= :today)
+               AND (q.valid_from IS NULL OR q.valid_from <= :today_from)
+               AND (q.valid_to IS NULL OR q.valid_to >= :today_to)
              LIMIT 1'
         );
         $stmt->execute([
             'project_id' => $projectId,
             'material_id' => $materialId,
             'active' => 'active',
-            'today' => $today,
+            'today_from' => $today,
+            'today_to' => $today,
         ]);
         $row = $stmt->fetch();
 
@@ -178,8 +183,8 @@ final class PriceResolver
              WHERE project_id = :project_id
                AND material_id = :material_id
                AND status = :active
-               AND (valid_from IS NULL OR valid_from <= :today)
-               AND (valid_to IS NULL OR valid_to >= :today)
+               AND (valid_from IS NULL OR valid_from <= :today_from)
+               AND (valid_to IS NULL OR valid_to >= :today_to)
              ORDER BY quotation_date DESC, quotation_id DESC
              LIMIT 1'
         );
@@ -187,7 +192,8 @@ final class PriceResolver
             'project_id' => $projectId,
             'material_id' => $materialId,
             'active' => 'active',
-            'today' => $today,
+            'today_from' => $today,
+            'today_to' => $today,
         ]);
         $row = $stmt->fetch();
 

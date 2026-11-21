@@ -32,7 +32,7 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
     public function dispatch(string $handler, array $input): PluginResponse
     {
         return match ($handler) {
-            'costings' => $this->costingsIndex(),
+            'costings' => $this->costingsIndex($input),
             'costing.detail' => $this->costingDetail($input),
             'catalog.index' => $this->catalogIndex(),
             'prices.index' => $this->pricesIndex(),
@@ -54,18 +54,43 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
         };
     }
 
-    private function costingsIndex(): PluginResponse
+    private function costingsIndex(array $input): PluginResponse
     {
         Support::requirePermission($this->context->db, 'view_costings');
         Support::requirePermission($this->context->db, 'view_projects');
         $project = $this->context->requireCurrentProject();
         $projectId = (int) $project['project_id'];
 
+        // 右栏成本预览：清单页只读当前态，不触发重算（重算发生在打开详情时）。
+        // 未选中时右栏给出引导，和旧系统的“请点击左侧记录查看成本分析”一致。
+        $selectedCosting = null;
+        $preview = null;
+        $previewNotice = null;
+        $rawCostingId = $input['costing_id'] ?? null;
+        if ($rawCostingId !== null && $rawCostingId !== '') {
+            try {
+                [$selectedCosting, $preview] = $this->costingWithPreview(
+                    $projectId,
+                    $this->requiredId($rawCostingId),
+                    Support::nowLocal('Y-m-d')
+                );
+            } catch (HttpException $exception) {
+                // 链接可能指向已删除的组价：清单页不该整页 404，右栏提示即可。
+                if ($exception->statusCode !== 404) {
+                    throw $exception;
+                }
+                $previewNotice = '该组价已不存在或已被删除，请在左侧清单中选择其他组价。';
+            }
+        }
+
         return $this->context->view('costings.php', [
             'title' => 'BOM 组价',
             'currentProject' => $project,
             'costings' => $this->costings->listCostings($projectId),
             'availableMaterials' => $this->costings->listAvailableMaterials($projectId),
+            'selectedCosting' => $selectedCosting,
+            'preview' => $preview,
+            'previewNotice' => $previewNotice,
             'canEdit' => Support::hasPermission($this->context->db, 'edit_costings'),
             'nav' => $this->nav(),
         ]);
@@ -88,19 +113,32 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             error_log('BOM detail auto-recalc skipped: ' . $exception->getMessage());
         }
 
-        $costing = $this->costings->requireCosting($projectId, $costingId);
-        $costing['detail_rows'] = $this->buildDetailRows($projectId, $costing, $today);
+        [$costing, $preview] = $this->costingWithPreview($projectId, $costingId, $today);
 
         return $this->context->view('costing-detail.php', [
             'title' => '组价详情',
             'currentProject' => $project,
             'costing' => $costing,
+            'preview' => $preview,
             'catalogOptions' => $this->catalog->groupedOptions(),
             'auxiliaries' => $this->projectAuxiliaries($projectId),
             'materials' => $this->projectMaterials($projectId),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_costings'),
             'nav' => $this->nav(),
         ]);
+    }
+
+    /**
+     * 读取组价并装配“参考金额分解”（饼图/汇总/明细共用同一份明细行）。
+     *
+     * @return array{0: array<string, mixed>, 1: array<string, mixed>}
+     */
+    private function costingWithPreview(int $projectId, int $costingId, string $today): array
+    {
+        $costing = $this->costings->requireCosting($projectId, $costingId);
+        $costing['detail_rows'] = $this->buildDetailRows($projectId, $costing, $today);
+
+        return [$costing, CostBreakdown::fromRows($costing['detail_rows'])];
     }
 
     /**
@@ -126,6 +164,7 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             if ($result !== null) {
                 $rows[] = [
                     'kind' => 'composition',
+                    'composition_id' => (int) $comp['composition_id'],
                     'object_name' => $result['comp_material_name'] ?? $comp['material_name'],
                     'object_code' => $result['comp_material_code'] ?? $comp['material_code'],
                     'unit' => $result['comp_unit'] ?? $comp['unit'],
@@ -143,6 +182,7 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             $resolved = $this->prices->forMaterial($projectId, (int) $comp['child_material_id'], $today);
             $rows[] = [
                 'kind' => 'composition',
+                'composition_id' => (int) $comp['composition_id'],
                 'object_name' => $comp['material_name'],
                 'object_code' => $comp['material_code'],
                 'unit' => $comp['unit'],
@@ -162,6 +202,7 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             if ($result !== null) {
                 $rows[] = [
                     'kind' => 'resource:' . $resource['resource_type'],
+                    'resource_line_id' => (int) $resource['resource_line_id'],
                     'object_name' => $result['aux_name'] ?? $result['catalog_name'] ?? $result['res_material_name'] ?? '—',
                     'object_code' => $result['res_material_code'] ?? null,
                     'unit' => $result['aux_unit'] ?? $result['catalog_unit'] ?? $result['res_material_unit'] ?? null,
@@ -179,6 +220,7 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             $resolved = $this->recalc->resolveResourceLine($projectId, $resource, $today);
             $rows[] = [
                 'kind' => 'resource:' . $resource['resource_type'],
+                'resource_line_id' => (int) $resource['resource_line_id'],
                 'object_name' => $resource['aux_name'] ?? $resource['catalog_name'] ?? $resource['material_name'] ?? '—',
                 'object_code' => $resource['material_code'] ?? null,
                 'unit' => $resource['aux_unit'] ?? $resource['catalog_unit'] ?? $resource['material_unit'] ?? null,
