@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ProjectO\Modules\BomCosting;
 
 use ProjectO\HttpException;
+use ProjectO\Modules\MaterialManagement\MaterialCatalogService;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
@@ -34,12 +35,16 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
         return match ($handler) {
             'costings' => $this->costingsIndex($input),
             'costing.detail' => $this->costingDetail($input),
+            'costing.preview' => $this->previewCosting($input),
             'catalog.index' => $this->catalogIndex(),
             'prices.index' => $this->pricesIndex(),
             'actual.index' => $this->actualIndex(),
             'costing.create' => $this->createCosting($input),
             'resource.save' => $this->saveResource($input),
             'resource.delete' => $this->deleteResource($input),
+            'composition.save' => $this->saveComposition($input),
+            'composition.delete' => $this->deleteComposition($input),
+            'quantities.save' => $this->saveQuantities($input),
             'costing.confirm' => $this->confirmCosting($input),
             'costing.recalc' => $this->recalcCosting($input),
             'catalog.save' => $this->saveCatalog($input),
@@ -123,9 +128,47 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             'catalogOptions' => $this->catalog->groupedOptions(),
             'auxiliaries' => $this->projectAuxiliaries($projectId),
             'materials' => $this->projectMaterials($projectId),
+            'compositionCandidates' => $this->compositionCandidates($projectId, $costing),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_costings'),
+            // 改数量即时重算右栏：模块自带脚本，经 ?page=module-asset 输出（CSP 禁内联）。
+            'pageScripts' => [['module' => 'bom.costing', 'file' => 'costing-preview.js', 'version' => '1']],
             'nav' => $this->nav(),
         ]);
+    }
+
+    /**
+     * 可在本组价里补充为子材料的候选：本项目材料中，排除父材料自身、已存在的子件，
+     * 以及已经有自己子项的材料（单层组成规则；服务端 saveComposition 仍会再校验一次）。
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function compositionCandidates(int $projectId, array $costing): array
+    {
+        // 直接查这三条规则需要的字段，不整份载入材料管理（那边还会带上分类、品牌等一整套）。
+        $stmt = $this->context->db->prepare(
+            'SELECT m.material_id, m.material_code, m.material_name, m.unit
+             FROM Materials m
+             WHERE m.project_id = :project_id
+               AND m.material_id <> :parent_self
+               AND NOT EXISTS (
+                   SELECT 1 FROM Material_Compositions own
+                   WHERE own.project_id = m.project_id AND own.parent_material_id = m.material_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM Material_Compositions used
+                   WHERE used.project_id = m.project_id
+                     AND used.parent_material_id = :parent_used
+                     AND used.child_material_id = m.material_id
+               )
+             ORDER BY m.material_name, m.material_id'
+        );
+        $stmt->execute([
+            'project_id' => $projectId,
+            'parent_self' => (int) $costing['parent_material_id'],
+            'parent_used' => (int) $costing['parent_material_id'],
+        ]);
+
+        return $stmt->fetchAll();
     }
 
     /**
@@ -139,6 +182,96 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
         $costing['detail_rows'] = $this->buildDetailRows($projectId, $costing, $today);
 
         return [$costing, CostBreakdown::fromRows($costing['detail_rows'])];
+    }
+
+    /**
+     * 实时试算：拿页面上还没保存的数字重算右栏“成本预览”，只返回这一段 HTML。
+     *
+     * 不写库、不动结果表：明细行就地换成草稿数量，再走同一套 CostBreakdown 与
+     * _cost-preview.php，所以曲线、占比、明细与保存后的结果口径完全一致。
+     */
+    private function previewCosting(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_costings');
+        $projectId = $this->currentProjectId();
+        $costingId = $this->requiredId($input['costing_id'] ?? null);
+
+        [$costing, $preview] = $this->costingWithPreview($projectId, $costingId, Support::nowLocal('Y-m-d'));
+
+        $draft = is_array($input['qty'] ?? null) ? $input['qty'] : [];
+        $invalid = $this->applyDraftQuantities($costing['detail_rows'], $draft);
+        $preview = CostBreakdown::fromRows($costing['detail_rows']);
+
+        $primary = $preview['currencies'][0] ?? null;
+
+        return PluginResponse::raw(
+            json_encode([
+                'ok' => $invalid === null,
+                'message' => $invalid,
+                'html' => $this->renderPreviewHtml($costing, $preview, true),
+                'total' => $primary !== null ? (float) $primary['total'] : 0.0,
+                'code' => $primary['code'] ?? null,
+                'missing' => (int) $preview['missing'],
+                'priced' => (int) $preview['priced'],
+            ], JSON_UNESCAPED_UNICODE),
+            'application/json'
+        );
+    }
+
+    /**
+     * 把草稿数量写进明细行：键 c<composition_id> / r<resource_line_id>。
+     * 非法值不采用（保留已保存值），返回第一条可读提示供页面显示。
+     *
+     * @param list<array<string, mixed>> $rows
+     * @param array<string, mixed>       $draft
+     */
+    private function applyDraftQuantities(array &$rows, array $draft): ?string
+    {
+        $error = null;
+        foreach ($rows as $index => $row) {
+            $key = str_starts_with((string) ($row['kind'] ?? ''), 'resource:')
+                ? 'r' . (int) ($row['resource_line_id'] ?? 0)
+                : 'c' . (int) ($row['composition_id'] ?? 0);
+            if ($key === 'c0' || $key === 'r0' || !array_key_exists($key, $draft)) {
+                continue;
+            }
+            $raw = $draft[$key];
+            if (!is_string($raw) && !is_int($raw) && !is_float($raw)) {
+                $error ??= '数量需为数字。';
+                continue;
+            }
+            $raw = trim((string) $raw);
+            if ($raw === '') {
+                $error ??= '有数量还空着，先填上再看试算。';
+                continue;
+            }
+            if (!is_numeric($raw)) {
+                $error ??= '数量里含有非数字字符。';
+                continue;
+            }
+            $quantity = (float) $raw;
+            if ($quantity <= 0) {
+                $error ??= '数量需大于 0。';
+                continue;
+            }
+            $rows[$index]['quantity'] = number_format($quantity, 6, '.', '');
+        }
+
+        return $error;
+    }
+
+    /** 与 views/costing-detail.php 里那段缓冲渲染保持同一组标志，保证两处输出一致。 */
+    private function renderPreviewHtml(array $costing, array $preview, bool $showDetailTable): string
+    {
+        $escape = [Support::class, 'escape'];
+        $previewHead = false;
+        $previewLink = false;
+        $showDetailTable = $showDetailTable;
+
+        ob_start();
+        require dirname(__DIR__) . '/views/_cost-preview.php';
+
+        return (string) ob_get_clean();
     }
 
     /**
@@ -165,6 +298,7 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
                 $rows[] = [
                     'kind' => 'composition',
                     'composition_id' => (int) $comp['composition_id'],
+                    'child_material_id' => (int) $comp['child_material_id'],
                     'object_name' => $result['comp_material_name'] ?? $comp['material_name'],
                     'object_code' => $result['comp_material_code'] ?? $comp['material_code'],
                     'unit' => $result['comp_unit'] ?? $comp['unit'],
@@ -183,6 +317,7 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             $rows[] = [
                 'kind' => 'composition',
                 'composition_id' => (int) $comp['composition_id'],
+                'child_material_id' => (int) $comp['child_material_id'],
                 'object_name' => $comp['material_name'],
                 'object_code' => $comp['material_code'],
                 'unit' => $comp['unit'],
@@ -203,6 +338,10 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
                 $rows[] = [
                     'kind' => 'resource:' . $resource['resource_type'],
                     'resource_line_id' => (int) $resource['resource_line_id'],
+                    'resource_type' => (string) $resource['resource_type'],
+                    'aux_id' => $resource['aux_id'] !== null ? (int) $resource['aux_id'] : null,
+                    'catalog_id' => $resource['catalog_id'] !== null ? (int) $resource['catalog_id'] : null,
+                    'resource_material_id' => $resource['material_id'] !== null ? (int) $resource['material_id'] : null,
                     'object_name' => $result['aux_name'] ?? $result['catalog_name'] ?? $result['res_material_name'] ?? '—',
                     'object_code' => $result['res_material_code'] ?? null,
                     'unit' => $result['aux_unit'] ?? $result['catalog_unit'] ?? $result['res_material_unit'] ?? null,
@@ -221,6 +360,10 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             $rows[] = [
                 'kind' => 'resource:' . $resource['resource_type'],
                 'resource_line_id' => (int) $resource['resource_line_id'],
+                'resource_type' => (string) $resource['resource_type'],
+                'aux_id' => $resource['aux_id'] !== null ? (int) $resource['aux_id'] : null,
+                'catalog_id' => $resource['catalog_id'] !== null ? (int) $resource['catalog_id'] : null,
+                'resource_material_id' => $resource['material_id'] !== null ? (int) $resource['material_id'] : null,
                 'object_name' => $resource['aux_name'] ?? $resource['catalog_name'] ?? $resource['material_name'] ?? '—',
                 'object_code' => $resource['material_code'] ?? null,
                 'unit' => $resource['aux_unit'] ?? $resource['catalog_unit'] ?? $resource['material_unit'] ?? null,
@@ -338,7 +481,19 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
         Support::requirePermission($this->context->db, 'edit_costings');
         $projectId = $this->currentProjectId();
         $costingId = $this->requiredId($input['costing_id'] ?? null);
-        $this->costings->saveResource($projectId, $costingId, $input, $this->userId());
+
+        // 表单校验类错误（类型与目标不匹配、重复行等）不该整页报错：回到本页给提示条，
+        // 用户还留在刚填的表单旁边，能立刻改正。
+        try {
+            $this->costings->saveResource($projectId, $costingId, $input, $this->userId());
+        } catch (HttpException $exception) {
+            if ($exception->statusCode >= 500) {
+                throw $exception;
+            }
+            Support::flash($exception->getMessage(), 'error');
+            return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+        }
+
         Support::audit($this->context->db, 'bom.resource.save', 'Costing ' . $costingId . ' resource updated.');
         Support::flash('资源行已保存。');
 
@@ -355,6 +510,149 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
         $this->costings->deleteResource($projectId, $costingId, $lineId);
         Support::audit($this->context->db, 'bom.resource.delete', 'Costing ' . $costingId . ' resource ' . $lineId . ' deleted.');
         Support::flash('资源行已删除。');
+
+        return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+    }
+
+    /**
+     * 在组价页维护父材料的组成（新增/改用量系数）。
+     *
+     * 组成仍只有一份真身：写回材料管理的 Material_Compositions，组价不复制组件行；
+     * 保存后按新组成补算本组价，右栏预览立刻反映新占比。
+     */
+    private function saveComposition(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_costings');
+        Support::requirePermission($this->context->db, 'edit_costings');
+        $projectId = $this->currentProjectId();
+        $costingId = $this->requiredId($input['costing_id'] ?? null);
+        $costing = $this->costings->requireCosting($projectId, $costingId);
+
+        try {
+            $compositionId = (new MaterialCatalogService($this->context->db))->saveComposition($projectId, [
+                'composition_id' => $input['composition_id'] ?? null,
+                'parent_material_id' => (int) $costing['parent_material_id'],
+                'child_material_id' => $input['child_material_id'] ?? null,
+                'quantity' => $input['quantity'] ?? null,
+            ]);
+        } catch (HttpException $exception) {
+            if ($exception->statusCode >= 500) {
+                throw $exception;
+            }
+            Support::flash($exception->getMessage(), 'error');
+            return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+        }
+
+        Support::audit(
+            $this->context->db,
+            'bom.composition.save',
+            'Costing ' . $costingId . ' composition ' . $compositionId . ' saved on parent material.'
+        );
+        Support::flash('子材料已保存，组成已同步回材料管理，本组价按新组成重算。');
+        $this->recalcAfterStructureChange($projectId, $costingId);
+
+        return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+    }
+
+    /** 从本组价的父材料里移除一条子材料（同样是材料管理那份组成）。 */
+    private function deleteComposition(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_costings');
+        Support::requirePermission($this->context->db, 'edit_costings');
+        $projectId = $this->currentProjectId();
+        $costingId = $this->requiredId($input['costing_id'] ?? null);
+        $costing = $this->costings->requireCosting($projectId, $costingId);
+        $compositionId = $this->requiredId($input['composition_id'] ?? null);
+
+        // 只允许删除挂在本组价父材料下的组成，避免越权改动其他材料的组成。
+        $stmt = $this->context->db->prepare(
+            'SELECT parent_material_id FROM Material_Compositions
+             WHERE project_id = :project_id AND composition_id = :composition_id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'composition_id' => $compositionId]);
+        $parentId = $stmt->fetchColumn();
+        if ($parentId === false || (int) $parentId !== (int) $costing['parent_material_id']) {
+            Support::flash('该子材料不属于当前组价的父材料。', 'error');
+            return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+        }
+
+        try {
+            (new MaterialCatalogService($this->context->db))->deleteComposition($projectId, $compositionId);
+        } catch (HttpException $exception) {
+            if ($exception->statusCode >= 500) {
+                throw $exception;
+            }
+            Support::flash($exception->getMessage(), 'error');
+            return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+        }
+
+        Support::audit(
+            $this->context->db,
+            'bom.composition.delete',
+            'Costing ' . $costingId . ' composition ' . $compositionId . ' removed from parent material.'
+        );
+        Support::flash('子材料已移除，本组价已按剩余组成重算。');
+        $this->recalcAfterStructureChange($projectId, $costingId);
+
+        return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+    }
+
+    /** 结构变化后补算一次；锁冲突等不阻断保存，页面显示当前态即可。 */
+    private function recalcAfterStructureChange(int $projectId, int $costingId): void
+    {
+        try {
+            $this->recalc->recalc($projectId, $costingId, $this->userId(), Support::nowLocal('Y-m-d'));
+        } catch (HttpException $exception) {
+            error_log('BOM composition recalc skipped: ' . $exception->getMessage());
+        }
+    }
+
+    /**
+     * 一键保存：把左栏两表里改过的数量一次写库（组成用量系数 + 资源行数量）。
+     *
+     * 与逐行保存的差别只在“次数”：一个事务、一次 version+1、一次重算，避免多行修改点多次、
+     * 版本号跳好几格。校验失败整批不写，回到页面只给提示条。
+     */
+    private function saveQuantities(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_costings');
+        Support::requirePermission($this->context->db, 'edit_costings');
+        $projectId = $this->currentProjectId();
+        $costingId = $this->requiredId($input['costing_id'] ?? null);
+        $compositionQuantities = is_array($input['comp_qty'] ?? null) ? $input['comp_qty'] : [];
+        $resourceQuantities = is_array($input['res_qty'] ?? null) ? $input['res_qty'] : [];
+
+        try {
+            $changed = $this->costings->saveQuantities($projectId, $costingId, $compositionQuantities, $resourceQuantities);
+        } catch (HttpException $exception) {
+            if ($exception->statusCode >= 500) {
+                throw $exception;
+            }
+            Support::flash($exception->getMessage(), 'error');
+            return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+        }
+
+        if ($changed['compositions'] === 0 && $changed['resources'] === 0) {
+            Support::flash('没有数量改动，未写库。');
+            return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+        }
+
+        $parts = [];
+        if ($changed['compositions'] > 0) {
+            $parts[] = '子材料 ' . $changed['compositions'] . ' 行';
+        }
+        if ($changed['resources'] > 0) {
+            $parts[] = '资源 ' . $changed['resources'] . ' 行';
+        }
+        $total = $changed['compositions'] + $changed['resources'];
+        Support::audit(
+            $this->context->db,
+            'bom.costing.quantities.save',
+            'Costing ' . $costingId . ' quantities saved: compositions=' . $changed['compositions']
+                . ' resources=' . $changed['resources'] . '.'
+        );
+        Support::flash('已保存 ' . $total . ' 处数量改动（' . implode('、', $parts) . '），本组价已重算。');
+        $this->recalcAfterStructureChange($projectId, $costingId);
 
         return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
     }

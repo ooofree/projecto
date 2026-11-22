@@ -1201,7 +1201,8 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .cost-detail-title { margin: 0 0 8px; font-size: .95rem; }
 .cost-detail-table { font-size: .78rem; }
 .cost-detail-table .cost-detail-kind { white-space: nowrap; }
-.cost-preview .cost-detail-table th, .cost-preview .cost-detail-table td { padding: 6px 6px; }
+.cost-preview .cost-detail-table th, .cost-preview .cost-detail-table td { padding: 5px 5px; }
+.cost-preview .cost-detail-table { width: 100%; }
 .cost-detail-table .cost-detail-name { display: block; white-space: normal; overflow-wrap: anywhere; }
 .cost-detail-table .cost-unit { margin-left: 3px; font-size: .66rem; }
 .cost-badge-missing { color: var(--status-danger-text); background: var(--status-danger-bg); }
@@ -1229,7 +1230,7 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 /* 组价详情＝编辑台：左“编辑”（材料组成 ＋ 资源行 ＋ 添加行），右“成本预览”
    （合价 ＋ 环形占比图 ＋ 成本汇总 ＋ 成本明细），沿用旧系统 bom_editor 的 3fr/2fr。 */
 .cost-editor-workspace { display: grid; grid-template-columns: minmax(0, 3fr) minmax(380px, 2.4fr); gap: var(--space-4); align-items: start; margin: var(--space-4) 0; }
-.cost-editor-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; }
+.cost-editor-main { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
 .cost-editor-main > .panel, .cost-editor-preview { margin: 0; min-width: 0; }
 .cost-editor-main .data-table { min-width: 0; }
 /* .panel 给直系子元素加了左右 17px 外边距，而 .table-wrap 自带 width:100%：
@@ -1237,16 +1238,53 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .cost-editor-main .table-wrap, .cost-list-panel > .table-wrap { width: auto; }
 .cost-editor-table { font-size: .82rem; table-layout: fixed; width: 100%; }
 /* fixed 布局下按列给固定比例，长名称与缺价原因在格内折行，表格永远不会顶出面板。 */
-.cost-comp-table th:nth-child(1) { width: 40%; }
-.cost-comp-table th:nth-child(2) { width: 12%; }
-.cost-comp-table th:nth-child(3) { width: 15%; }
+.cost-comp-table th:nth-child(1) { width: 29%; }
+.cost-comp-table th:nth-child(2) { width: 10%; }
+.cost-comp-table th:nth-child(3) { width: 14%; }
 .cost-comp-table th:nth-child(4) { width: 33%; }
-.cost-res-table th:nth-child(1) { width: 15%; }
-.cost-res-table th:nth-child(2) { width: 29%; }
-.cost-res-table th:nth-child(3) { width: 15%; }
-.cost-res-table th:nth-child(4) { width: 29%; }
+.cost-comp-table th:nth-child(5) { width: 14%; }
+/* 这 5 列更挤，横向内边距压到 9px，并把“单位”锁成一行——否则 m² 会断成 m/² 三行。 */
+.cost-comp-table th, .cost-comp-table td { padding: 8px 9px; }
+.cost-comp-table th:nth-child(2), .cost-comp-table td:nth-child(2) { white-space: nowrap; }
+.cost-res-table th:nth-child(1) { width: 14%; }
+.cost-res-table th:nth-child(2) { width: 26%; }
+.cost-res-table th:nth-child(3) { width: 14%; }
+.cost-res-table th:nth-child(4) { width: 26%; }
+.cost-res-table th:nth-child(5) { width: 20%; }
 .cost-editor-table .cost-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cost-editor-table .cost-actions { width: 1%; text-align: right; white-space: nowrap; }
+/* 组成／资源表里的行内操作（编辑 · 移除）按钮组，竖排会顶掉行高，这里统一横排、贴右。 */
+.cost-row-actions { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.cost-row-actions .inline-form { margin: 0; }
+.cost-row-actions .button { white-space: nowrap; }
+/* 面板标题右侧的行数 + “添加子材料”按钮，窄屏允许换行但不挤压标题。 */
+.cost-editor-head-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+/* data-target 的字段按资源类型显隐：hidden 必须真的不占格子，否则空标签会撑乱 form-grid。 */
+.cost-editor-add > [hidden], .cost-editor-add label[hidden] { display: none; }
+.cost-editor-hint { margin: 0; font-size: .76rem; line-height: 1.55; }
+/* 行内改数量：输入框单独占一格；改动统一由底部“保存全部改动”一次写库，行内不再挂按钮。 */
+.cost-qty-cell { padding: 6px 9px; }
+.cost-qty-input { display: block; width: 66px; min-height: 28px; margin: 0 0 0 auto; padding: 3px 6px; color: var(--text); background: var(--surface-1); border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: .8rem; font-variant-numeric: tabular-nums; text-align: right; }
+.cost-qty-input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent-soft); outline-offset: 0; }
+/* 改动过的格子用强调色边框，扫一眼就知道哪几行还没存。 */
+.cost-qty-input[data-dirty="1"] { border-color: var(--accent); background: var(--accent-soft); }
+.cost-qty-input[data-dirty="1"]:focus-visible { background: var(--surface-1); }
+/* 一键保存条：贴住左栏底部，只有存在未保存改动才出现。 */
+.cost-bulk-bar { position: sticky; bottom: var(--space-3); z-index: 30; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 0; padding: 9px 12px; background: var(--surface-0); border: 1px solid var(--accent-soft); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
+.cost-bulk-bar[hidden] { display: none; }
+.cost-bulk-text { margin: 0; font-size: .8rem; line-height: 1.5; }
+.cost-bulk-text strong { color: var(--accent-text); font-variant-numeric: tabular-nums; }
+.cost-bulk-text .muted { display: block; font-size: .72rem; }
+.cost-bulk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+/* 右栏实时试算的状态行：只有“试算中/未保存”才需要显眼一点。 */
+.cost-preview-status { margin: 0 0 8px; padding: 5px 9px; color: var(--text-tertiary); background: var(--surface-1); border: 1px solid var(--border-subtle); border-radius: 8px; font-size: .74rem; line-height: 1.5; }
+.cost-preview-status[data-state="draft"] { color: var(--accent-text); border-color: var(--accent-soft); background: var(--accent-soft); }
+.cost-preview-status[data-state="pending"] { color: var(--text-secondary); }
+.cost-preview-status[data-state="error"] { color: var(--status-danger-text); background: var(--status-danger-bg); border-color: transparent; }
+.cost-preview-live[data-loading="1"] { opacity: .55; transition: opacity .15s ease-out; }
+.cost-preview-live > .cost-preview { min-width: 0; }
+/* 编辑对话框底部的删除操作：和保存按钮分开成独立表单，用虚线上边框表明是破坏性动作。 */
+.cost-dialog-danger { margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed var(--border-subtle); }
 .cost-editor-table .cost-detail-kind { color: var(--text-secondary); white-space: nowrap; }
 .cost-editor-table td { white-space: normal; overflow-wrap: anywhere; }
 /* 单价与取价合成一列：金额在上，状态徽标与来源/缺价原因在下，和旧系统“名称下挂单价”一致。 */

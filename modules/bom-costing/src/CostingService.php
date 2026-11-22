@@ -251,6 +251,130 @@ final class CostingService
         }
     }
 
+    /**
+     * 一键保存左栏所有未保存的数量改动：材料组成用量系数与资源行数量，一个事务、一次 version+1。
+     *
+     * 只改数量，不增删行（增删仍走各自的接口）；未变化的行直接跳过，全都没变时不写库也不动版本号。
+     *
+     * @param array<array-key, mixed> $compositionQuantities composition_id => 用量系数
+     * @param array<array-key, mixed> $resourceQuantities    resource_line_id => 数量
+     * @return array{compositions: int, resources: int} 实际写库的行数
+     */
+    public function saveQuantities(int $projectId, int $costingId, array $compositionQuantities, array $resourceQuantities): array
+    {
+        $costing = $this->requireCostingRow($projectId, $costingId);
+        $parentId = (int) $costing['parent_material_id'];
+
+        // 先取现状：既用来校验“这一行确实属于本组价”，也用来跳过值没变的行。
+        $currentCompositions = [];
+        $stmt = $this->db->prepare(
+            'SELECT composition_id, quantity FROM Material_Compositions
+             WHERE project_id = :project_id AND parent_material_id = :parent_material_id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'parent_material_id' => $parentId]);
+        foreach ($stmt->fetchAll() as $row) {
+            $currentCompositions[(int) $row['composition_id']] = (string) $row['quantity'];
+        }
+
+        $currentResources = [];
+        $stmt = $this->db->prepare(
+            'SELECT resource_line_id, quantity FROM bom_costing_resources
+             WHERE project_id = :project_id AND costing_id = :costing_id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'costing_id' => $costingId]);
+        foreach ($stmt->fetchAll() as $row) {
+            $currentResources[(int) $row['resource_line_id']] = (string) $row['quantity'];
+        }
+
+        $compositionChanges = [];
+        foreach ($compositionQuantities as $id => $value) {
+            $id = (int) $id;
+            if ($id <= 0 || !array_key_exists($id, $currentCompositions)) {
+                throw new HttpException('有子材料不属于当前组价的父材料，请刷新页面后再试。', 422);
+            }
+            if (!is_string($value) && !is_int($value) && !is_float($value)) {
+                throw new HttpException('用量系数格式无效。', 422);
+            }
+            $raw = trim((string) $value);
+            if ($raw === '') {
+                throw new HttpException('有用量系数还空着，先填上再保存。', 422);
+            }
+            // 组成表的数量列是 decimal(10,2)：超过两位小数会被数据库静默四舍五入，宁可直接拦下。
+            if (!preg_match('/^(?:0|[1-9]\d{0,7})(?:\.\d{1,2})?$/', $raw)) {
+                throw new HttpException('用量系数只能是数字，最多两位小数。', 422);
+            }
+            if ((float) $raw <= 0.0) {
+                throw new HttpException('用量系数必须大于零。', 422);
+            }
+            if (abs((float) $raw - (float) $currentCompositions[$id]) > 0.000001) {
+                $compositionChanges[$id] = $raw;
+            }
+        }
+
+        $resourceChanges = [];
+        foreach ($resourceQuantities as $id => $value) {
+            $id = (int) $id;
+            if ($id <= 0 || !array_key_exists($id, $currentResources)) {
+                throw new HttpException('有资源行不属于当前组价，请刷新页面后再试。', 422);
+            }
+            $raw = $this->positiveDecimal($value, '资源行数量');
+            if (abs((float) $raw - (float) $currentResources[$id]) > 0.000001) {
+                $resourceChanges[$id] = $raw;
+            }
+        }
+
+        if ($compositionChanges === [] && $resourceChanges === []) {
+            return ['compositions' => 0, 'resources' => 0];
+        }
+
+        $this->db->beginTransaction();
+        try {
+            foreach ($compositionChanges as $compositionId => $raw) {
+                $update = $this->db->prepare(
+                    'UPDATE Material_Compositions SET quantity = :quantity
+                     WHERE project_id = :project_id AND parent_material_id = :parent_material_id
+                       AND composition_id = :composition_id'
+                );
+                $update->execute([
+                    'quantity' => $raw,
+                    'project_id' => $projectId,
+                    'parent_material_id' => $parentId,
+                    'composition_id' => $compositionId,
+                ]);
+                if ($update->rowCount() !== 1) {
+                    throw new HttpException('子材料组成在保存时已被改动，请刷新后重试。', 409);
+                }
+            }
+
+            foreach ($resourceChanges as $lineId => $raw) {
+                $update = $this->db->prepare(
+                    'UPDATE bom_costing_resources SET quantity = :quantity
+                     WHERE project_id = :project_id AND costing_id = :costing_id
+                       AND resource_line_id = :line_id'
+                );
+                $update->execute([
+                    'quantity' => $raw,
+                    'project_id' => $projectId,
+                    'costing_id' => $costingId,
+                    'line_id' => $lineId,
+                ]);
+                if ($update->rowCount() !== 1) {
+                    throw new HttpException('资源行在保存时已被改动，请刷新后重试。', 409);
+                }
+            }
+
+            $this->bumpVersion($projectId, $costingId);
+            $this->db->commit();
+        } catch (\Throwable $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $exception;
+        }
+
+        return ['compositions' => count($compositionChanges), 'resources' => count($resourceChanges)];
+    }
+
     /** 确认组价（业务确认）。calc_status 不随确认改变；confirmed＋incomplete 禁入完整分析由展示层控制。 */
     public function confirm(int $projectId, int $costingId, int $userId): void
     {

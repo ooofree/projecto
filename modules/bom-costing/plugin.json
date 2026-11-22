@@ -16,8 +16,12 @@
         "GET cost-prices": "prices.index",
         "GET actual-costs": "actual.index",
         "POST costing.create": "costing.create",
+        "POST costing.preview": "costing.preview",
         "POST costing.resource.save": "resource.save",
         "POST costing.resource.delete": "resource.delete",
+        "POST costing.composition.save": "composition.save",
+        "POST costing.composition.delete": "composition.delete",
+        "POST costing.quantities.save": "quantities.save",
         "POST costing.confirm": "costing.confirm",
         "POST costing.recalc": "costing.recalc",
         "POST cost.catalog.save": "catalog.save",
@@ -29,6 +33,9 @@
         "POST actual.adjustment.save": "actual.adjustment.save",
         "POST actual.allocation.save": "actual.allocation.save"
     },
+    "assets": [
+        "costing-preview.js"
+    ],
     "migrations": [
         "database/migrations"
     ],

@@ -507,6 +507,47 @@ document.addEventListener('click', event => {
     }
 });
 
+// 组价详情的“添加资源行”：类型决定能填哪个目标字段（加工/机械/人工走资源目录，
+// 辅材走辅材目录）。没选类型时两个都藏起来，切换类型会清空已选值，并且只保留
+// 同类型的目录项——否则一个目录项选错类型就是 422，整页变成错误页。
+function initResourceForms() {
+    const forms = document.querySelectorAll('form[data-resource-form]');
+    if (!forms.length) return;
+
+    const sync = form => {
+        const typeField = form.querySelector('[data-resource-type]');
+        if (!typeField) return;
+        const type = typeField.value;
+
+        form.querySelectorAll('[data-target]').forEach(box => {
+            const isAuxBox = box.dataset.target === 'aux';
+            const active = type !== '' && (type === 'auxiliary' ? isAuxBox : !isAuxBox);
+            box.hidden = !active;
+            box.querySelectorAll('select, input').forEach(field => {
+                field.disabled = !active;
+                if (!active) field.value = '';
+            });
+        });
+
+        const catalog = form.querySelector('select[name="catalog_id"]');
+        if (!catalog) return;
+        const isCatalogType = type !== '' && type !== 'auxiliary';
+        catalog.querySelectorAll('option[data-catalog-type]').forEach(option => {
+            const match = isCatalogType && option.dataset.catalogType === type;
+            option.hidden = !match;
+            option.disabled = !match;
+        });
+        if (!isCatalogType) catalog.value = '';
+    };
+
+    forms.forEach(form => {
+        form.querySelector('[data-resource-type]')?.addEventListener('change', () => sync(form));
+        sync(form);
+    });
+}
+
+initResourceForms();
+
 // Copy the share link as plain text: exactly the URL, nothing else, so it
 // pastes into WeChat (or anywhere) as a clickable link. WeChat's built-in
 // browser and plain-http LAN pages often lack navigator.clipboard, so try the
