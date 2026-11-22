@@ -62,7 +62,7 @@ $previewHtml = (string) ob_get_clean();
             <div class="panel-heading">
                 <div>
                     <h2>材料组成</h2>
-                    <span class="muted">用量系数＝每 1 <?= $escape((string) $costing['unit']) ?> 父项直接消耗的子材料量；这里的增删改会写回材料管理里该父材料的组成，保存后本组价自动重算</span>
+                    <span class="muted">用量系数＝每 1 <?= $escape((string) $costing['unit']) ?> 父项直接消耗的子材料量；改数量右栏立刻试算，点底部“保存全部改动”一次写库并重算（增删仍写回材料管理的组成）</span>
                 </div>
                 <div class="cost-editor-head-actions">
                     <span class="muted"><?= count($compositionRows) ?> 行</span>
@@ -151,7 +151,7 @@ $previewHtml = (string) ob_get_clean();
             <div class="panel-heading">
                 <div>
                     <h2>资源行</h2>
-                    <span class="muted">加工／机械／人工／辅材，按每 1 <?= $escape((string) $costing['unit']) ?> 父项计；保存后自动重算</span>
+                    <span class="muted">加工／机械／人工／辅材，按每 1 <?= $escape((string) $costing['unit']) ?> 父项计；改数量同样走底部“保存全部改动”</span>
                 </div>
                 <span class="muted"><?= count($resourceRows) ?> 行</span>
             </div>
@@ -300,7 +300,10 @@ $previewHtml = (string) ob_get_clean();
                 </div>
                 <div class="cost-bulk-actions">
                     <button class="button button-quiet button-small" type="button" data-cost-bulk-reset>撤销改动</button>
-                    <button class="button button-primary" type="submit" data-cost-bulk-submit>保存全部改动</button>
+                    <?php if ((string) ($costing['status'] ?? '') === 'draft'): ?>
+                        <button class="button button-secondary" type="submit" name="next" value="confirm">保存并确认</button>
+                    <?php endif; ?>
+                    <button class="button button-primary" type="submit">保存全部改动</button>
                 </div>
             </form>
         <?php endif; ?>

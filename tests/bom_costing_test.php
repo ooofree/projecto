@@ -457,5 +457,62 @@ bomCheck(in_array(102, $availableIds, true), '未建组价的材料应可被选�
 
 echo "Missing-count / available-material tests passed.\n";
 
+// ============================================================================
+// 一键保存：左栏两表的数量改动一个事务写库、version 只 +1；没改动不写库；越界值整批拒绝。
+// ============================================================================
+$bulkLine = $costings->saveResource(1, $costingId, [
+    'resource_type' => 'labor',
+    'catalog_id' => '301',
+    'quantity' => '1',
+], 1);
+$versionBeforeBulk = (int) $costings->requireCosting(1, $costingId)['version'];
+
+$bulkChanged = $costings->saveQuantities(
+    1,
+    $costingId,
+    ['52' => '2.5'],
+    [(string) $bulkLine => '3']
+);
+bomCheck(
+    $bulkChanged['compositions'] === 1 && $bulkChanged['resources'] === 1,
+    '一键保存应同时写组成与资源两类数量'
+);
+$compositionsAfterBulk = $costings->compositionsForParent(1, 101);
+bomCheck((float) $compositionsAfterBulk[0]['quantity'] === 2.5, '组成用量系数应写库');
+$resourcesAfterBulk = $costings->listResources(1, $costingId);
+$bulkRow = array_values(array_filter($resourcesAfterBulk, static fn (array $r): bool => (int) $r['resource_line_id'] === $bulkLine))[0];
+bomCheck((float) $bulkRow['quantity'] === 3.0, '资源行数量应写库');
+bomCheck(
+    (int) $costings->requireCosting(1, $costingId)['version'] === $versionBeforeBulk + 1,
+    '两处改动只能让 version 递增一次'
+);
+
+// 原样回传当前值：判定没有改动，既不写库也不动版本号。
+$unchanged = $costings->saveQuantities(1, $costingId, ['52' => '2.50'], [(string) $bulkLine => '3.000000']);
+bomCheck($unchanged['compositions'] === 0 && $unchanged['resources'] === 0, '没有改动不应产生写入');
+bomCheck(
+    (int) $costings->requireCosting(1, $costingId)['version'] === $versionBeforeBulk + 1,
+    '没有改动不应递增 version'
+);
+
+// 组成数量列是 decimal(10,2)：三位小数会被数据库静默四舍五入，必须提前拦下。
+bomExpectStatus(
+    fn () => $costings->saveQuantities(1, $costingId, ['52' => '2.505'], []),
+    422,
+    '用量系数三位小数必须拒绝'
+);
+// 不属于本组价父材料的组成不许被顺手改。
+bomExpectStatus(
+    fn () => $costings->saveQuantities(1, $costingId, ['999' => '1'], []),
+    422,
+    '不属于当前父材料的组成必须拒绝'
+);
+bomCheck(
+    (float) $costings->compositionsForParent(1, 101)[0]['quantity'] === 2.5,
+    '被拒的整批请求不得写库'
+);
+
+echo "Bulk quantity save tests passed.\n";
+
 echo "Project isolation tests passed.\n";
 echo "BOM costing all tests passed.\n";

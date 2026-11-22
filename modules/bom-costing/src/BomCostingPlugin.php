@@ -632,12 +632,14 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
         }
 
-        if ($changed['compositions'] === 0 && $changed['resources'] === 0) {
+        $next = (string) ($input['next'] ?? '');
+        $parts = [];
+        $total = 0;
+        if ($changed['compositions'] === 0 && $changed['resources'] === 0 && $next !== 'confirm') {
             Support::flash('没有数量改动，未写库。');
             return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
         }
 
-        $parts = [];
         if ($changed['compositions'] > 0) {
             $parts[] = '子材料 ' . $changed['compositions'] . ' 行';
         }
@@ -645,14 +647,37 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
             $parts[] = '资源 ' . $changed['resources'] . ' 行';
         }
         $total = $changed['compositions'] + $changed['resources'];
-        Support::audit(
-            $this->context->db,
-            'bom.costing.quantities.save',
-            'Costing ' . $costingId . ' quantities saved: compositions=' . $changed['compositions']
-                . ' resources=' . $changed['resources'] . '.'
-        );
+        if ($total > 0) {
+            Support::audit(
+                $this->context->db,
+                'bom.costing.quantities.save',
+                'Costing ' . $costingId . ' quantities saved: compositions=' . $changed['compositions']
+                    . ' resources=' . $changed['resources'] . '.'
+            );
+            $this->recalcAfterStructureChange($projectId, $costingId);
+        }
+
+        // “保存并确认”：改完数量直接提交组价，省得再点一次确认。确认失败不回滚已保存的数量，
+        // 只把失败原因说清楚，用户补完缺项再确认即可。
+        if ($next === 'confirm') {
+            try {
+                $this->costings->confirm($projectId, $costingId, $this->userId());
+                Support::audit($this->context->db, 'bom.costing.confirm', 'Costing ' . $costingId . ' confirmed (save+confirm).');
+                $headline = $total > 0
+                    ? '已保存 ' . $total . ' 处数量改动（' . implode('、', $parts) . '）'
+                    : '没有数量改动';
+                Support::flash($headline . '，组价已确认。');
+            } catch (HttpException $exception) {
+                if ($exception->statusCode >= 500) {
+                    throw $exception;
+                }
+                Support::flash(($total > 0 ? '数量已保存，' : '') . '但确认失败：' . $exception->getMessage(), 'error');
+            }
+
+            return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
+        }
+
         Support::flash('已保存 ' . $total . ' 处数量改动（' . implode('、', $parts) . '），本组价已重算。');
-        $this->recalcAfterStructureChange($projectId, $costingId);
 
         return PluginResponse::redirect('?page=costing-detail&costing_id=' . $costingId);
     }

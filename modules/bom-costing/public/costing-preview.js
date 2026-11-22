@@ -17,7 +17,6 @@
 
     const bulkForm = document.getElementById('cost-qty-bulk');
     const bulkCount = bulkForm ? bulkForm.querySelector('[data-cost-bulk-count]') : null;
-    const bulkSubmit = bulkForm ? bulkForm.querySelector('[data-cost-bulk-submit]') : null;
     const bulkReset = bulkForm ? bulkForm.querySelector('[data-cost-bulk-reset]') : null;
 
     const endpoint = live.dataset.endpoint || window.location.pathname + window.location.search;
@@ -130,19 +129,16 @@
         });
     }
 
-    // 互接连点：连按回车不算重复提交；提交后不再弹“有未保存改动”提醒。
+    // 连点提交只算一次；提交后不再弹“有未保存改动”提醒。
+    // 注意不要在提交事件里 disable 按钮：那会把点击的那个 submit 按钮的名字/值从表单数据里剔掉，
+    // “保存并确认”的 next=confirm 就丢了。
     if (bulkForm) {
         bulkForm.addEventListener('submit', event => {
-            const dirty = refreshDirtyUi();
-            if (dirty === 0) {
+            if (refreshDirtyUi() === 0 || submitting) {
                 event.preventDefault();
                 return;
             }
             submitting = true;
-            if (bulkSubmit) {
-                bulkSubmit.disabled = true;
-                bulkSubmit.textContent = '保存中…';
-            }
         });
     }
 
