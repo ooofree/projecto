@@ -191,4 +191,17 @@ if (str_contains($html, '已隐藏')) {
 }
 echo "PASS  GET closeout-select 渲染正常（无父材料项目回退顶层材料）\n";
 
+// 侧栏详情必须跟随 item_id，而不是列表循环结束后残留的最后一行。
+$db->exec("INSERT INTO project_closeout_items (item_id, project_id, plan_id, item_no, material_id, title, status, risk_level, planned_end_date, created_by, created_at, updated_at)
+    VALUES (2, 1, 1, 'P1-CLO-002', 101, '门锁调试', 'ongoing', 'medium', '2026-11-26', 1, '2026-11-22 09:10:00', '2026-11-22 09:10:00')");
+$_SESSION['active_project_id'] = 1;
+$html = renderCloseoutPage($db, 'closeouts', ['plan_id' => 1, 'item_id' => 1]);
+if (!str_contains($html, '<p class="eyebrow">事项 P1-CLO-001</p>')) {
+    throw new RuntimeException('工作台侧栏没有渲染选中的 P1-CLO-001 详情。');
+}
+if (str_contains($html, '<p class="eyebrow">事项 P1-CLO-002</p>')) {
+    throw new RuntimeException('工作台侧栏错误地渲染了列表最后一行 P1-CLO-002。');
+}
+echo "PASS  侧栏详情跟随 item_id，不受列表循环残留影响\n";
+
 echo "Closeout web smoke passed.\n";

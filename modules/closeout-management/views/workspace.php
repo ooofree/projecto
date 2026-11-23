@@ -156,10 +156,13 @@ if (!function_exists('closeout_due_label')) {
     /**
      * @return array{label: string, tone: string}
      */
-    function closeout_due_label(?string $date, string $today): array
+    function closeout_due_label(?string $date, string $today, ?string $status = null): array
     {
         if ($date === null || $date === '') {
             return ['label' => '未排期', 'tone' => ''];
+        }
+        if ($status !== null && !in_array($status, CloseoutLabels::OPEN_STATUSES, true)) {
+            return ['label' => '', 'tone' => ''];
         }
         $days = (int) (new DateTimeImmutable($today))->diff(new DateTimeImmutable($date))->format('%r%a');
         if ($days < 0) {
@@ -182,11 +185,10 @@ $openItems = array_values(array_filter(
 ));
 $queueItems = array_slice($openItems, 0, 6);
 ob_start();
-require __DIR__ . '/_nav.php';
 ?>
 <section class="page-heading closeout-heading">
     <div>
-        <p class="eyebrow">施工管理 · 工程消项<?= $mode === 'items' ? ' · 消项清单' : ' · 消项总览' ?></p>
+        <p class="eyebrow">施工管理 · <?= $mode === 'items' ? '工程消项 · 消项清单' : '工程消项总览' ?></p>
         <h1>工程消项工作台</h1>
         <p class="muted">
             项目：<?= $escape($project['project_name']) ?>。选计划、看图表、勾事项、改状态都在这一页完成；消项只记录收口与验收证据，不核销 BOM 数量。
@@ -367,7 +369,8 @@ require __DIR__ . '/_nav.php';
         </div>
 
         <div class="closeout-filterbar" role="group" aria-label="按状态筛选">
-            <a class="closeout-chip<?= $status === '' && $overdue !== 1 ? ' is-active' : '' ?>" href="<?= $escape($buildUrl(['status' => null, 'overdue' => null, 'item_id' => null])) ?>">全部<span class="closeout-chip-count"><?= $total ?></span></a>
+            <?php $allFiltersClear = $status === '' && $overdue !== 1 && $risk === '' && $responsible === 0; ?>
+            <a class="closeout-chip<?= $allFiltersClear ? ' is-active' : '' ?>" href="<?= $escape($buildUrl(['status' => null, 'overdue' => null, 'risk_level' => null, 'responsible_user_id' => null, 'item_id' => null])) ?>">全部<span class="closeout-chip-count"><?= $total ?></span></a>
             <?php foreach ($statusKeys as $key): ?>
                 <?php if ($key === 'cancelled' && (int) $statusCounts['cancelled'] === 0) { continue; } ?>
                 <a class="closeout-chip<?= $status === $key ? ' is-active' : '' ?>" href="<?= $escape($buildUrl(['status' => $key, 'overdue' => null, 'item_id' => null])) ?>">
@@ -376,11 +379,12 @@ require __DIR__ . '/_nav.php';
             <?php endforeach; ?>
             <a class="closeout-chip closeout-chip-danger<?= $overdue === 1 ? ' is-active' : '' ?>" href="<?= $escape($buildUrl(['status' => null, 'overdue' => $overdue === 1 ? null : 1, 'item_id' => null])) ?>">逾期<span class="closeout-chip-count"><?= (int) $stats['overdue'] ?></span></a>
             <details class="closeout-more-filters">
-                <summary>更多筛选</summary>
+                <summary>更多筛选<?php if ($risk !== '' || $responsible > 0): ?> · 已筛选<?php endif; ?></summary>
                 <form method="get" class="closeout-filter-form">
                     <input type="hidden" name="page" value="closeouts">
                     <input type="hidden" name="plan_id" value="<?= $planId ?>">
                     <input type="hidden" name="status" value="<?= $escape($status) ?>">
+                    <?php if ($overdue === 1): ?><input type="hidden" name="overdue" value="1"><?php endif; ?>
                     <label>风险
                         <select name="risk_level">
                             <option value="">全部风险</option>
@@ -405,7 +409,7 @@ require __DIR__ . '/_nav.php';
             </details>
         </div>
 
-        <?php if ($canEdit): ?>
+        <?php if ($canEdit && $items !== []): ?>
         <form id="closeout-batch-form" class="closeout-batchbar" method="post" data-closeout-batch>
             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
             <input type="hidden" name="action" value="closeout.batch.update">
@@ -466,7 +470,7 @@ require __DIR__ . '/_nav.php';
                     <?php
                     $isSelected = (int) $item['item_id'] === $selectedItemId;
                     $itemStatus = (string) $item['status'];
-                    $due = closeout_due_label($item['planned_end_date'] ?? null, (string) $today);
+                    $due = closeout_due_label($item['planned_end_date'] ?? null, (string) $today, $itemStatus);
                     $searchText = mb_strtolower(implode(' ', [
                         (string) $item['item_no'],
                         (string) ($item['display_name'] ?? ''),
@@ -573,7 +577,7 @@ require __DIR__ . '/_nav.php';
                 <?php else: ?>
                     <ul class="closeout-queue">
                         <?php foreach ($queueItems as $queue): ?>
-                            <?php $queueDue = closeout_due_label($queue['planned_end_date'] ?? null, (string) $today); ?>
+                            <?php $queueDue = closeout_due_label($queue['planned_end_date'] ?? null, (string) $today, (string) $queue['status']); ?>
                             <li>
                                 <a href="<?= $escape($buildUrl(['item_id' => (int) $queue['item_id']])) ?>">
                                     <span class="closeout-queue-no"><?= $escape($queue['item_no']) ?></span>
@@ -591,7 +595,7 @@ require __DIR__ . '/_nav.php';
             <div class="closeout-detail-section">
                 <h3 class="closeout-section-title">当前范围</h3>
                 <dl class="closeout-facts">
-                    <div><dt>计划</dt><dd><?= $selectedPlan !== null ? $escape($selectedPlan['plan_no'] . ' · ' . $selectedPlan['plan_name']) : '全部计划' ?></dd></div>
+                    <div class="closeout-fact-wide"><dt>计划</dt><dd><?= $selectedPlan !== null ? $escape($selectedPlan['plan_no'] . ' · ' . $selectedPlan['plan_name']) : '全部计划' ?></dd></div>
                     <div><dt>事项</dt><dd><?= $total ?> 项 · 未完成 <?= (int) $stats['open'] ?></dd></div>
                     <div><dt>完成率</dt><dd><?= $escape($rateText) ?></dd></div>
                     <div><dt>逾期</dt><dd><?= (int) $stats['overdue'] ?> 项</dd></div>
@@ -601,7 +605,12 @@ require __DIR__ . '/_nav.php';
                 <p class="muted">提示：状态标签单击即可筛选；勾选行后可在清单上方批量改完成日期与责任人。</p>
             </div>
         <?php else: ?>
-            <?php require __DIR__ . '/_detail.php'; ?>
+            <?php
+            // The list loop leaves $item pointing at the last row; the detail
+            // partial must render the selected item, not that leftover value.
+            $item = $selectedItem;
+            require __DIR__ . '/_detail.php';
+            ?>
         <?php endif; ?>
     </aside>
 </div>

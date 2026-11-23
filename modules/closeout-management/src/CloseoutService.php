@@ -276,9 +276,22 @@ SQL;
             $params['keyword'] = '%' . $keyword . '%';
         }
 
+        $params['today_order'] = $this->today();
         $sql = self::ITEM_SELECT
             . ' WHERE ' . implode(' AND ', $where)
-            . ' ORDER BY (i.planned_end_date IS NULL), i.planned_end_date, i.item_id DESC';
+            // Work queue order: open items first (overdue before future), then
+            // closed, then cancelled. Within a group the earliest planned end
+            // date wins. The flat list must not open with already-closed rows
+            // just because their dates are older.
+            . " ORDER BY
+                CASE WHEN i.status IN ('pending', 'ongoing', 'pending_accept') THEN 0
+                     WHEN i.status = 'closed' THEN 1
+                     ELSE 2 END,
+                CASE WHEN i.status IN ('pending', 'ongoing', 'pending_accept')
+                          AND i.planned_end_date IS NOT NULL
+                          AND i.planned_end_date < :today_order THEN 0 ELSE 1 END,
+                COALESCE(i.planned_end_date, '9999-12-31'),
+                i.item_id DESC";
         if ($limit !== null && $limit > 0) {
             $sql .= ' LIMIT ' . $limit;
         }
@@ -854,10 +867,10 @@ SQL;
 
     /**
      * Chart-board aggregates for one plan (or every plan when $planId is null
-     * or 0): status counts from statistics(), risk mix, near-term due load and
-     * open items without an owner. Cancelled items stay in the status counts
-     * for transparency but are excluded from risk / due figures because they no
-     * longer carry work.
+     * or 0): status counts from statistics(), risk mix of still-open work,
+     * near-term due load and open items without an owner. Closed / cancelled
+     * items stay in the status counts for transparency but are excluded from
+     * risk / due figures because they no longer carry work.
      *
      * @return array<string, mixed>
      */
@@ -874,7 +887,7 @@ SQL;
         $riskCounts = array_fill_keys(array_keys(CloseoutLabels::RISK_LEVEL), 0);
         $riskStatement = $this->db->prepare(
             "SELECT risk_level, COUNT(*) AS total FROM project_closeout_items
-             WHERE " . $where . " AND status <> 'cancelled'
+             WHERE " . $where . " AND status IN ('pending', 'ongoing', 'pending_accept')
              GROUP BY risk_level"
         );
         $riskStatement->execute($params);

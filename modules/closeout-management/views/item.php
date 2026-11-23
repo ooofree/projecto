@@ -4,7 +4,6 @@ use ProjectO\Support;
 
 $displayName = (string) ($item['display_name'] ?? $item['material_name'] ?? $item['title'] ?? '');
 ob_start();
-require __DIR__ . '/_nav.php';
 ?>
 <section class="page-heading">
     <div>
