@@ -63,28 +63,51 @@ $projectStatusLabels = [
     'completed' => '已完成',
     'on-hold' => '已暂停',
 ];
+/*
+ * Information architecture (user directive 2026-11-23): seven business areas
+ * in a fixed order. The map owns the order and the Chinese label; plugins still
+ * declare which entries exist and whether the viewer may see them. Items carry
+ * an optional 'order' so a group can interleave contributions from different
+ * plugins (e.g. 招标清单 belongs to the material plugin but sits in 项目管理).
+ */
 $sidebarGroups = [
-    'workspace' => '项目工作区',
-    'suppliers' => '供应商目录',
-    'materials' => '材料与样品',
-    'quotes' => '报价与招标',
-    'collab' => '文档协作',
+    'projects' => '项目管理',
+    'materials' => '材料管理',
+    'supply' => '供应链管理',
+    'bom' => 'BOM 与成本管理',
+    'collab' => '工程协同',
     'construction' => '施工管理',
+    'settings' => '基础设置',
 ];
-// Recycle-bin sub-views keep their parent module entry highlighted.
-$sidebarActivePage = $layoutPage;
+// Detail and recycle-bin sub-views keep their parent module entry highlighted.
+$sidebarAliases = [
+    'costing-detail' => 'costings',
+    'closeout-items' => 'closeouts',
+    'closeout-select' => 'closeouts',
+    'closeout-item' => 'closeouts',
+    'labor-crew-share' => 'labor-crews',
+    'labor-crew-share-image' => 'labor-crews',
+];
+$sidebarActivePage = $sidebarAliases[$layoutPage] ?? $layoutPage;
+// 基础设置 carries the core admin entry next to plugin-declared settings
+// pages, so it renders outside a project as well.
+$sidebarMenuItems = $sidebarItems;
+if ($canManagePlatform) {
+    $sidebarMenuItems[] = ['group' => 'settings', 'page' => 'admin', 'label' => '系统设置', 'icon' => '⚙', 'order' => 10];
+}
+usort($sidebarMenuItems, static function (array $a, array $b): int {
+    return ((int) ($a['order'] ?? 500)) <=> ((int) ($b['order'] ?? 500));
+});
 $groupedSidebar = [];
-if ($layoutProjectScoped) {
-    foreach ($sidebarItems as $sidebarItem) {
-        $group = (string) ($sidebarItem['group'] ?? '');
-        if (!isset($sidebarGroups[$group])) {
-            continue;
-        }
-        $groupedSidebar[$group][] = $sidebarItem;
+foreach ($sidebarMenuItems as $sidebarItem) {
+    $group = (string) ($sidebarItem['group'] ?? '');
+    if (!isset($sidebarGroups[$group]) || (!$layoutProjectScoped && $group !== 'settings')) {
+        continue;
     }
+    $groupedSidebar[$group][] = $sidebarItem;
 }
 $layoutCrumb = '';
-foreach ($sidebarItems as $sidebarItem) {
+foreach ($sidebarMenuItems as $sidebarItem) {
     if (($sidebarItem['page'] ?? '') === $layoutPage) {
         $layoutCrumb = (string) $sidebarItem['label'];
         break;
@@ -206,12 +229,6 @@ $avatarMark = mb_strtoupper(mb_substr(trim($username) !== '' ? $username : $plat
             <?php endif; ?>
         </nav>
         <div class="sidebar-bottom">
-            <?php if ($canManagePlatform): ?>
-                <a class="sidebar-item<?= $layoutPage === 'admin' ? ' is-active' : '' ?>" href="?page=admin"<?= $layoutPage === 'admin' ? ' aria-current="page"' : '' ?>>
-                    <span class="sidebar-icon" aria-hidden="true">⚙</span>
-                    <span class="sidebar-text">系统设置</span>
-                </a>
-            <?php endif; ?>
             <a class="sidebar-item<?= $layoutPage === 'profile' ? ' is-active' : '' ?>" href="?page=profile"<?= $layoutPage === 'profile' ? ' aria-current="page"' : '' ?>>
                 <span class="sidebar-icon" aria-hidden="true">◉</span>
                 <span class="sidebar-text">个人设置</span>

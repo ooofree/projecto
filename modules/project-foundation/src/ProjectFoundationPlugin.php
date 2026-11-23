@@ -54,7 +54,7 @@ final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
     }
 
     /**
-     * V2.1 project sidebar: workspace entries owned by this plugin. Same
+     * V2.1 project sidebar: 项目管理 entries owned by this plugin. Same
      * permission gates as the routes themselves; the layout only renders what
      * is declared here, and the server still authorizes every request.
      */
@@ -62,13 +62,13 @@ final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
     {
         $items = [];
         if (Support::hasPermission($this->context->db, 'view_projects')) {
-            $items[] = ['group' => 'workspace', 'page' => 'projects', 'label' => '项目首页', 'icon' => '⌂'];
+            $items[] = ['group' => 'projects', 'page' => 'projects', 'label' => '项目首页', 'icon' => '⌂', 'order' => 10];
         }
         if (
             Support::hasPermission($this->context->db, 'view_projects')
             && Support::hasPermission($this->context->db, 'view_project_spaces')
         ) {
-            $items[] = ['group' => 'workspace', 'page' => 'spaces', 'label' => '项目空间', 'icon' => '▦'];
+            $items[] = ['group' => 'projects', 'page' => 'spaces', 'label' => '项目空间', 'icon' => '▦', 'order' => 20];
         }
 
         return $items;

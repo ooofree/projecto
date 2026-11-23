@@ -79,7 +79,7 @@ if (
     || !str_contains($html, 'class="app-sidebar"')
     // With a current project in session the home page shows the project
     // sidebar (its cards enter that project); module entries stay reachable.
-    || !str_contains($html, '项目工作区')
+    || !str_contains($html, '<p class="sidebar-label">项目管理</p>')
 ) {
     throw new RuntimeException('Projects page context, deletion controls, escaping, or permission display check failed.');
 }

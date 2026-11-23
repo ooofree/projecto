@@ -507,9 +507,10 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
     }
 
     /**
-     * V2.1 project sidebar: documents & collaboration entries. Gates mirror
+     * V2.1 project sidebar: 工程协同 entries (文档 / 问题 / RFI). Gates mirror
      * requireDocumentAccess()/requireSettingsAccess(); the in-page module nav
-     * keeps its own markup, this only feeds the global sidebar.
+     * keeps its own markup, this only feeds the global sidebar. 文档设置 is
+     * platform configuration and therefore lives in 基础设置.
      */
     public function sidebarItems(): array
     {
@@ -518,12 +519,12 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             Support::hasPermission($this->context->db, 'view_projects')
             && Support::hasPermission($this->context->db, 'view_issues')
         ) {
-            $items[] = ['group' => 'collab', 'page' => 'documents', 'label' => '文档管理', 'icon' => '▣'];
-            $items[] = ['group' => 'collab', 'page' => 'issues', 'label' => '问题管理', 'icon' => '⚑'];
-            $items[] = ['group' => 'collab', 'page' => 'rfis', 'label' => 'RFI 管理', 'icon' => '↗'];
+            $items[] = ['group' => 'collab', 'page' => 'documents', 'label' => '文档管理', 'icon' => '▣', 'order' => 10];
+            $items[] = ['group' => 'collab', 'page' => 'issues', 'label' => '问题管理', 'icon' => '⚑', 'order' => 20];
+            $items[] = ['group' => 'collab', 'page' => 'rfis', 'label' => 'RFI 管理', 'icon' => '↗', 'order' => 30];
         }
         if ($this->canManageSettings()) {
-            $items[] = ['group' => 'collab', 'page' => 'document-settings', 'label' => '文档设置', 'icon' => '⚙'];
+            $items[] = ['group' => 'settings', 'page' => 'document-settings', 'label' => '文档设置', 'icon' => '⚙', 'order' => 20];
         }
 
         return $items;

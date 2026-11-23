@@ -78,6 +78,7 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             'page' => 'closeouts',
             'label' => '工程消项',
             'icon' => '✓',
+            'order' => 10,
         ]];
     }
 

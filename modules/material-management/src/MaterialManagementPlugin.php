@@ -1391,32 +1391,34 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
     }
 
     /**
-     * V2.1 project sidebar: materials & commercial entries. Reuses the exact
-     * permission gates of nav() — shared directories (brands/suppliers/
-     * supplier materials) keep their cross-project semantics, project-scoped
-     * pages additionally require view_projects. UX only; routes stay guarded.
+     * V2.1 project sidebar: materials, supply chain, tender list and quantity
+     * entries. Reuses the exact permission gates of nav() — shared directories
+     * (brands/suppliers/supplier materials) keep their cross-project semantics,
+     * project-scoped pages additionally require view_projects. UX only; routes
+     * stay guarded.
      */
     public function sidebarItems(): array
     {
         $nav = $this->nav();
         $items = [];
-        // V2.1 grouping per business relation (user directive 2026-11-18):
-        // shared supplier directory own group; materials+samples one group;
-        // quotations+tenders+estimates one group.
+        // Business areas (user directive 2026-11-23): materials & samples stay
+        // a project-material area; the supplier directory, brands and quoted
+        // prices form the supply-chain area; the tender list is the legal basis
+        // of 项目管理; estimates and the sub-material rollup feed BOM & cost.
         foreach ([
-            ['suppliers', 'suppliers', '供应商', '▧', 'suppliers'],
-            ['brands', 'brands', '品牌管理', '◇', 'suppliers'],
-            ['supplierMaterials', 'supplier-materials', '供应商材料', '▱', 'suppliers'],
-            ['materials', 'materials', '材料管理', '▤', 'materials'],
-            ['auxiliaries', 'auxiliary-materials', '辅材目录', '◫', 'materials'],
-            ['samples', 'samples', '样品跟踪', '◉', 'materials'],
-            ['quotations', 'quotations', '材料报价', '￥', 'quotes'],
-            ['tenders', 'tender-list', '招标清单', '☷', 'quotes'],
-            ['estimates', 'estimates', '材料测算', '∑', 'quotes'],
-            ['demandSummary', 'demand-summary', '子材料数量汇总', '⇲', 'quotes'],
-        ] as [$key, $page, $label, $icon, $group]) {
+            ['materials', 'materials', '材料管理', '▤', 'materials', 10],
+            ['auxiliaries', 'auxiliary-materials', '辅材目录', '◫', 'materials', 20],
+            ['samples', 'samples', '样品跟踪', '◉', 'materials', 30],
+            ['suppliers', 'suppliers', '供应商管理', '▧', 'supply', 10],
+            ['brands', 'brands', '品牌管理', '◇', 'supply', 20],
+            ['supplierMaterials', 'supplier-materials', '供应商材料', '▱', 'supply', 30],
+            ['quotations', 'quotations', '供应商报价', '￥', 'supply', 40],
+            ['tenders', 'tender-list', '招标清单', '☷', 'projects', 30],
+            ['demandSummary', 'demand-summary', '子材料数量汇总', '⇲', 'bom', 20],
+            ['estimates', 'estimates', '材料测算', '∑', 'bom', 30],
+        ] as [$key, $page, $label, $icon, $group, $order]) {
             if (!empty($nav[$key])) {
-                $items[] = ['group' => $group, 'page' => $page, 'label' => $label, 'icon' => $icon];
+                $items[] = ['group' => $group, 'page' => $page, 'label' => $label, 'icon' => $icon, 'order' => $order];
             }
         }
 

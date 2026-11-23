@@ -237,16 +237,19 @@ body.is-anonymous .container { width: min(580px, calc(100% - 32px)); padding-top
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
 }
-.sidebar-nav { display: flex; flex-direction: column; gap: 17px; }
-.sidebar-group { display: flex; flex-direction: column; gap: 2px; }
+/* Seven business areas: a hairline separates each area, and rows tighten
+   slightly so the full menu fits a laptop viewport without scrolling. */
+.sidebar-nav { display: flex; flex-direction: column; }
+.sidebar-group { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; }
+.sidebar-group + .sidebar-group { border-top: 1px solid var(--border); }
 .sidebar-label { margin: 0; padding: 0 10px 6px; color: var(--text-tertiary); font-size: .625rem; font-weight: 750; letter-spacing: .09em; }
 .sidebar-item {
     display: flex;
     align-items: center;
     gap: 10px;
     width: 100%;
-    min-height: 34px;
-    padding: 8px 10px;
+    min-height: 32px;
+    padding: 7px 10px;
     color: var(--text-tertiary);
     background: transparent;
     border: 0;

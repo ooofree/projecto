@@ -833,18 +833,23 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
         ];
     }
 
+    /**
+     * V2.1 project sidebar: BOM & cost area (user directive 2026-11-23).
+     * 组价 → 数量汇总/测算 → 成本价 → 实际费用; the shared resource catalogue
+     * (加工/机械/人工) closes the group as its reference directory.
+     */
     public function sidebarItems(): array
     {
         $nav = $this->nav();
         $items = [];
         foreach ([
-            ['costings', 'costings', 'BOM 组价', '◧', 'quotes'],
-            ['prices', 'cost-prices', '成本价', '¥', 'quotes'],
-            ['catalog', 'cost-catalog', '资源目录', '⚙', 'quotes'],
-            ['actuals', 'actual-costs', '实际费用', '￥', 'quotes'],
-        ] as [$key, $page, $label, $icon, $group]) {
+            ['costings', 'costings', 'BOM 组价', '◧', 10],
+            ['prices', 'cost-prices', '成本价', '¥', 40],
+            ['actuals', 'actual-costs', '实际费用', '￥', 50],
+            ['catalog', 'cost-catalog', '资源目录', '⚙', 60],
+        ] as [$key, $page, $label, $icon, $order]) {
             if (!empty($nav[$key])) {
-                $items[] = ['group' => $group, 'page' => $page, 'label' => $label, 'icon' => $icon];
+                $items[] = ['group' => 'bom', 'page' => $page, 'label' => $label, 'icon' => $icon, 'order' => $order];
             }
         }
 

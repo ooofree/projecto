@@ -115,17 +115,19 @@ layoutCheck(
 layoutGrant($db, ['view_projects', 'view_project_spaces', 'view_materials', 'manage_platform']);
 $session = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1, 'csrf_token' => 'layout-token'];
 $projectsHtml = layoutRender($db, 'projects', $session);
+$projectsGroup = '<p class="sidebar-label">项目管理</p>';
+$materialsGroup = '<p class="sidebar-label">材料管理</p>';
 layoutCheck(
     str_contains($projectsHtml, 'class="app-sidebar"')
-        && str_contains($projectsHtml, '项目工作区')
-        && str_contains($projectsHtml, '材料与样品'),
+        && str_contains($projectsHtml, $projectsGroup)
+        && str_contains($projectsHtml, $materialsGroup),
     'With a current project the home page must render the project sidebar.'
 );
 $noProjectHtml = layoutRender($db, 'projects', ['user_id' => 1, 'username' => 'admin', 'csrf_token' => 'layout-token']);
 layoutCheck(
     str_contains($noProjectHtml, '项目列表')
-        && !str_contains($noProjectHtml, '项目工作区')
-        && !str_contains($noProjectHtml, '材料与样品'),
+        && !str_contains($noProjectHtml, $projectsGroup)
+        && !str_contains($noProjectHtml, $materialsGroup),
     'Without a current project only the platform bucket may render.'
 );
 layoutCheck(
@@ -145,7 +147,7 @@ layoutCheck(
 layoutGrant($db, ['view_projects', 'view_project_spaces', 'view_materials', 'view_brands', 'manage_platform']);
 $brandsHtml = layoutRender($db, 'brands', $session);
 layoutCheck(
-    str_contains($brandsHtml, '供应商目录')
+    str_contains($brandsHtml, '<p class="sidebar-label">供应链管理</p>')
         && str_contains($brandsHtml, 'href="?page=brands" aria-current="page"')
         && str_contains($brandsHtml, 'project-switch-name">Layout Project</span>'),
     'Shared-catalogue pages must keep the project sidebar and switcher (session-resolved project).'
@@ -155,7 +157,7 @@ layoutCheck(
 layoutGrant($db, ['view_projects', 'view_project_spaces', 'view_materials', 'manage_platform']);
 $spacesHtml = layoutRender($db, 'spaces', $session);
 layoutCheck(
-    str_contains($spacesHtml, '项目工作区')
+    str_contains($spacesHtml, $projectsGroup)
         && str_contains($spacesHtml, 'href="?page=spaces" aria-current="page"')
         && str_contains($spacesHtml, '材料管理')
         && !str_contains($spacesHtml, '品牌管理')
@@ -167,31 +169,62 @@ layoutCheck(
     'The in-page module navigation contract must stay intact.'
 );
 
-// V2.1 business grouping: materials/samples together, quotes/tenders/estimates
-// together, shared supplier directory separate, construction own group.
-layoutGrant($db, ['view_projects', 'view_project_spaces', 'view_materials', 'view_material_samples', 'view_material_quotations', 'view_tenders', 'view_material_estimates', 'view_suppliers', 'view_brands', 'view_supplier_materials', 'view_labor_crews', 'view_labor_crew_types', 'manage_platform']);
+// 4. Business areas (user directive 2026-11-23): 项目管理 → 材料管理 →
+// 供应链管理 → BOM 与成本管理 → 工程协同 → 施工管理 → 基础设置, rendered
+// in exactly that order, with cross-plugin entries placed by 'order'.
+layoutGrant($db, ['view_projects', 'view_project_spaces', 'view_materials', 'view_material_samples', 'view_material_quotations', 'view_tenders', 'view_material_estimates', 'view_suppliers', 'view_brands', 'view_supplier_materials', 'view_labor_crews', 'view_labor_crew_types', 'view_closeouts', 'view_costings', 'view_cost_catalog', 'view_actual_costs', 'view_issues', 'manage_platform']);
 // Render on a shared-catalogue page: the sidebar is identical on every
 // project page, and brands needs no material business tables in this schema.
 $groupedHtml = layoutRender($db, 'brands', $session);
-$materialsGroup = strpos($groupedHtml, '材料与样品');
-$quotesGroup = strpos($groupedHtml, '报价与招标');
-$suppliersGroup = strpos($groupedHtml, '供应商目录');
-$constructionGroup = strpos($groupedHtml, '施工管理');
+$areaMarkers = [
+    '项目管理' => '<p class="sidebar-label">项目管理</p>',
+    '材料管理' => '<p class="sidebar-label">材料管理</p>',
+    '供应链管理' => '<p class="sidebar-label">供应链管理</p>',
+    'BOM 与成本管理' => '<p class="sidebar-label">BOM 与成本管理</p>',
+    '工程协同' => '<p class="sidebar-label">工程协同</p>',
+    '施工管理' => '<p class="sidebar-label">施工管理</p>',
+    '基础设置' => '<p class="sidebar-label">基础设置</p>',
+];
+$areaPositions = [];
+foreach ($areaMarkers as $areaName => $marker) {
+    $position = strpos($groupedHtml, $marker);
+    layoutCheck($position !== false, 'Missing sidebar area: ' . $areaName);
+    $areaPositions[$areaName] = $position;
+}
 layoutCheck(
-    $materialsGroup !== false && $quotesGroup !== false && $suppliersGroup !== false && $constructionGroup !== false
-        && $suppliersGroup < $materialsGroup && $materialsGroup < $quotesGroup && $quotesGroup < $constructionGroup
-        && strpos($groupedHtml, '供应商材料') > $suppliersGroup && strpos($groupedHtml, '供应商材料') < $materialsGroup
-        && strpos($groupedHtml, '样品跟踪') > $materialsGroup && strpos($groupedHtml, '样品跟踪') < $quotesGroup
-        && strpos($groupedHtml, '材料测算') > $quotesGroup && strpos($groupedHtml, '材料测算') < $constructionGroup
-        && strpos($groupedHtml, '工种目录') > $constructionGroup,
-    'Sidebar groups must follow the business relations: supplier directory, materials+samples, quotes+tenders+estimates, construction.'
+    $areaPositions['项目管理'] < $areaPositions['材料管理']
+        && $areaPositions['材料管理'] < $areaPositions['供应链管理']
+        && $areaPositions['供应链管理'] < $areaPositions['BOM 与成本管理']
+        && $areaPositions['BOM 与成本管理'] < $areaPositions['工程协同']
+        && $areaPositions['工程协同'] < $areaPositions['施工管理']
+        && $areaPositions['施工管理'] < $areaPositions['基础设置'],
+    'Sidebar areas must follow the agreed order: 项目管理, 材料管理, 供应链管理, BOM 与成本管理, 工程协同, 施工管理, 基础设置.'
+);
+$tenderPosition = strpos($groupedHtml, '?page=tender-list"');
+$supplierMaterialPosition = strpos($groupedHtml, '?page=supplier-materials"');
+$demandPosition = strpos($groupedHtml, '?page=demand-summary"');
+$closeoutPosition = strpos($groupedHtml, '?page=closeouts"');
+$docSettingsPosition = strpos($groupedHtml, '?page=document-settings"');
+layoutCheck(
+    $tenderPosition !== false
+        && $tenderPosition > $areaPositions['项目管理'] && $tenderPosition < $areaPositions['材料管理']
+        && $supplierMaterialPosition !== false
+        && $supplierMaterialPosition > $areaPositions['供应链管理'] && $supplierMaterialPosition < $areaPositions['BOM 与成本管理']
+        && $demandPosition !== false
+        && $demandPosition > $areaPositions['BOM 与成本管理'] && $demandPosition < $areaPositions['工程协同']
+        && $closeoutPosition !== false
+        && $closeoutPosition > $areaPositions['施工管理'] && $closeoutPosition < $areaPositions['基础设置']
+        && $docSettingsPosition !== false && $docSettingsPosition > $areaPositions['基础设置'],
+    'Entries must sit in their declared business area (tender list in 项目管理, supplier materials in 供应链管理, demand rollup in BOM 与成本管理, closeouts in 施工管理, document settings in 基础设置).'
 );
 
 // 5. Without view_projects the project groups disappear entirely.
 layoutGrant($db, ['view_materials']);
 $limitedHtml = layoutRender($db, 'projects', ['user_id' => 1, 'username' => 'admin', 'csrf_token' => 'layout-token']);
 layoutCheck(
-    !str_contains($limitedHtml, '材料管理') && !str_contains($limitedHtml, '项目工作区'),
+    !str_contains($limitedHtml, $projectsGroup)
+        && !str_contains($limitedHtml, $materialsGroup)
+        && !str_contains($limitedHtml, '<p class="sidebar-label">施工管理</p>'),
     'Sidebar entries must never exceed the viewer permissions.'
 );
 
