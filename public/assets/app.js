@@ -1385,3 +1385,279 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
         if (event.key === 'Escape' && switcher.open) switcher.open = false;
     });
 })();
+
+// Project spaces deck (2026-11-23): a floor-by-floor stage instead of the old
+// stacked tree. Everything here is client-side presentation only — the forms,
+// action names, CSRF tokens and server-side permission gates are untouched, and
+// without this block every floor stays expanded and every form still submits.
+(() => {
+    const deck = document.querySelector('[data-space-deck]');
+    if (!deck) return;
+
+    const panels = [...deck.querySelectorAll('[data-space-panel]')];
+    const chips = [...deck.querySelectorAll('[data-space-floor]')];
+    const search = deck.querySelector('[data-space-search]');
+    const countNode = deck.querySelector('[data-space-count]');
+    const hudFloor = document.querySelector('[data-space-hud-floor]');
+    const densityButtons = [...deck.querySelectorAll('[data-space-density]')];
+    const railToggles = [...deck.querySelectorAll('[data-space-rail-toggle]')];
+    const quickForms = [...deck.querySelectorAll('[data-space-quick]')];
+    const projectKey = deck.dataset.project || '0';
+
+    if (!panels.length) return;
+
+    const panelFor = floorId => panels.find(panel => panel.dataset.floor === floorId);
+
+    const updateCount = (matchInfo = null) => {
+        if (!countNode) return;
+        const total = deck.querySelectorAll('[data-space-tile]').length;
+        if (matchInfo) {
+            countNode.innerHTML = `匹配 <b>${matchInfo.tiles}</b> 间 · 命中 <b>${matchInfo.panels}</b> 层`;
+            return;
+        }
+        const panel = panelFor(deck.dataset.activeFloor);
+        const local = panel ? panel.querySelectorAll('[data-space-tile]').length : 0;
+        countNode.innerHTML = `本层 <b>${local}</b> 间 · 全项目 <b>${total}</b> 间`;
+    };
+
+    const focusQuick = (panel, smooth = true) => {
+        const number = panel ? panel.querySelector('[data-space-quick-number]') : null;
+        if (!number) return;
+        number.focus({ preventScroll: true });
+        if (smooth) {
+            (number.closest('form') || number).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    };
+
+    const activate = (floorId, options = {}) => {
+        const panel = panelFor(floorId);
+        if (!panel) return;
+        panels.forEach(other => other.classList.toggle('is-current', other === panel));
+        chips.forEach(chip => {
+            const current = chip.dataset.spaceFloor === floorId;
+            chip.classList.toggle('is-current', current);
+            if (current) chip.setAttribute('aria-current', 'page');
+            else chip.removeAttribute('aria-current');
+        });
+        deck.dataset.activeFloor = floorId;
+
+        const buildingId = panel.dataset.building;
+        const building = deck.querySelector(`[data-space-building="${buildingId}"]`);
+        if (building) building.open = true;
+
+        if (hudFloor) {
+            hudFloor.textContent = (panel.dataset.label || '').trim().split(' ')[0] || '—';
+        }
+        updateCount();
+        if (options.focusQuick) focusQuick(panel, false);
+    };
+
+    chips.forEach(chip => {
+        chip.addEventListener('click', event => {
+            event.preventDefault();
+            if (search && search.value !== '') {
+                search.value = '';
+                applySearch();
+            }
+            const floorId = chip.dataset.spaceFloor;
+            activate(floorId);
+            const url = new URL(window.location.href);
+            url.searchParams.set('floor', floorId);
+            url.hash = `floor-${floorId}`;
+            window.history.replaceState(null, '', url);
+        });
+    });
+
+    const applySearch = () => {
+        const query = search ? search.value.trim().toLocaleLowerCase() : '';
+        const searching = query !== '';
+        deck.classList.toggle('is-searching', searching);
+        let matchedTiles = 0;
+        let matchedPanels = 0;
+
+        for (const panel of panels) {
+            const tiles = [...panel.querySelectorAll('[data-space-tile]')];
+            let panelMatches = !searching || (panel.dataset.search || '').includes(query);
+            let visibleTiles = 0;
+
+            for (const tile of tiles) {
+                const matches = !searching || panelMatches || (tile.dataset.search || '').includes(query);
+                tile.hidden = !matches;
+                if (matches) visibleTiles++;
+            }
+
+            if (searching && !panelMatches) {
+                panelMatches = visibleTiles > 0;
+            }
+            if (!panelMatches) {
+                panel.classList.remove('is-match');
+                continue;
+            }
+            if (searching) {
+                panel.classList.add('is-match');
+                matchedPanels++;
+                matchedTiles += visibleTiles;
+            } else {
+                panel.classList.remove('is-match');
+            }
+        }
+
+        chips.forEach(chip => {
+            const panel = panelFor(chip.dataset.spaceFloor);
+            chip.classList.toggle('is-filtered', searching && (!panel || !panel.classList.contains('is-match')));
+        });
+
+        updateCount(searching ? { tiles: matchedTiles, panels: matchedPanels } : null);
+    };
+
+    if (search) {
+        search.addEventListener('input', applySearch);
+        search.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && search.value !== '') {
+                event.preventDefault();
+                search.value = '';
+                applySearch();
+            }
+        });
+    }
+
+    const densityKey = 'projectO.spaceDensity';
+    const applyDensity = value => {
+        const density = ['dense', 'normal', 'roomy'].includes(value) ? value : 'normal';
+        deck.classList.toggle('is-density-dense', density === 'dense');
+        deck.classList.toggle('is-density-roomy', density === 'roomy');
+        for (const button of densityButtons) {
+            button.setAttribute('aria-pressed', button.dataset.spaceDensity === density ? 'true' : 'false');
+        }
+        try {
+            localStorage.setItem(densityKey, density);
+        } catch (error) {
+            /* storage may be unavailable in private modes; the layout still works */
+        }
+    };
+    for (const button of densityButtons) {
+        button.addEventListener('click', () => applyDensity(button.dataset.spaceDensity));
+    }
+
+    const railKey = 'projectO.spaceRail';
+    const setRail = hidden => {
+        deck.classList.toggle('is-rail-hidden', hidden);
+        for (const button of railToggles) {
+            button.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+        }
+        try {
+            localStorage.setItem(railKey, hidden ? 'hidden' : 'shown');
+        } catch (error) {
+            /* ignore */
+        }
+    };
+    for (const button of railToggles) {
+        button.addEventListener('click', () => setRail(!deck.classList.contains('is-rail-hidden')));
+    }
+
+    try {
+        applyDensity(localStorage.getItem(densityKey) || 'normal');
+        if (localStorage.getItem(railKey) === 'hidden') setRail(true);
+    } catch (error) {
+        applyDensity('normal');
+    }
+
+    // Last room type is remembered per project so repeat entry on the same
+    // floor does not retype it; users can always overwrite or clear the field.
+    const typeKey = `projectO.spaceRoomType.${projectKey}`;
+    try {
+        const lastType = localStorage.getItem(typeKey);
+        if (lastType) {
+            for (const form of quickForms) {
+                const input = form.querySelector('[data-space-quick-type]');
+                if (input && input.value === '') input.value = lastType;
+            }
+        }
+    } catch (error) {
+        /* ignore */
+    }
+    for (const form of quickForms) {
+        form.addEventListener('submit', () => {
+            const input = form.querySelector('[data-space-quick-type]');
+            if (!input || input.value.trim() === '') return;
+            try {
+                localStorage.setItem(typeKey, input.value.trim());
+            } catch (error) {
+                /* ignore */
+            }
+        });
+    }
+
+    // Opening a room dialog should land in the room-number field instead of the
+    // close button, so the first keystroke goes into the new room.
+    document.addEventListener('click', event => {
+        const trigger = event.target.closest('[data-dialog-open^="space-room-create-"]');
+        if (!trigger) return;
+        const dialog = document.getElementById(trigger.dataset.dialogOpen);
+        if (!dialog) return;
+        event.preventDefault();
+        window.setTimeout(() => {
+            const input = dialog.querySelector('input[name="number"]');
+            if (input) input.focus();
+        }, 0);
+    });
+
+    // Keyboard: "/" jumps to search, "N" jumps to quick entry, arrow keys move
+    // between tiles of the active floor, Enter opens the tile's first action.
+    document.addEventListener('keydown', event => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const inField = target.closest('input, textarea, select, [contenteditable="true"]');
+        if (event.key === '/' && !inField && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            if (!search) return;
+            event.preventDefault();
+            search.focus();
+            return;
+        }
+        if ((event.key === 'n' || event.key === 'N') && !inField && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            const panel = panelFor(deck.dataset.activeFloor);
+            if (!panel || !panel.querySelector('[data-space-quick-number]')) return;
+            event.preventDefault();
+            activate(deck.dataset.activeFloor, { focusQuick: true });
+        }
+    });
+
+    deck.addEventListener('keydown', event => {
+        const tile = event.target.closest('[data-space-tile]');
+        if (!tile || event.target !== tile || !deck.contains(tile)) return;
+        const grid = tile.closest('[data-space-grid]');
+        if (!grid) return;
+        const visible = [...grid.querySelectorAll('[data-space-tile]')].filter(item => !item.hidden);
+        const index = visible.indexOf(tile);
+        if (index < 0) return;
+        const columns = window.getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length || 1;
+        let next = -1;
+        if (event.key === 'ArrowRight') next = index + 1;
+        else if (event.key === 'ArrowLeft') next = index - 1;
+        else if (event.key === 'ArrowDown') next = index + columns;
+        else if (event.key === 'ArrowUp') next = index - columns;
+        else if (event.key === 'Enter' && event.target === tile) {
+            const action = tile.querySelector('[data-dialog-open]');
+            if (action) {
+                event.preventDefault();
+                action.click();
+            }
+            return;
+        }
+        if (next < 0 || next >= visible.length || next === index) return;
+        event.preventDefault();
+        visible[next].focus();
+    });
+
+    deck.dataset.ready = '1';
+    updateCount();
+
+    // After "保存并继续" the server sends ?floor=…&focus=room so the next room
+    // number can be typed immediately without reopening a dialog or rescrolling.
+    if (deck.dataset.focus === 'room') {
+        const panel = panelFor(deck.dataset.activeFloor);
+        if (panel) {
+            window.setTimeout(() => focusQuick(panel), 0);
+        }
+    }
+})();

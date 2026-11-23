@@ -160,11 +160,27 @@ final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
         Support::requirePermission($this->context->db, 'view_project_spaces');
         Support::requirePermission($this->context->db, 'manage_project_spaces');
         $project = $this->context->requireCurrentProject();
+        $type = (string) ($input['type'] ?? '');
         $id = $this->spaces->save((int) $project['project_id'], $input);
         Support::audit($this->context->db, 'project_space.save', 'Saved project space record ' . $id . '.');
         Support::flash('项目空间已保存。');
 
-        return PluginResponse::redirect('?page=spaces');
+        // Keep the entry context after a save so a floor stage is not lost:
+        // room saves return to that floor with the quick-entry focus marker,
+        // floor saves land on the new/edited floor, building saves just return.
+        $target = '?page=spaces';
+        if ($type === 'room') {
+            $floorId = (int) ($input['floor_id'] ?? 0);
+            if ($floorId > 0) {
+                $target = '?page=spaces&floor=' . $floorId . '&focus=room#floor-' . $floorId;
+            }
+        } elseif ($type === 'floor' && $id > 0) {
+            $target = '?page=spaces&floor=' . $id . '&focus=floor';
+        } elseif ($type === 'building' && $id > 0) {
+            $target = '?page=spaces&building=' . $id;
+        }
+
+        return PluginResponse::redirect($target);
     }
 
     private function mapRoom(array $input): PluginResponse
