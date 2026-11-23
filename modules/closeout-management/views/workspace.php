@@ -547,7 +547,7 @@ ob_start();
                                         </form>
                                         <a class="button button-quiet button-small" href="<?= $escape($buildUrl(['item_id' => (int) $item['item_id']])) ?>#closeout-accept-form">验收</a>
                                     <?php else: ?>
-                                        <a class="button button-quiet button-small" href="<?= $escape($buildUrl(['item_id' => (int) $item['item_id']])) ?>">打开</a>
+                                        <a class="button button-quiet button-small" href="<?= $escape($buildUrl(['item_id' => (int) $item['item_id']])) ?>">详情</a>
                                     <?php endif; ?>
                                 </span>
                             </div>
