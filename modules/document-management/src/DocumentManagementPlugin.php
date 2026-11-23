@@ -31,6 +31,19 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         'high' => '高',
         'critical' => '紧急',
     ];
+    private const RFI_STATUS_LABELS = [
+        'draft' => '草稿',
+        'submitted' => '已提交',
+        'under_review' => '审核中',
+        'responded' => '已答复',
+        'closed' => '已关闭',
+    ];
+    private const RFI_PRIORITY_LABELS = [
+        'low' => '低',
+        'medium' => '中',
+        'high' => '高',
+        'urgent' => '紧急',
+    ];
 
     private DocumentService $documents;
     private DocumentImageService $images;
@@ -110,40 +123,11 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         $issues = $this->documents->listIssues((int) $project['project_id']);
         $rfis = $this->documents->listRfis((int) $project['project_id']);
 
-        // Work-queue projections derived from the same service lists the page
-        // already loads (both ordered by updated_at DESC). No new SQL, no new
-        // data source: project scope and visibility are exactly what the
-        // service already enforces for this user.
-        $recent = [];
-        foreach ($issues as $issue) {
-            $recent[] = [
-                'kind' => 'issue',
-                'number' => (string) ($issue['issue_number'] ?: '#' . $issue['issue_id']),
-                'summary' => (string) $issue['description'],
-                'status' => (string) $issue['status'],
-                'updated_at' => (string) $issue['updated_at'],
-            ];
-        }
-        foreach ($rfis as $rfi) {
-            $recent[] = [
-                'kind' => 'rfi',
-                'number' => (string) ($rfi['rfi_number'] ?: '#' . $rfi['rfi_id']),
-                'summary' => (string) $rfi['description'],
-                'status' => (string) $rfi['status'],
-                'updated_at' => (string) $rfi['updated_at'],
-            ];
-        }
-        usort($recent, static fn (array $a, array $b): int => strcmp($b['updated_at'], $a['updated_at']));
-        $recent = array_slice($recent, 0, 8);
-
-        $pendingIssues = array_slice(array_values(array_filter(
-            $issues,
-            static fn (array $issue): bool => in_array($issue['status'], ['open', 'in_review'], true)
-        )), 0, 5);
-        $pendingRfis = array_slice(array_values(array_filter(
-            $rfis,
-            static fn (array $rfi): bool => $rfi['status'] !== 'closed'
-        )), 0, 5);
+        // The command board is a projection of the two lists this page already
+        // loads (both ordered by updated_at DESC). No new SQL, no new data
+        // source: project scope and visibility stay exactly what the service
+        // enforces for this user.
+        $metrics = $this->documentsHomeMetrics($issues, $rfis);
 
         return $this->context->view('documents.php', [
             'title' => '文档管理',
@@ -152,18 +136,241 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'issueCount' => count($issues),
             'rfiCount' => count($rfis),
-            'openIssueCount' => count(array_filter(
-                $issues,
-                static fn (array $issue): bool => in_array($issue['status'], ['open', 'in_review'], true)
-            )),
-            'openRfiCount' => count(array_filter(
-                $rfis,
-                static fn (array $rfi): bool => $rfi['status'] !== 'closed'
-            )),
-            'recentActivity' => $recent,
-            'pendingIssues' => $pendingIssues,
-            'pendingRfis' => $pendingRfis,
+            'openIssueCount' => $metrics['pending_issue_count'],
+            'openRfiCount' => $metrics['pending_rfi_count'],
+            'homeMetrics' => $metrics,
         ]);
+    }
+
+    /**
+     * Read-only projections for the document overview board.
+     *
+     * Every figure is a display of the records the page already loads: closed
+     * counts, coverage ratios, overdue RFIs, age of waiting items. Nothing is
+     * persisted and no business rule is evaluated here, so the board can never
+     * claim progress the records do not support.
+     *
+     * @param array<int, array<string, mixed>> $issues
+     * @param array<int, array<string, mixed>> $rfis
+     * @return array<string, mixed>
+     */
+    private function documentsHomeMetrics(array $issues, array $rfis): array
+    {
+        $issueCounts = ['open' => 0, 'in_review' => 0, 'resolved' => 0, 'closed' => 0];
+        $rfiCounts = ['draft' => 0, 'submitted' => 0, 'under_review' => 0, 'responded' => 0, 'closed' => 0];
+        $completedFollowUps = 0;
+        $closureDays = [];
+        $queue = [];
+        $recent = [];
+
+        $today = Support::nowLocal('Y-m-d');
+        $todayDate = new \DateTimeImmutable($today);
+        $weekStart = $todayDate->modify('-6 days')->format('Y-m-d');
+        $severityRank = ['critical' => 4, 'high' => 3, 'medium' => 2, 'low' => 1];
+        $priorityRank = ['urgent' => 4, 'high' => 3, 'medium' => 2, 'low' => 1];
+
+        foreach ($issues as $issue) {
+            $status = (string) ($issue['status'] ?? '');
+            if (isset($issueCounts[$status])) {
+                $issueCounts[$status]++;
+            }
+            foreach (($issue['follow_ups'] ?? []) as $followUp) {
+                if ((int) ($followUp['is_completed'] ?? 0) === 1) {
+                    $completedFollowUps++;
+                }
+            }
+            if ($status === 'closed') {
+                $day = Support::formatDateTime((string) ($issue['closed_at'] ?? ''), 'Y-m-d');
+                if ($day !== '') {
+                    $closureDays[$day] = ($closureDays[$day] ?? 0) + 1;
+                }
+            }
+
+            $updatedDay = Support::formatDateTime((string) ($issue['updated_at'] ?? ''), 'Y-m-d');
+            $ageDays = $updatedDay === '' ? 0 : (int) (new \DateTimeImmutable($updatedDay))->diff($todayDate)->days;
+
+            $recent[] = [
+                'kind' => 'issue',
+                'number' => (string) ($issue['issue_number'] ?: '#' . $issue['issue_id']),
+                'summary' => (string) $issue['description'],
+                'status' => $status,
+                'updated_at' => (string) $issue['updated_at'],
+            ];
+
+            if ($status === 'open' || $status === 'in_review' || $status === 'resolved') {
+                $severity = (string) ($issue['severity'] ?? 'medium');
+                $queue[] = [
+                    'kind' => 'issue',
+                    'number' => (string) ($issue['issue_number'] ?: '#' . $issue['issue_id']),
+                    'title' => (string) $issue['description'],
+                    'status' => $status,
+                    'urgency' => $severity,
+                    'urgency_label' => self::ISSUE_SEVERITY_LABELS[$severity] ?? $severity,
+                    'rank' => $severityRank[$severity] ?? 2,
+                    'overdue' => false,
+                    'overdue_days' => 0,
+                    'due_date' => '',
+                    'age_days' => $ageDays,
+                    'updated_at' => (string) $issue['updated_at'],
+                    'href' => '?page=issues',
+                ];
+            }
+        }
+
+        $overdueRfis = 0;
+        foreach ($rfis as $rfi) {
+            $status = (string) ($rfi['status'] ?? '');
+            if (isset($rfiCounts[$status])) {
+                $rfiCounts[$status]++;
+            }
+            foreach (($rfi['follow_ups'] ?? []) as $followUp) {
+                if ((int) ($followUp['is_completed'] ?? 0) === 1) {
+                    $completedFollowUps++;
+                }
+            }
+
+            $updatedDay = Support::formatDateTime((string) ($rfi['updated_at'] ?? ''), 'Y-m-d');
+            $ageDays = $updatedDay === '' ? 0 : (int) (new \DateTimeImmutable($updatedDay))->diff($todayDate)->days;
+            $dueDate = trim((string) ($rfi['due_date'] ?? ''));
+            $dueDay = $dueDate === '' ? '' : substr($dueDate, 0, 10);
+            $overdue = $status !== 'closed' && $dueDay !== '' && $dueDay < $today;
+            $overdueDays = $overdue ? (int) (new \DateTimeImmutable($dueDay))->diff($todayDate)->days : 0;
+            if ($overdue) {
+                $overdueRfis++;
+            }
+
+            $recent[] = [
+                'kind' => 'rfi',
+                'number' => (string) ($rfi['rfi_number'] ?: '#' . $rfi['rfi_id']),
+                'summary' => (string) $rfi['description'],
+                'status' => $status,
+                'updated_at' => (string) $rfi['updated_at'],
+            ];
+
+            if ($status !== 'closed') {
+                $priority = (string) ($rfi['priority'] ?? 'medium');
+                $queue[] = [
+                    'kind' => 'rfi',
+                    'number' => (string) ($rfi['rfi_number'] ?: '#' . $rfi['rfi_id']),
+                    'title' => (string) $rfi['description'],
+                    'status' => $status,
+                    'urgency' => $priority,
+                    'urgency_label' => self::RFI_PRIORITY_LABELS[$priority] ?? $priority,
+                    'rank' => $priorityRank[$priority] ?? 2,
+                    'overdue' => $overdue,
+                    'overdue_days' => $overdueDays,
+                    'due_date' => $dueDay,
+                    'age_days' => $ageDays,
+                    'updated_at' => (string) $rfi['updated_at'],
+                    'href' => '?page=rfis',
+                ];
+            }
+        }
+
+        // Overdue first, then declared urgency, then the record that has waited
+        // longest — the board answers "what should I touch next", not "what is new".
+        usort($queue, static function (array $a, array $b): int {
+            $byOverdue = (int) $b['overdue'] <=> (int) $a['overdue'];
+            if ($byOverdue !== 0) {
+                return $byOverdue;
+            }
+            $byRank = $b['rank'] <=> $a['rank'];
+            if ($byRank !== 0) {
+                return $byRank;
+            }
+
+            return strcmp((string) $a['updated_at'], (string) $b['updated_at']);
+        });
+        $queue = array_slice($queue, 0, 6);
+
+        usort($recent, static fn (array $a, array $b): int => strcmp($b['updated_at'], $a['updated_at']));
+
+        $closedIssues = $issueCounts['closed'];
+        $resolvedIssues = $issueCounts['resolved'];
+        $answeredRfis = $rfiCounts['responded'] + $rfiCounts['closed'];
+
+        $issueTotal = count($issues);
+        $rfiTotal = count($rfis);
+        $pendingIssueCount = $issueCounts['open'] + $issueCounts['in_review'];
+        $pendingRfiCount = $rfiTotal - $rfiCounts['closed'];
+        $completionTotal = $issueTotal + $rfiTotal;
+        $completionClosed = $closedIssues + $rfiCounts['closed'];
+        $completionPercent = $completionTotal > 0 ? (int) round($completionClosed / $completionTotal * 100) : 0;
+
+        $goals = [
+            [
+                'key' => 'issues',
+                'label' => '问题闭环',
+                'hint' => '把问题推进到已关闭',
+                'done' => $closedIssues,
+                'total' => $issueTotal,
+                'remaining' => max(0, $issueTotal - $closedIssues),
+                'href' => '?page=issues',
+            ],
+            [
+                'key' => 'rfis',
+                'label' => 'RFI 应答',
+                'hint' => '提交并答复 RFI',
+                'done' => $answeredRfis,
+                'total' => $rfiTotal,
+                'remaining' => max(0, $rfiTotal - $answeredRfis),
+                'href' => '?page=rfis',
+            ],
+            [
+                'key' => 'verify',
+                'label' => '复核收口',
+                'hint' => '待关闭问题完成验证后关闭',
+                'done' => $closedIssues,
+                'total' => $closedIssues + $resolvedIssues,
+                'remaining' => $resolvedIssues,
+                'href' => '?page=issues',
+            ],
+        ];
+
+        $bestDayClosures = $closureDays === [] ? 0 : max($closureDays);
+        $cleared = ($issueTotal + $rfiTotal) > 0 && $closedIssues === $issueTotal && $rfiCounts['closed'] === $rfiTotal;
+        $milestones = [
+            ['key' => 'first', 'name' => '首次闭环', 'rule' => '至少 1 条问题闭环', 'done' => $closedIssues, 'target' => 1],
+            ['key' => 'five', 'name' => '累计闭环', 'rule' => '累计 5 条问题闭环', 'done' => $closedIssues, 'target' => 5],
+            ['key' => 'answer', 'name' => 'RFI 答复', 'rule' => '累计答复 3 份 RFI', 'done' => $answeredRfis, 'target' => 3],
+            ['key' => 'clean', 'name' => '全部结清', 'rule' => '所有问题与 RFI 均已关闭', 'done' => $cleared ? 1 : 0, 'target' => 1],
+            ['key' => 'burst', 'name' => '单日闭环', 'rule' => '同一天闭环 2 条问题', 'done' => $bestDayClosures, 'target' => 2],
+        ];
+        foreach ($milestones as &$milestone) {
+            $milestone['reached'] = $milestone['done'] >= $milestone['target'];
+        }
+        unset($milestone);
+
+        $weekClosures = 0;
+        foreach ($closureDays as $day => $count) {
+            if ($day >= $weekStart) {
+                $weekClosures += $count;
+            }
+        }
+
+        return [
+            'completion' => [
+                'closed' => $completionClosed,
+                'total' => $completionTotal,
+                'percent' => $completionPercent,
+            ],
+            'week_closures' => $weekClosures,
+            'best_day_closures' => $bestDayClosures,
+            'completed_follow_ups' => $completedFollowUps,
+            'issue' => ['total' => $issueTotal, 'counts' => $issueCounts],
+            'rfi' => [
+                'total' => $rfiTotal,
+                'counts' => $rfiCounts,
+                'answered' => $answeredRfis,
+                'overdue' => $overdueRfis,
+            ],
+            'pending_issue_count' => $pendingIssueCount,
+            'pending_rfi_count' => $pendingRfiCount,
+            'goals' => $goals,
+            'milestones' => $milestones,
+            'queue' => $queue,
+            'recent' => array_slice($recent, 0, 6),
+        ];
     }
 
     private function issuesIndex(): PluginResponse

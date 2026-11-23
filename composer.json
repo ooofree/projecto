@@ -18,6 +18,7 @@
             "php tests/project_service_test.php",
             "php tests/project_space_service_test.php",
             "php tests/document_management_test.php",
+            "php tests/documents_home_smoke_test.php",
             "php tests/material_management_test.php",
             "php tests/platform_administration_test.php",
             "php tests/profile_service_test.php",
