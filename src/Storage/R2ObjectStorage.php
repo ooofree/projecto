@@ -11,7 +11,7 @@ use Throwable;
 
 /**
  * Cloudflare R2 adapter for the platform's private image object storage
- * (document issues, RFIs and material samples).
+ * (document issues, RFIs, material samples and closeout evidence photos).
  *
  * Configuration precedence: the database configuration maintained on the
  * document module's system settings page (CloudStorageSettings) wins when

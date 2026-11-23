@@ -1,0 +1,71 @@
+{
+    "id": "closeout.management",
+    "name": "工程消项",
+    "version": "1.0.0",
+    "class": "ProjectO\\Modules\\CloseoutManagement\\CloseoutManagementPlugin",
+    "enabled": true,
+    "requires": [
+        "platform.core",
+        "project.foundation",
+        "material.management"
+    ],
+    "routes": {
+        "GET closeouts": "closeouts",
+        "GET closeout-items": "closeout-items",
+        "GET closeout-select": "closeout-select",
+        "GET closeout-item": "closeout-item",
+        "GET closeout-image": "closeout-image",
+        "POST closeout.plan.save": "closeout.plan.save",
+        "POST closeout.plan.status": "closeout.plan.status",
+        "POST closeout.items.create": "closeout.items.create",
+        "POST closeout.item.update": "closeout.item.update",
+        "POST closeout.batch.update": "closeout.batch.update",
+        "POST closeout.item.start": "closeout.item.start",
+        "POST closeout.item.submit": "closeout.item.submit",
+        "POST closeout.item.accept": "closeout.item.accept",
+        "POST closeout.item.cancel": "closeout.item.cancel",
+        "POST closeout.item.restore": "closeout.item.restore",
+        "POST closeout.item.reopen": "closeout.item.reopen",
+        "POST closeout.progress.add": "closeout.progress.add",
+        "POST closeout.image.upload": "closeout.image.upload",
+        "POST closeout.image.delete": "closeout.image.delete"
+    },
+    "assets": [
+        "closeout.js"
+    ],
+    "migrations": [
+        "database/migrations"
+    ],
+    "permissions": [
+        {
+            "name": "view_closeouts",
+            "display_name": "查看工程消项",
+            "description": "查看消项计划、事项、进度与验收记录",
+            "module": "工程消项"
+        },
+        {
+            "name": "create_closeouts",
+            "display_name": "创建消项计划与纳入事项",
+            "description": "新建消项计划并从 BOM 批量纳入事项",
+            "module": "工程消项"
+        },
+        {
+            "name": "edit_closeouts",
+            "display_name": "维护消项执行信息",
+            "description": "编辑事项管理信息、记录进度、开始执行、提交验收、上传附件",
+            "module": "工程消项"
+        },
+        {
+            "name": "accept_closeouts",
+            "display_name": "验收消项",
+            "description": "对提交验收的事项给出通过或不通过结论",
+            "module": "工程消项"
+        },
+        {
+            "name": "manage_closeouts",
+            "display_name": "管理消项计划与事项",
+            "description": "启动/关闭/重开计划，取消/恢复/重新打开事项",
+            "module": "工程消项"
+        }
+    ]
+}

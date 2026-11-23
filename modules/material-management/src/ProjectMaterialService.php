@@ -707,17 +707,53 @@ final class ProjectMaterialService
              ORDER BY b.building_number, f.floor_number, r.room_number'
         );
         $rooms->execute(['project_id' => $projectId]);
+        // 测算只认「有 BOM 组成的父材料」：测算数量记在父项上，子材料数量由组成系数拆解。
+        // 没有组成的材料（单件材料）不能直接测算 —— 需要单独计价就先父项化（材料 + 安装资源 → 父项 → 组成）。
+        // 自引用边（脏数据兜底）不算组成，与组价、消项的判断口径一致。
         $materials = $this->db->prepare(
-            'SELECT material_id, material_code, material_name, unit
-             FROM Materials WHERE project_id = :project_id
-             ORDER BY material_name, material_id'
+            "SELECT m.material_id, m.material_code, m.material_name, m.unit, m.category_id
+             FROM Materials m
+             WHERE m.project_id = :project_id
+               AND EXISTS (
+                   SELECT 1 FROM Material_Compositions pc
+                   WHERE pc.project_id = m.project_id
+                     AND pc.parent_material_id = m.material_id
+                     AND pc.child_material_id <> m.material_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM Material_Compositions cc
+                   WHERE cc.project_id = m.project_id
+                     AND cc.child_material_id = m.material_id
+                     AND cc.parent_material_id <> m.material_id
+               )
+             ORDER BY m.material_name, m.material_id"
         );
         $materials->execute(['project_id' => $projectId]);
+        $materialRows = $materials->fetchAll();
+
+        $childMaterials = $this->db->prepare(
+            'SELECT DISTINCT cc.child_material_id
+             FROM Material_Compositions cc
+             WHERE cc.project_id = :project_id
+               AND cc.parent_material_id <> cc.child_material_id'
+        );
+        $childMaterials->execute(['project_id' => $projectId]);
+        $childMaterialIds = array_map('intval', $childMaterials->fetchAll(PDO::FETCH_COLUMN));
+
+        $materialCount = $this->db->prepare(
+            'SELECT COUNT(*) FROM Materials WHERE project_id = :project_id'
+        );
+        $materialCount->execute(['project_id' => $projectId]);
+        $totalMaterials = (int) $materialCount->fetchColumn();
+
         return [
             'buildings' => $buildings->fetchAll(),
             'floors' => $floors->fetchAll(),
             'rooms' => $rooms->fetchAll(),
-            'materials' => $materials->fetchAll(),
+            'materials' => $materialRows,
+            'child_material_ids' => $childMaterialIds,
+            'material_count' => $totalMaterials,
+            'uncomposed_material_count' => max(0, $totalMaterials - count($childMaterialIds) - count($materialRows)),
         ];
     }
 
@@ -741,6 +777,7 @@ final class ProjectMaterialService
             $this->requireProjectRoom($projectId, $buildingId, $floorId, $roomId);
         }
         $this->requireProjectMaterial($projectId, $materialId, '材料');
+        $this->assertEstimateTarget($projectId, $materialId, $id);
 
         if ($id === null) {
             $stmt = $this->db->prepare(
@@ -938,6 +975,71 @@ final class ProjectMaterialService
         if ($stmt->fetchColumn() === false) {
             throw new HttpException('测算明细不存在或不属于当前项目。', 404);
         }
+    }
+
+    /**
+     * 测算对象必须是「有 BOM 组成的父材料」（2026-11-23 用户裁定 D2-A）：
+     * 测算只记父项数量，子材料量由组成系数拆解；没有组成的材料先回材料管理建组成，
+     * 需要单独计价的部位先父项化（材料 + 安装资源 → 父项 → 组成 → 组价）。
+     *
+     * 存量行（材料已经是该行当前材料）保持可编辑数量/空间/备注，避免历史记录因为
+     * 组成关系后建或口径收紧变成死记录；新建或改绑一律按上一条规则拦截。
+     */
+    private function assertEstimateTarget(int $projectId, int $materialId, ?int $estimateId): void
+    {
+        if ($this->hasComposition($projectId, $materialId)) {
+            return;
+        }
+        if ($estimateId !== null) {
+            $stmt = $this->db->prepare(
+                'SELECT material_id FROM Initial_Cost_Estimate_Detail WHERE estimate_detail_id = :id'
+            );
+            $stmt->execute(['id' => $estimateId]);
+            if ((int) $stmt->fetchColumn() === $materialId) {
+                return;
+            }
+        }
+        if ($this->isCompositionChild($projectId, $materialId)) {
+            throw new HttpException('子材料不参与测算：请改为按它的父项（BOM 顶层项）测算，数量会随父项组价展开。', 422);
+        }
+        throw new HttpException('该材料还没有 BOM 组成，不能作为测算对象：请先在材料管理中为它建立组成（子材料 + 用量系数），或改按已有父材料测算。', 422);
+    }
+
+    /** 该材料是否有下级组成（不把自引用边当成组成）。 */
+    private function hasComposition(int $projectId, int $materialId): bool
+    {
+        $stmt = $this->db->prepare(
+            'SELECT 1 FROM Material_Compositions
+             WHERE project_id = :project_id
+               AND parent_material_id = :material_id
+               AND child_material_id <> :material_self
+             LIMIT 1'
+        );
+        $stmt->execute([
+            'project_id' => $projectId,
+            'material_id' => $materialId,
+            'material_self' => $materialId,
+        ]);
+
+        return $stmt->fetchColumn() !== false;
+    }
+
+    private function isCompositionChild(int $projectId, int $materialId): bool
+    {
+        $stmt = $this->db->prepare(
+            'SELECT 1 FROM Material_Compositions
+             WHERE project_id = :project_id
+               AND child_material_id = :material_id
+               AND parent_material_id <> :material_self
+             LIMIT 1'
+        );
+        $stmt->execute([
+            'project_id' => $projectId,
+            'material_id' => $materialId,
+            'material_self' => $materialId,
+        ]);
+
+        return $stmt->fetchColumn() !== false;
     }
 
     private function requireProjectEntity(string $sql, int $projectId, int $id, string $label): void

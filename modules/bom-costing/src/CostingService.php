@@ -80,7 +80,14 @@ final class CostingService
         return $rows;
     }
 
-    /** 当前项目尚未建立组价的材料（供新建组价选择父材料）。 @return list<array<string, mixed>> */
+    /**
+     * 当前项目尚未建立组价的“定制项”（供新建组价选择父材料）。
+     *
+     * 只有已维护组成子件的材料才算可再分：玻璃、不锈钢等没有子件的
+     * 基本材料不进入父材料候选，避免为不可拆分项建空组价。
+     *
+     * @return list<array<string, mixed>>
+     */
     public function listAvailableMaterials(int $projectId): array
     {
         $stmt = $this->db->prepare(
@@ -90,6 +97,10 @@ final class CostingService
                AND NOT EXISTS (
                    SELECT 1 FROM bom_costings c
                    WHERE c.project_id = m.project_id AND c.parent_material_id = m.material_id
+               )
+               AND EXISTS (
+                   SELECT 1 FROM Material_Compositions cc
+                   WHERE cc.project_id = m.project_id AND cc.parent_material_id = m.material_id
                )
              ORDER BY m.material_name, m.material_id'
         );

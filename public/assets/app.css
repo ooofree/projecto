@@ -112,6 +112,12 @@
     --status-neutral-bg: #f0f2f5;
     --status-neutral-text: #5f6774;
 
+    /* table summary band (demand / estimate subtotal rows), theme-aware */
+    --summary-row-bg: #f4f1e8;
+    --summary-row-border: #e3dccd;
+    --summary-row-text: #20242b;
+    --summary-row-muted: #6b7280;
+
     /* feedback surfaces (notice / entry status) */
     --success-surface: #e9f7f0;
     --success-border: #cdeeda;
@@ -477,10 +483,12 @@ input[type="checkbox"], input[type="radio"] { width: 17px; min-height: 17px; pad
 .badge, .selected-label { display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 5px; color: var(--accent-text); background: var(--accent-soft); font-size: .625rem; font-weight: 650; }
 .selected-label { color: var(--text-secondary); background: var(--surface-2); }
 .badge-neutral { color: var(--status-neutral-text); background: var(--status-neutral-bg); }
+.badge-warning { color: var(--status-warning-text); background: var(--status-warning-bg); }
 .notice { padding: 11px 14px; margin: 0 0 14px; border: 1px solid var(--border); border-radius: 3px; font-size: .85rem; }
 .notice-success { color: var(--success-text); background: var(--success-surface); border-color: var(--success-border); }
 .notice-error { color: var(--error-text); background: var(--error-surface); border-color: var(--error-border); }
 .notice-info { color: var(--info-text); background: var(--info-surface); border-color: var(--info-border); }
+.notice-warning { color: var(--warning-text); background: var(--warning-surface); border-color: var(--warning-border); }
 .empty-state { margin: 0; padding: 18px 10px; color: var(--text-muted); text-align: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
@@ -563,6 +571,13 @@ body.theme-dark {
     --status-danger-text: #ff9e97;
     --status-neutral-bg: rgb(255 255 255 / 8%);
     --status-neutral-text: #c1cac4;
+
+    /* table summary band: dark mode lifts one step above the table surface
+       instead of carrying a light fill, so it reads as a band, not a glare. */
+    --summary-row-bg: #222a38;
+    --summary-row-border: #394456;
+    --summary-row-text: #e6e8ee;
+    --summary-row-muted: #9aa1b2;
     --success-surface: #24322c;
     --success-border: #363c4a;
     --success-text: #a9d8b8;
@@ -1312,3 +1327,21 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 @media (max-width: 1024px) {
     .cost-editor-workspace { grid-template-columns: 1fr; gap: 12px; }
 }
+
+/* 子材料数量汇总（2026-11-23）：同编号明细后紧跟汇总行；底色按主题取令牌，
+   浅色为柔和暖灰 #F4F1E8，暗色为表体上浮一档的深灰蓝 #222A38（与导出 Excel 的
+   浅色填充对应，Excel 始终是浅色）。 */
+.demand-summary-table td.summary-label { font-weight: 600; color: var(--summary-row-muted); }
+.demand-summary-table tr.summary-row td {
+    background: var(--summary-row-bg);
+    color: var(--summary-row-text);
+    border-top: 1px solid var(--summary-row-border);
+    border-bottom: 1px solid var(--summary-row-border);
+}
+.demand-summary-table tr.summary-row td.summary-label,
+.demand-summary-table tr.summary-row td.demand-total { font-weight: 650; }
+.demand-summary-table tr.summary-row td.demand-total { font-variant-numeric: tabular-nums; }
+.demand-summary-table .demand-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.demand-summary-table .demand-code { white-space: nowrap; }
+.demand-summary-table .demand-spec { max-width: 240px; }
+.section-divider-note { margin: 0; padding: var(--space-2) 0 0; color: var(--text-muted); font-size: .82rem; }

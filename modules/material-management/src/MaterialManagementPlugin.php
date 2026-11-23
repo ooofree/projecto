@@ -23,6 +23,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
     private MaterialCatalogService $catalog;
     private ProjectMaterialService $projectMaterials;
     private TenderListService $tenderList;
+    private MaterialDemandService $materialDemand;
     private ?ObjectStorageInterface $imageStorage;
 
     public function __construct(private readonly PluginContext $context)
@@ -30,6 +31,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
         $this->catalog = new MaterialCatalogService($context->db);
         $this->projectMaterials = new ProjectMaterialService($context->db);
         $this->tenderList = new TenderListService($context->db);
+        $this->materialDemand = new MaterialDemandService($context->db);
         // Sample images use the shared platform object storage; without an
         // environment-injected adapter, fall back to the database-configured
         // R2 adapter managed from the document module's system settings.
@@ -47,6 +49,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'quotations' => $this->quotationsIndex(),
             'samples' => $this->samplesIndex(),
             'estimates' => $this->estimatesIndex($input),
+            'demand-summary' => $this->demandSummaryIndex($input),
             'tender-list' => $this->tenderListIndex(),
             'category.save' => $this->saveCategory($input),
             'category.delete' => $this->deleteCategory($input),
@@ -75,6 +78,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'estimate.save' => $this->saveEstimate($input),
             'estimate.delete' => $this->deleteEstimate($input),
             'estimate.export' => $this->exportEstimates($input),
+            'demand.export' => $this->exportDemands($input),
             'tender.save' => $this->saveTenderItem($input),
             'tender.delete' => $this->deleteTenderItem($input),
             default => throw new HttpException('未找到对应操作。', 404),
@@ -238,6 +242,29 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'choices' => $this->projectMaterials->estimateChoices($projectId),
             'group' => $group,
             'canEdit' => Support::hasPermission($this->context->db, 'edit_material_estimates'),
+            'unmeasurableCount' => $this->materialDemand->unmeasurableEstimateCount($projectId),
+            'nav' => $this->nav(),
+        ]);
+    }
+
+    /**
+     * 子材料数量汇总：测算行 × BOM 组成 → 子材料需求量，按材料编号平铺明细并跟一条汇总行。
+     */
+    private function demandSummaryIndex(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_material_estimates');
+        Support::requirePermission($this->context->db, 'view_projects');
+        Support::requirePermission($this->context->db, 'view_materials');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $filters = $this->demandFilters($input);
+
+        return $this->context->view('demand-summary.php', [
+            'title' => '子材料数量汇总',
+            'currentProject' => $project,
+            'summary' => $this->materialDemand->summary($projectId, $filters),
+            'options' => $this->materialDemand->options($projectId),
+            'filters' => $filters,
             'nav' => $this->nav(),
         ]);
     }
@@ -1063,6 +1090,159 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
     }
 
     /**
+     * 子材料数量汇总导出：同一材料编号的明细行连续排列，紧跟一条 SUM 汇总行
+     * （#F4F1E8 高亮、备注「不含损耗」），不按材料大类分块。
+     */
+    private function exportDemands(array $input): PluginResponse
+    {
+        Support::requirePermission($this->context->db, 'view_material_estimates');
+        Support::requirePermission($this->context->db, 'view_projects');
+        Support::requirePermission($this->context->db, 'view_materials');
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $filters = $this->demandFilters($input);
+        $summary = $this->materialDemand->summary($projectId, $filters);
+
+        $headers = ['序号', '材料编号', '材料名称', '规格', '单位', '位置空间', '父材料', '父材料单位', '测算数量', '用量系数', '子材料数量', '备注'];
+        $rows = [];
+        $summarySheetRows = [];
+        // 明细行打 1 级大纲，汇总行留 0 级：Excel 中每种材料形成可折叠分组，
+        // 折叠后只剩该编号的汇总行（2026-11-23 需求）。
+        $outlineRows = [];
+        // 标题 + 3 行元信息 + 空行 + 表头，明细从第 6 行起。
+        $headerRowNumber = 6;
+        $detailSerial = 0;
+        $groupSerial = 0;
+        foreach ($summary['groups'] as $group) {
+            $firstSheetRow = $headerRowNumber + count($rows) + 1;
+            foreach ($group['rows'] as $row) {
+                $detailSerial++;
+                $rows[] = [
+                    $detailSerial,
+                    $group['code'],
+                    $group['name'],
+                    $group['spec'],
+                    $group['unit'],
+                    $row['space'],
+                    $row['parent_code'] !== '' ? $row['parent_code'] . ' · ' . $row['parent_name'] : $row['parent_name'],
+                    $row['parent_unit'],
+                    (float) $row['quantity'],
+                    (float) $row['coefficient'],
+                    (float) $row['demand'],
+                    $row['remarks'],
+                ];
+            }
+            $lastSheetRow = $headerRowNumber + count($rows);
+            if ($lastSheetRow < $firstSheetRow) {
+                continue;
+            }
+            for ($outlineRow = $firstSheetRow; $outlineRow <= $lastSheetRow; $outlineRow++) {
+                $outlineRows[$outlineRow] = 1;
+            }
+            $groupSerial++;
+            $summarySheetRows[] = $headerRowNumber + count($rows) + 1;
+            $rows[] = [
+                $groupSerial,
+                $group['code'],
+                $group['name'],
+                $group['spec'],
+                $group['unit'],
+                '汇总（' . count($group['rows']) . ' 条明细）',
+                '',
+                '',
+                '',
+                '',
+                new XlsxFormula(
+                    'SUM(K' . $firstSheetRow . ':K' . $lastSheetRow . ')',
+                    (float) $group['total']
+                ),
+                '不含损耗',
+            ];
+        }
+
+        $exportDay = Support::nowLocal('Ymd');
+        $exportSequence = Support::nextDailySequence($this->context->db, 'material.demand.export_sequence', $exportDay);
+        $projectLabel = Support::safeFileSegment((string) $project['project_name']) ?: '项目';
+        $fileName = '子材料数量汇总_' . $projectLabel . '_' . $exportDay . '_' . $exportSequence . '.xlsx';
+        if ($filters['search'] !== '') {
+            $searchLabel = Support::safeFileSegment($filters['search']);
+            if ($searchLabel !== '') {
+                $fileName = $searchLabel . '_' . $fileName;
+            }
+        }
+
+        $body = XlsxWorkbook::build('子材料数量汇总', $headers, $rows, [
+            'title' => '📦 ' . $project['project_name'] . '子材料数量汇总',
+            'meta' => [
+                '导出时间: ' . Support::nowLocal('Y-m-d H:i:s'),
+                '明细行数: ' . $summary['detail_count'] . '（材料编号 ' . $summary['group_count'] . ' 个）',
+                '口径: 测算数量 × BOM 用量系数，不含损耗；未建 BOM 的测算行 ' . $summary['skipped_rows'] . ' 条未计入',
+            ],
+            'fixedWidths' => [
+                0 => 6.0,
+                1 => 16.0,
+                2 => 26.0,
+                3 => 28.0,
+                4 => 8.0,
+                5 => 30.0,
+                6 => 30.0,
+                7 => 10.0,
+                8 => 12.0,
+                9 => 10.0,
+                10 => 12.0,
+                11 => 24.0,
+            ],
+            'highlightRows' => $summarySheetRows,
+            'outlineLevels' => $outlineRows,
+        ]);
+        Support::audit(
+            $this->context->db,
+            'material.demand.export',
+            'Exported ' . $summary['detail_count'] . ' demand rows (' . $summary['group_count']
+                . ' material codes) for project ' . $projectId
+                . ($filters['search'] === '' ? ' (all records).' : ' (search filter applied).')
+        );
+
+        return PluginResponse::download(
+            $fileName,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            $body
+        );
+    }
+
+    /**
+     * 拆解页筛选：分类/楼栋/楼层/房间均可选，空值与非法值分别按“不过滤”和 422 处理。
+     *
+     * @return array{category_id:?int,building_id:?int,floor_id:?int,room_id:?int,search:string}
+     */
+    private function demandFilters(array $input): array
+    {
+        return [
+            'category_id' => $this->optionalFilterId($input['category_id'] ?? null, '材料分类'),
+            'building_id' => $this->optionalFilterId($input['building_id'] ?? null, '楼栋'),
+            'floor_id' => $this->optionalFilterId($input['floor_id'] ?? null, '楼层'),
+            'room_id' => $this->optionalFilterId($input['room_id'] ?? null, '房间'),
+            'search' => $this->estimateSearchKeyword($input['search'] ?? null),
+        ];
+    }
+
+    private function optionalFilterId(mixed $value, string $label): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_string($value) && !is_int($value)) {
+            throw new HttpException($label . '筛选无效。', 422);
+        }
+        $id = filter_var($value, FILTER_VALIDATE_INT);
+        if ($id === false || $id < 1) {
+            throw new HttpException($label . '筛选无效。', 422);
+        }
+
+        return $id;
+    }
+
+    /**
      * Normalises the export keyword exactly like the page search box
      * (app.js: lowercase, collapse whitespace, trim) so both filter the same
      * records. Over-long input is rejected instead of silently truncated.
@@ -1202,6 +1382,9 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'estimates' => Support::hasPermission($this->context->db, 'view_material_estimates')
                 && Support::hasPermission($this->context->db, 'view_materials')
                 && Support::hasPermission($this->context->db, 'view_projects'),
+            'demandSummary' => Support::hasPermission($this->context->db, 'view_material_estimates')
+                && Support::hasPermission($this->context->db, 'view_materials')
+                && Support::hasPermission($this->context->db, 'view_projects'),
             'tenders' => Support::hasPermission($this->context->db, 'view_tenders')
                 && Support::hasPermission($this->context->db, 'view_projects'),
         ];
@@ -1230,6 +1413,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             ['quotations', 'quotations', '材料报价', '￥', 'quotes'],
             ['tenders', 'tender-list', '招标清单', '☷', 'quotes'],
             ['estimates', 'estimates', '材料测算', '∑', 'quotes'],
+            ['demandSummary', 'demand-summary', '子材料数量汇总', '⇲', 'quotes'],
         ] as [$key, $page, $label, $icon, $group]) {
             if (!empty($nav[$key])) {
                 $items[] = ['group' => $group, 'page' => $page, 'label' => $label, 'icon' => $icon];

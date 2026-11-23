@@ -9,6 +9,7 @@ use ProjectO\Modules\BomCosting\CostingService;
 use ProjectO\Modules\BomCosting\PriceResolver;
 use ProjectO\Modules\BomCosting\RecalcEngine;
 use ProjectO\Modules\BomCosting\ResourceCatalogService;
+use ProjectO\Modules\MaterialManagement\MaterialCatalogService;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginRegistry;
 use ProjectO\Support;
@@ -58,6 +59,7 @@ $db->exec('CREATE TABLE Materials (
     material_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, material_code TEXT, material_name TEXT NOT NULL,
     unit TEXT NOT NULL, specifications TEXT, material_description_detailed TEXT, category_id INTEGER,
     default_quotation_id INTEGER, sample_required TEXT NOT NULL DEFAULT "required",
+    sample_requirement_explicit INTEGER NOT NULL DEFAULT 0,
     UNIQUE(project_id, material_code)
 )');
 $db->exec('CREATE TABLE Material_Compositions (
@@ -115,6 +117,9 @@ $db->exec('CREATE TABLE cost_line_results (
     tax_amount NUMERIC, comprehensive NUMERIC, formula_version TEXT NOT NULL DEFAULT "v3.0-structure",
     rounding_spec_version TEXT NOT NULL DEFAULT "pending", calculated_at TEXT DEFAULT CURRENT_TIMESTAMP, calculated_by INTEGER,
     UNIQUE(project_id, result_id), UNIQUE(costing_id, composition_id), UNIQUE(costing_id, resource_line_id),
+    -- 与 MySQL 迁移 202611220001 同步：结果是派生数据，边删即清理，不能用 RESTRICT 反锁上游。
+    CONSTRAINT fk_result_composition FOREIGN KEY (project_id, composition_id)
+        REFERENCES Material_Compositions (project_id, composition_id) ON DELETE CASCADE,
     CHECK(unit_price > 0)
 )');
 $db->exec('CREATE TABLE cost_settings (
@@ -162,10 +167,13 @@ foreach ($registry->permissions() as $permission) {
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1];
 
 // 材料基线：父 101，子 102 / 103；辅材 201；目录 301 人工。
+// 另备 104（定制项，组成 104→105）用于验证“基本材料不进父材料候选”。
 $db->exec("INSERT INTO Materials (material_id, project_id, material_code, material_name, unit) VALUES
     (101, 1, 'P-01', '父项成品', '个'),
     (102, 1, 'C-01', '子材料甲', 'm'),
-    (103, 1, 'C-02', '子材料乙', '个')");
+    (103, 1, 'C-02', '子材料乙', '个'),
+    (104, 1, 'A-01', '定制项丙', '个'),
+    (105, 1, 'C-03', '子材料丁', '个')");
 $db->exec("INSERT INTO Auxiliary_Materials (aux_id, project_id, aux_name, unit) VALUES (201, 1, '辅材甲', 'm')");
 $db->exec("INSERT INTO resource_catalog (catalog_id, catalog_type, name, unit) VALUES (301, 'labor', '木工台班', '台班')");
 
@@ -450,10 +458,15 @@ $detail = $costings->requireCosting(1, $costingId);
 // 此时组成边 52 → 子材料 103 无报价（缺价）；资源行已删，缺项数应为 1。
 bomCheck((int) $detail['missing_count'] === 1, '缺项数应派生自未命中有效结果的组件/资源行');
 
+// 104 有一条组成边 → 属于“可再分”的定制项；105 无子件 → 基本材料。
+$db->exec("INSERT INTO Material_Compositions (composition_id, project_id, parent_material_id, child_material_id, quantity) VALUES (61, 1, 104, 105, 1.00)");
+
 $available = $costings->listAvailableMaterials(1);
 $availableIds = array_map(static fn (array $m): int => (int) $m['material_id'], $available);
 bomCheck(!in_array(101, $availableIds, true), '已建组价的父材料不应出现在可选清单');
-bomCheck(in_array(102, $availableIds, true), '未建组价的材料应可被选择');
+bomCheck(!in_array(102, $availableIds, true), '没有组成子件的基本材料不应出现在父材料候选（玻璃、不锈钢等）');
+bomCheck(!in_array(103, $availableIds, true), '已被引用为子件的基本材料同样不应出现在父材料候选');
+bomCheck(in_array(104, $availableIds, true), '已维护组成子件的定制项应可被选择');
 
 echo "Missing-count / available-material tests passed.\n";
 
@@ -515,4 +528,65 @@ bomCheck(
 echo "Bulk quantity save tests passed.\n";
 
 echo "Project isolation tests passed.\n";
+
+// ============================================================================
+// 唯一父子关系：材料管理与 BOM 组价读写同一张 Material_Compositions；
+// 组价候选规则也由材料管理服务计算，BOM 不再自维护一套。
+// ============================================================================
+$materialCatalog = new MaterialCatalogService($db);
+
+$candidatesBefore = $materialCatalog->compositionCandidates(1, 101);
+$candidateIdsBefore = array_map(static fn (array $m): int => (int) $m['material_id'], $candidatesBefore);
+bomCheck(!in_array(104, $candidateIdsBefore, true), '已有自己子项的定制项不能再当子件');
+bomCheck(in_array(102, $candidateIdsBefore, true), '无子项的基本材料可作为子件候选');
+
+// 走材料管理服务加一条组成；组价侧应立刻读到同一条边，无需同步或复制。
+$edgeId = $materialCatalog->saveComposition(1, [
+    'parent_material_id' => 101,
+    'child_material_id' => 105,
+    'quantity' => '1.00',
+]);
+$bomCompositions = $costings->compositionsForParent(1, 101);
+$bomChildIds = array_map(static fn (array $row): int => (int) $row['child_material_id'], $bomCompositions);
+bomCheck(in_array(105, $bomChildIds, true), '材料管理写入的组成应被组价直接读到（同一套父—子关系）');
+bomCheck($edgeId > 0, '组成边由材料管理服务统一写入');
+
+// 同一候选规则：已加入的子件不再出现在组价候选。
+$candidatesAfter = $materialCatalog->compositionCandidates(1, 101);
+$candidateIdsAfter = array_map(static fn (array $m): int => (int) $m['material_id'], $candidatesAfter);
+bomCheck(!in_array(105, $candidateIdsAfter, true), '已加入组成的子件不应重复出现在组价候选');
+
+// ============================================================================
+// 删子材料回归：派生结果行不得反锁组成边（真实 MySQL 报 1451 fk_result_composition）。
+// 用户路径＝组价详情里删子材料：服务层删边，结果行随边清理，再由重算重建。
+// ============================================================================
+$db->exec(
+    'INSERT INTO cost_line_results (costing_id, project_id, composition_id, resource_line_id, quantity, unit_price, pricing_unit)'
+    . ' VALUES (' . (int) $costingId . ', 1, ' . (int) $edgeId . ", NULL, 1.000000, 8.0000, '个')"
+);
+
+$materialCatalog->deleteComposition(1, $edgeId);
+
+$purgedResults = (int) $db->query(
+    'SELECT COUNT(*) FROM cost_line_results WHERE composition_id = ' . (int) $edgeId
+)->fetchColumn();
+bomCheck($purgedResults === 0, '删子材料应连带清理派生结果行，不能被外键 1451 拦下');
+$remainingEdge = (int) $db->query(
+    'SELECT COUNT(*) FROM Material_Compositions WHERE composition_id = ' . (int) $edgeId
+)->fetchColumn();
+bomCheck($remainingEdge === 0, '子材料（组成边）应被删除');
+
+// MySQL 侧最终删除规则必须是 CASCADE：0001 建的是 RESTRICT，202611220001 改 CASCADE。
+$lastDeleteRule = null;
+$migrationFiles = glob(dirname(__DIR__) . '/modules/bom-costing/database/migrations/*.sql') ?: [];
+sort($migrationFiles, SORT_STRING);
+foreach ($migrationFiles as $migrationFile) {
+    $sql = (string) file_get_contents($migrationFile);
+    if (preg_match_all('/`fk_result_composition`\s+FOREIGN KEY.*?ON DELETE\s+(CASCADE|RESTRICT|NO ACTION|SET NULL)/s', $sql, $matches)) {
+        $lastDeleteRule = strtoupper((string) end($matches[1]));
+    }
+}
+bomCheck($lastDeleteRule === 'CASCADE', 'fk_result_composition 最终删除规则应为 CASCADE，实际：' . (string) $lastDeleteRule);
+
+echo "Shared parent-child relation tests passed.\n";
 echo "BOM costing all tests passed.\n";

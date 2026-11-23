@@ -5,8 +5,10 @@ require __DIR__ . '/_nav.php';
 $materials = $data['materials'];
 $categories = $data['categories'];
 
-// 组成子材料候选（按父材料）：单层规则——已有组成子项的材料不能再当子件；
-// 排除自身与已添加子件；被其他定制项引用的子件仍可共享。服务端同样强制校验。
+// 组成子材料候选（按父材料）：规则与 MaterialCatalogService::compositionCandidates
+// 完全一致——单层规则，已有组成子项的材料不能再当子件；排除自身与已添加子件；
+// 被其他定制项引用的子件仍可共享。这里用已加载的材料做等价筛选，避免逐材料再查库；
+// 服务端 saveComposition 仍按同一规则强制校验。
 $compositionsByParent = is_array($compositionsByParent ?? null) ? $compositionsByParent : [];
 $compositionChildOptions = [];
 foreach ($materials as $parentMaterial) {

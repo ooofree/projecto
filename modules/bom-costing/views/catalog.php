@@ -29,12 +29,15 @@ $typeLabels = ['processing' => '加工', 'mechanical' => '机械', 'labor' => '�
                         <td><?= $escape($item['description'] ?? '—') ?></td>
                         <td>
                             <?php if ($canEdit): ?>
-                            <form method="post" class="inline-form">
-                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                                <input type="hidden" name="action" value="cost.catalog.delete">
-                                <input type="hidden" name="catalog_id" value="<?= (int) $item['catalog_id'] ?>">
-                                <button class="button button-quiet" type="submit">删除</button>
-                            </form>
+                            <div class="row-actions">
+                                <button class="button button-secondary" type="button" data-dialog-open="catalog-edit-<?= (int) $item['catalog_id'] ?>">编辑</button>
+                                <form method="post">
+                                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                    <input type="hidden" name="action" value="cost.catalog.delete">
+                                    <input type="hidden" name="catalog_id" value="<?= (int) $item['catalog_id'] ?>">
+                                    <button class="button button-quiet" type="submit">删除</button>
+                                </form>
+                            </div>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -65,4 +68,34 @@ $typeLabels = ['processing' => '加工', 'mechanical' => '机械', 'labor' => '�
         </details>
     <?php endif; ?>
 </section>
+
+<?php if ($canEdit): ?>
+    <?php foreach ($catalog as $item): ?>
+        <dialog class="edit-dialog" id="catalog-edit-<?= (int) $item['catalog_id'] ?>" aria-labelledby="catalog-edit-title-<?= (int) $item['catalog_id'] ?>">
+            <div class="dialog-heading">
+                <div>
+                    <p class="eyebrow">资源目录</p>
+                    <h2 id="catalog-edit-title-<?= (int) $item['catalog_id'] ?>">编辑目录项</h2>
+                </div>
+                <button class="button button-quiet" type="button" data-dialog-close aria-label="关闭">关闭</button>
+            </div>
+            <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                <input type="hidden" name="action" value="cost.catalog.save">
+                <input type="hidden" name="catalog_id" value="<?= (int) $item['catalog_id'] ?>">
+                <label>类型
+                    <select name="catalog_type" required>
+                        <?php foreach ($typeLabels as $typeValue => $typeLabel): ?>
+                            <option value="<?= $escape($typeValue) ?>"<?= $item['catalog_type'] === $typeValue ? ' selected' : '' ?>><?= $escape($typeLabel) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label>名称<input type="text" name="name" maxlength="255" value="<?= $escape($item['name']) ?>" required></label>
+                <label>单位<input type="text" name="unit" maxlength="50" value="<?= $escape($item['unit']) ?>" required></label>
+                <label class="field-wide">说明<textarea name="description" rows="2"><?= $escape($item['description'] ?? '') ?></textarea></label>
+                <div class="field-wide dialog-actions"><button class="button button-primary" type="submit">保存更改</button></div>
+            </form>
+        </dialog>
+    <?php endforeach; ?>
+<?php endif; ?>
 <?php $content = ob_get_clean(); require dirname(__DIR__, 3) . '/views/layout.php'; ?>

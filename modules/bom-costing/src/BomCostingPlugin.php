@@ -137,38 +137,18 @@ final class BomCostingPlugin implements PluginInterface, SidebarNavigationProvid
     }
 
     /**
-     * 可在本组价里补充为子材料的候选：本项目材料中，排除父材料自身、已存在的子件，
-     * 以及已经有自己子项的材料（单层组成规则；服务端 saveComposition 仍会再校验一次）。
+     * 可在本组价里补充为子材料的候选。
+     *
+     * 父—子关系只有一套：候选规则直接复用材料管理的
+     * MaterialCatalogService::compositionCandidates，BOM 不再自维护一套查询。
+     * 保存仍走同一服务，服务端会再校验单层规则。
      *
      * @return list<array<string, mixed>>
      */
     private function compositionCandidates(int $projectId, array $costing): array
     {
-        // 直接查这三条规则需要的字段，不整份载入材料管理（那边还会带上分类、品牌等一整套）。
-        $stmt = $this->context->db->prepare(
-            'SELECT m.material_id, m.material_code, m.material_name, m.unit
-             FROM Materials m
-             WHERE m.project_id = :project_id
-               AND m.material_id <> :parent_self
-               AND NOT EXISTS (
-                   SELECT 1 FROM Material_Compositions own
-                   WHERE own.project_id = m.project_id AND own.parent_material_id = m.material_id
-               )
-               AND NOT EXISTS (
-                   SELECT 1 FROM Material_Compositions used
-                   WHERE used.project_id = m.project_id
-                     AND used.parent_material_id = :parent_used
-                     AND used.child_material_id = m.material_id
-               )
-             ORDER BY m.material_name, m.material_id'
-        );
-        $stmt->execute([
-            'project_id' => $projectId,
-            'parent_self' => (int) $costing['parent_material_id'],
-            'parent_used' => (int) $costing['parent_material_id'],
-        ]);
-
-        return $stmt->fetchAll();
+        return (new MaterialCatalogService($this->context->db))
+            ->compositionCandidates($projectId, (int) $costing['parent_material_id']);
     }
 
     /**

@@ -14,7 +14,7 @@ use Throwable;
  * submit keeps the stored secret), and only authorized users may change them.
  *
  * One configuration serves every module that stores images (document issues,
- * RFIs and material samples).
+ * RFIs, material samples and closeout evidence photos).
  */
 final class CloudStorageSettings
 {

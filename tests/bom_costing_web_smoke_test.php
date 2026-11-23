@@ -93,12 +93,33 @@ foreach ($pages as $page => $heading) {
     echo 'PASS  GET ' . $page . ' 渲染正常（' . $heading . "，布局完整）\n";
 }
 
+// 资源目录编辑：每行带「编辑」按钮与预填对话框，提交 catalog_id 复用 cost.catalog.save 更新。
+$db->exec("INSERT INTO resource_catalog (catalog_id, catalog_type, name, unit, description) VALUES (301, 'labor', '木工台班', '台班', '模板支设')");
+$catalogHtml = renderPage($db, 'cost-catalog');
+foreach ([
+    'data-dialog-open="catalog-edit-301"',
+    'id="catalog-edit-301"',
+    'name="catalog_id" value="301"',
+    'value="木工台班"',
+    'value="台班"',
+    '<option value="labor" selected>人工</option>',
+    '>保存更改<',
+] as $needle) {
+    if (!str_contains($catalogHtml, $needle)) {
+        throw new RuntimeException("资源目录行编辑缺少「{$needle}」。");
+    }
+}
+echo "PASS  GET cost-catalog 行内编辑按钮与预填对话框渲染正常\n";
+
 // 右栏成本预览冒烟：造一份“材料组成”组价，验证选中后真的渲染出环形占比图、
 // 成本汇总（含占比）与成本明细，而不是只有空状态。
 $db->exec("INSERT INTO Material_Categories (category_id, category_name, sort_order) VALUES (1, '灯具', 10)");
 $db->exec("INSERT INTO Materials (material_id, project_id, material_code, material_name, unit, category_id) VALUES
     (1, 1, 'DG-001', '筒灯', '套', 1), (2, 1, 'PZ-001', '灯珠', '个', 1)");
-$db->exec('INSERT INTO Material_Compositions (composition_id, project_id, parent_material_id, child_material_id, quantity) VALUES (1, 1, 1, 2, 3)');
+// 4 是已维护组成的定制项（可组价），5 是它的基本材料子件（不进父材料候选）。
+$db->exec("INSERT INTO Materials (material_id, project_id, material_code, material_name, unit, category_id) VALUES
+    (4, 1, 'DG-002', '灯箱', '个', 1), (5, 1, 'DG-003', '灯布', '个', 1)");
+$db->exec('INSERT INTO Material_Compositions (composition_id, project_id, parent_material_id, child_material_id, quantity) VALUES (1, 1, 1, 2, 3), (2, 1, 4, 5, 1)');
 $db->exec("INSERT INTO bom_costings (costing_id, project_id, parent_material_id, status, calc_status, version) VALUES (1, 1, 1, 'draft', 'complete', 1)");
 $db->exec("INSERT INTO cost_line_results (result_id, costing_id, project_id, composition_id, resource_line_id, quantity, unit_price, currency_code, pricing_unit, manual_price, source_tax_status)
     VALUES (1, 1, 1, 1, NULL, 3, 12.5, 'CNY', '个', 12.5, 'taxable')");
@@ -111,10 +132,35 @@ foreach (['cost-donut', '材料组成', '37.50', '100.00%', '成本明细'] as $
 }
 echo "PASS  GET costings?costing_id=1 右栏成本预览（环形图 + 汇总 + 明细）渲染正常\n";
 
+// 新建组价的父材料必须挂共享搜索选择器：data-combo 外壳 + 文本搜索输入，
+// 原生 select 仍以 name="material_id" 提交。旧实现只有裸 select。
+foreach (['data-combo', 'data-combo-input', 'name="material_id"'] as $needle) {
+    if (!str_contains($previewHtml, $needle)) {
+        throw new RuntimeException("新建组价的父材料缺少搜索选择器「{$needle}」。");
+    }
+}
+// 父材料候选只含定制项：灯箱（有组成）在，基本材料灯布（无子件）不在。
+if (!str_contains($previewHtml, '灯箱')) {
+    throw new RuntimeException('已维护组成的定制项应出现在新建组价候选。');
+}
+if (str_contains($previewHtml, '灯布')) {
+    throw new RuntimeException('没有组成子件的基本材料不应出现在父材料候选。');
+}
+echo "PASS  新建组价的父材料选择带搜索组件\n";
+
+// 追加一个尚未进入组成的材料，使「添加子材料」对话框渲染出候选下拉。
+$db->exec("INSERT INTO Materials (material_id, project_id, material_code, material_name, unit, category_id) VALUES (3, 1, 'PZ-002', '灯罩', '个', 1)");
+
 $detailHtml = renderPage($db, 'costing-detail', ['costing_id' => 1]);
 if (!str_contains($detailHtml, '成本预览') || !str_contains($detailHtml, '成本项小计占比')) {
     throw new RuntimeException('组价详情页缺少成本预览区块。');
 }
+foreach (['data-combo', 'data-combo-input', 'name="child_material_id"'] as $needle) {
+    if (!str_contains($detailHtml, $needle)) {
+        throw new RuntimeException("添加子材料对话框缺少搜索选择器「{$needle}」。");
+    }
+}
 echo "PASS  GET costing-detail 详情页带成本预览区块\n";
+echo "PASS  添加子材料对话框带搜索组件\n";
 
 echo "BOM costing web smoke passed.\n";

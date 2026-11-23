@@ -45,7 +45,7 @@
 
 **④ cost_line_results（当前态明细）**：result_id PK；costing_id/project_id；**composition_id/resource_line_id 恰一**（DR-1：组件结果直接引用 Material_Compositions.composition_id，复合 FK (project_id,composition_id)——需 Material_Compositions 增 UNIQUE(project_id,composition_id)，属既有表扩展，见下）；quantity（含损耗计算数量）/unit_price/currency_code/pricing_unit；quotation_id/project_cost_price_id/manual_price＋manual_confirmed_by 恰一来源＋真实 FK；source_tax_status；mgmt_rate/profit_rate/tax_rate/trans_rate/ins_rate（实际所用值）；subtotal/mgmt_amount/profit_amount/tax_amount/comprehensive；formula_version/rounding_spec_version；calculated_at/by。UNIQUE(costing_id,composition_id)/(costing_id,resource_line_id)；unit_price>0 禁零价。
 - 删 fx_rate_id/fx_rate_value（无外币；外币出现时随汇率表一起加回）。
-- **组成边删除→结果行清理**：重算事务内删除已不存在组成边对应的结果行（当前态语义）；composition_id FK 用 RESTRICT＋重算先清结果再允许删边，或删边事件触发重算清理——实现二选一，DDL 评审定【待开发验证】。
+- **组成边删除→结果行清理**：结果行是派生当前态；composition_id 复合外键采用 **ON DELETE CASCADE**（迁移 202611220001），删边即清理对应结果行，随后重算按剩余结构重建。原设想的“RESTRICT＋重算先清结果再删边”不成立：重算发生在删边之后，RESTRICT 会让删边本身报 1451，用户侧表现为删子材料 500。【已确认】
 
 **⑤ cost_settings（当前费率配置）**：setting_id PK；project_id；scope_type enum('project','building')；building_id NULL（复合 FK）；building_key 生成列；五费率 decimal(6,4)；created_by/at；updated_by/at。UNIQUE(project_id,building_key)；修改 UPDATE＋同事务审计。继承规则待 B17（推荐整行覆盖）。
 

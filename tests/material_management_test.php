@@ -535,7 +535,7 @@ materialTestCheck(
 // Extra project-one categories and materials so the Excel export can be filtered.
 $lightingCategoryId = $catalog->saveCategory(1, ['category_name' => '灯具', 'sort_order' => '20']);
 $plumbingCategoryId = $catalog->saveCategory(1, ['category_name' => '水电', 'sort_order' => '30']);
-$catalog->saveMaterial(1, [
+$lightingMaterialId = $catalog->saveMaterial(1, [
     'material_code' => 'DG-001', 'material_name' => '筒灯', 'unit' => '个',
     'category_id' => (string) $lightingCategoryId, 'specifications' => '9W 暖光',
 ]);
@@ -681,6 +681,17 @@ materialTestExpectStatus(
 );
 $tenderService->delete(1, $tenderId);
 $tenderService->delete(2, $otherTenderId);
+// 测算口径 D2-A（2026-11-23）：只有建立了 BOM 组成的父材料才能录入测算。
+// 测试用直接写组成的方式造父项，避开 saveComposition 的「首次组成翻转送样要求」，
+// 否则地砖/筒灯的 sample_required 会变成 exempt，破坏后面的样品断言。
+$seedComposition = static function (int $parentId, int $childId, string $quantity): void {
+    global $db;
+    $db->prepare(
+        'INSERT INTO Material_Compositions (project_id, parent_material_id, child_material_id, quantity)
+         VALUES (1, ?, ?, ?)'
+    )->execute([$parentId, $childId, $quantity]);
+};
+$seedComposition($materialId, $secondMaterialId, '2.5000');
 $estimateId = $projectMaterials->saveEstimate(1, [
     'building_id' => (string) $buildingId,
     'floor_id' => (string) $floorId,
@@ -1194,6 +1205,99 @@ materialTestExpectStatus(
     409,
     'Materials referenced as a composition child must not be hard-deleted.'
 );
+// 测算口径：只按 BOM 顶层项（父项或独立材料）测算，子材料不进候选、不能新建或改绑。
+$estimateScopeChoices = $projectMaterials->estimateChoices(1);
+$estimateScopeIds = array_map(
+    static fn (array $choice): int => (int) $choice['material_id'],
+    $estimateScopeChoices['materials']
+);
+materialTestCheck(
+    in_array($compDoorId, $estimateScopeIds, true)
+        && in_array($compNestedParentId, $estimateScopeIds, true)
+        && !in_array($compGlassId, $estimateScopeIds, true)
+        && !in_array($compSteelId, $estimateScopeIds, true)
+        && !in_array($compHandleId, $estimateScopeIds, true),
+    'Estimate choices must stay on BOM top-level items: parents and standalone materials in, composition children out.'
+);
+materialTestCheck(
+    in_array($compGlassId, $estimateScopeChoices['child_material_ids'], true)
+        && in_array($compHandleId, $estimateScopeChoices['child_material_ids'], true),
+    'Estimate choices must report composition children so the page can flag legacy rows.'
+);
+materialTestExpectStatus(
+    fn () => $projectMaterials->saveEstimate(1, [
+        'building_id' => (string) $buildingId,
+        'material_id' => (string) $compGlassId,
+        'estimated_quantity' => '1',
+    ]),
+    422,
+    'Creating an estimate line for a composition child must be rejected with 422.'
+);
+materialTestExpectStatus(
+    fn () => $projectMaterials->saveEstimate(1, [
+        'estimate_detail_id' => (string) $estimateId,
+        'building_id' => (string) $buildingId,
+        'material_id' => (string) $compGlassId,
+        'estimated_quantity' => '1',
+    ]),
+    422,
+    'Rebinding an existing estimate line to a composition child must be rejected with 422.'
+);
+// D2-A（2026-11-23）：没有 BOM 组成的材料不能作为测算对象，必须先建组成。
+$noBomMaterialId = $catalog->saveMaterial(1, [
+    'material_code' => 'NOBOM-01', 'material_name' => '无组成测试件', 'unit' => '件',
+]);
+materialTestExpectStatus(
+    fn () => $projectMaterials->saveEstimate(1, [
+        'building_id' => (string) $buildingId,
+        'material_id' => (string) $noBomMaterialId,
+        'estimated_quantity' => '1',
+    ]),
+    422,
+    'A material without any BOM composition must be rejected as an estimate target with 422.'
+);
+materialTestCheck(
+    !in_array($noBomMaterialId, array_map(
+        static fn (array $choice): int => (int) $choice['material_id'],
+        $projectMaterials->estimateChoices(1)['materials']
+    ), true)
+        && $projectMaterials->estimateChoices(1)['uncomposed_material_count'] >= 1,
+    'Estimate choices must exclude materials without composition and report how many lack BOM.'
+);
+// 存量行（组成关系后建/口径收紧前录入）材料不变时仍可改数量，不能变成死记录。
+$db->prepare('INSERT INTO Initial_Cost_Estimate_Detail (building_id, material_id, estimated_quantity) VALUES (?, ?, ?)')
+    ->execute([$buildingId, $noBomMaterialId, '1']);
+$legacyNoBomEstimateId = (int) $db->lastInsertId();
+$projectMaterials->saveEstimate(1, [
+    'estimate_detail_id' => (string) $legacyNoBomEstimateId,
+    'building_id' => (string) $buildingId,
+    'material_id' => (string) $noBomMaterialId,
+    'estimated_quantity' => '4',
+    'remarks' => '历史无组成行',
+]);
+materialTestCheck(
+    (string) $projectMaterials->estimateData(1)[0]['estimated_quantity'] === '4',
+    'A legacy estimate row whose material has no composition must stay editable when the material is unchanged.'
+);
+$projectMaterials->deleteEstimate(1, $legacyNoBomEstimateId);
+// 清理这个一次性材料，避免影响后面的材料清单导出行数断言。
+$catalog->deleteMaterial(1, $noBomMaterialId);
+// 组成关系后建的存量行：材料不变时仍可改数量，历史记录不能变成死行。
+$db->prepare('INSERT INTO Initial_Cost_Estimate_Detail (building_id, material_id, estimated_quantity) VALUES (?, ?, ?)')
+    ->execute([$buildingId, $compGlassId, '2']);
+$legacyChildEstimateId = (int) $db->lastInsertId();
+$projectMaterials->saveEstimate(1, [
+    'estimate_detail_id' => (string) $legacyChildEstimateId,
+    'building_id' => (string) $buildingId,
+    'material_id' => (string) $compGlassId,
+    'estimated_quantity' => '5',
+    'remarks' => '历史子材料行',
+]);
+materialTestCheck(
+    (string) $projectMaterials->estimateData(1)[0]['estimated_quantity'] === '5',
+    'A legacy estimate row that now points at a composition child must stay editable when the material is unchanged.'
+);
+$projectMaterials->deleteEstimate(1, $legacyChildEstimateId);
 // 样品口径：无需送样材料拒绝新建/改绑；材料不变的存量编辑放行。
 $compExemptId = $catalog->saveMaterial(1, ['material_name' => '免送样测试件', 'unit' => '件', 'sample_required' => 'exempt']);
 materialTestExpectStatus(
@@ -1559,6 +1663,9 @@ foreach ([$compDoorId, $compGlassId, $compSteelId, $compHandleId, $compNestedPar
     $catalog->deleteMaterial(1, $compCleanupId);
 }
 $catalog->deleteMaterial(2, $compProjectTwoChildId);
+// 组成边被上面的清理全部删除，重新给测算用父项造 BOM 组成（地砖 2.5 系数、筒灯 3.0 系数）。
+$seedComposition($materialId, $secondMaterialId, '2.5000');
+$seedComposition($lightingMaterialId, $secondMaterialId, '3.0000');
 
 $sampleExport = $plugin->dispatch('sample.export', []);
 materialTestCheck(
@@ -1675,6 +1782,11 @@ materialTestCheck(
     'Estimates page must render the quick-entry material picker and group records by building and floor.'
 );
 materialTestCheck(
+    preg_match('/<option value="' . $compGlassId . '"/', $estimateHtml) !== 1
+        && str_contains($estimateHtml, 'BOM 基本单位'),
+    'The estimates page must not offer composition children as measuring targets and must state the BOM base-unit scope.'
+);
+materialTestCheck(
     str_contains($estimateHtml, 'data-entry-counter')
         && str_contains($estimateHtml, 'data-entry-status')
         && str_contains($estimateHtml, 'data-entry-recent')
@@ -1760,6 +1872,93 @@ materialTestCheck(
         && str_contains($categoryEstimateHtml, 'href="?page=estimates&amp;group=space"'),
     'Category grouping must show material categories and link back to space grouping.'
 );
+// 子材料数量汇总（2026-11-23）：测算数量 × BOM 用量系数 → 子材料需求量；
+// 按材料编号平铺明细 + 每个编号一条汇总行，不做大类小计。
+$demandService = new \ProjectO\Modules\MaterialManagement\MaterialDemandService($db);
+$demandSummary = $demandService->summary(1);
+// 当前项目测算行：地砖 12.3456（×2.5）、筒灯 3.5（×3）、筒灯 2（×3），子件均为墙砖 FL-002。
+materialTestCheck(
+    $demandSummary['detail_count'] === 3
+        && $demandSummary['group_count'] === 1
+        && ($demandSummary['groups'][0]['code'] ?? '') === 'FL-002'
+        && count($demandSummary['groups'][0]['rows']) === 3,
+    'Demand summary must flatten every estimate row into one child-material contribution per composition edge.'
+);
+materialTestCheck(
+    ($demandSummary['groups'][0]['total'] ?? '') === '47.3640',
+    'Demand totals must multiply quantity by the BOM coefficient with 4-decimal precision (30.8640 + 6 + 10.5).'
+);
+$demandByRoom = $demandService->summary(1, ['room_id' => $roomId]);
+materialTestCheck(
+    $demandByRoom['detail_count'] === 1
+        && ($demandByRoom['groups'][0]['total'] ?? '') === '30.8640',
+    'Space filters must narrow the demand rows and recompute the per-code total.'
+);
+$demandBySearch = $demandService->summary(1, ['search' => '地砖']);
+materialTestCheck(
+    $demandBySearch['detail_count'] === 1 && $demandBySearch['group_count'] === 1,
+    'Demand search must match the parent material name and keep only its contribution rows.'
+);
+$demandPage = $plugin->dispatch('demand-summary', []);
+$demandHtml = renderMaterialTestView($demandPage);
+materialTestCheck(
+    $demandPage->type === 'view'
+        && is_file((string) $demandPage->viewPath)
+        && str_contains($demandHtml, '子材料数量汇总')
+        && str_contains($demandHtml, '材料编号')
+        && str_contains($demandHtml, '47.364')
+        && substr_count($demandHtml, 'class="summary-row"') === 1
+        && str_contains($demandHtml, 'value="material.demand.export"'),
+    'The demand summary page must list a code\'s detail rows followed by one highlighted summary row and expose the export action.'
+);
+materialTestCheck(
+    str_contains($demandHtml, 'data-demand-table')
+        && str_contains($demandHtml, 'data-cascade-form')
+        && str_contains($demandHtml, '不含损耗'),
+    'The demand summary page must render filters and state the no-wastage scope.'
+);
+$demandRoomPage = $plugin->dispatch('demand-summary', ['room_id' => (string) $roomId]);
+$demandRoomHtml = renderMaterialTestView($demandRoomPage);
+materialTestCheck(
+    str_contains($demandRoomHtml, '30.864')
+        && !str_contains($demandRoomHtml, '47.364')
+        && str_contains($demandRoomHtml, '清除筛选'),
+    'Demand filters must be applied on the page and offer a reset link.'
+);
+$demandExport = $plugin->dispatch('demand.export', ['search' => '地砖']);
+materialTestCheck(
+    $demandExport->type === 'download'
+        && str_contains((string) ($demandExport->data['content_type'] ?? ''), 'spreadsheetml')
+        && preg_match('/^地砖_子材料数量汇总_.+_\d{8}_\d+\.xlsx$/u', (string) ($demandExport->data['filename'] ?? '')) === 1,
+    'Demand export must produce an .xlsx download that respects the search filter in its file name.'
+);
+materialTestCheck(
+    (int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'material.demand.export'")->fetchColumn() >= 1,
+    'Demand exports must write an audit entry.'
+);
+// 2026-11-23: each material code is an Excel outline group. Detail rows carry
+// outlineLevel 1 and the code's summary row stays outside the group, so the
+// sheet shows +/- buttons and collapsing leaves the total row visible.
+$demandSheetXml = materialTestXlsxSheet($demandExport);
+$demandSummaryChunk = '';
+foreach (explode('<row ', $demandSheetXml) as $rowChunk) {
+    if (str_contains($rowChunk, '>不含损耗<') && str_contains($rowChunk, '<f>SUM(')) {
+        $demandSummaryChunk = $rowChunk;
+        break;
+    }
+}
+materialTestCheck(
+    preg_match('/<sheetFormatPr[^>]*outlineLevelRow="1"/', $demandSheetXml) === 1
+        && substr_count($demandSheetXml, 'outlineLevel="1"') === 1
+        && $demandSummaryChunk !== ''
+        && !str_contains($demandSummaryChunk, 'outlineLevel='),
+    'Demand export must group each code: detail rows at outline level 1, summary row outside the group.'
+);
+$registryDemandExport = $registry->dispatch('POST', 'material.demand.export', []);
+materialTestCheck(
+    $registryDemandExport instanceof PluginResponse && $registryDemandExport->type === 'download',
+    'Demand export must be registered as a plugin route in its manifest.'
+);
 $tenderHtml = renderMaterialTestView($tenderPage);
 materialTestCheck(
     str_contains($tenderHtml, 'CNY - 人民币')
@@ -1773,6 +1972,7 @@ foreach ([
     'quotations' => '材料报价',
     'samples' => '样品跟踪',
     'tender-list' => '招标清单',
+    'demand-summary' => '子材料数量汇总',
 ] as $page => $heading) {
     $_GET = ['page' => $page];
     http_response_code(200);
@@ -2501,7 +2701,7 @@ materialTestCheck(
 // cell) and must not leak onto detail or spacer rows.
 $estimateStylesXml = materialTestXlsxPart($estimateExport, 'xl/styles.xml');
 materialTestCheck(
-    str_contains($estimateStylesXml, 'FFFFF2CC')
+    str_contains($estimateStylesXml, 'FFF4F1E8')
         && preg_match('/<xf[^>]*fillId="3"[^>]*borderId="1"/', $estimateStylesXml) === 1,
     'Estimate export styles must define the light summary highlight fill.'
 );

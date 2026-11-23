@@ -17,7 +17,7 @@ $groupAnchor = static fn (string $categoryName): string => 'cost-group-' . (int)
     <div>
         <p class="eyebrow">组价清单</p>
         <h1>BOM 组价</h1>
-        <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。左侧点一份组价，右侧立即显示成本构成与占比；材料组成关系在材料管理中维护，组价实时引用，不存组件副本。</p>
+        <p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。左侧点一份组价，右侧立即显示成本构成与占比；父—子关系与材料管理共用同一套（Material_Compositions），组价实时引用，不存组件副本。</p>
     </div>
 </section>
 
@@ -36,7 +36,7 @@ $groupAnchor = static fn (string $categoryName): string => 'cost-group-' . (int)
 
         <?php if ($costings === []): ?>
             <p class="empty-state">
-                当前项目还没有组价。<?= $canEdit && $availableMaterials !== [] ? '在下方“新建组价”里选一个父材料即可建立。' : '请先在材料管理中维护材料与组成关系。' ?>
+                当前项目还没有组价。<?php if ($canEdit && $availableMaterials !== []): ?>在下方“新建组价”里选一个父材料即可建立。<?php elseif ($canEdit): ?>当前没有可组价的定制项：先到<a href="?page=materials">材料管理</a>为定制产品添加组成子件；玻璃、不锈钢等基本材料不能再分，不参与组价。<?php else: ?>请先在材料管理中维护材料与组成关系。<?php endif; ?>
             </p>
         <?php else: ?>
             <?php if (count($groupedCostings) > 1): ?>
@@ -140,21 +140,34 @@ $groupAnchor = static fn (string $categoryName): string => 'cost-group-' . (int)
     <details class="panel cost-create-panel">
         <summary class="cost-create-summary">
             <span class="cost-create-title">新建组价</span>
-            <span class="muted">一父一份；只能选择尚未建立组价的材料</span>
+            <span class="muted">一父一份；只列已维护组成子件的定制项，玻璃、不锈钢等基本材料不参与</span>
         </summary>
         <form method="post" class="form-grid">
             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
             <input type="hidden" name="action" value="costing.create">
             <label>父材料
-                <select name="material_id" required>
-                    <option value="">请选择材料</option>
-                    <?php foreach ($availableMaterials as $material): ?>
-                        <option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ' (' . $material['unit'] . ')') ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <?php /* Reuse the shared searchable picker (app.js [data-combo]): the select stays the submitted value, the text input is the fast search path. */ ?>
+                <div class="combo" data-combo data-combo-noun="父材料" data-combo-empty="没有匹配的父材料">
+                    <select name="material_id" data-combo-select required aria-label="可建组价的父材料">
+                        <option value="">请选择材料</option>
+                        <?php foreach ($availableMaterials as $material): ?>
+                            <option value="<?= (int) $material['material_id'] ?>"><?= $escape(($material['material_code'] ? $material['material_code'] . ' · ' : '') . $material['material_name'] . ' (' . $material['unit'] . ')') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <input type="text" class="combo-input" data-combo-input placeholder="输入名称或编码搜索" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-label="搜索并选择父材料">
+                    <ul class="combo-options" data-combo-options role="listbox" hidden></ul>
+                </div>
             </label>
             <div class="field-wide"><button class="button button-primary" type="submit">建立组价</button></div>
         </form>
     </details>
+<?php elseif ($canEdit && $costings !== []): ?>
+    <section class="panel cost-create-panel">
+        <div class="panel-heading">
+            <h2>新建组价</h2>
+            <span class="muted">暂无可选定制项</span>
+        </div>
+        <p class="muted">组价父项只能是已在材料管理维护了组成子件的定制项；玻璃、不锈钢等基本材料不能再分，不进入候选。请先到<a href="?page=materials">材料管理</a>为定制产品添加组成子件。</p>
+    </section>
 <?php endif; ?>
 <?php $content = ob_get_clean(); require dirname(__DIR__, 3) . '/views/layout.php'; ?>

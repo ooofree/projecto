@@ -50,7 +50,8 @@ final class XlsxWorkbook
      *     meta?: list<string>,
      *     images?: list<array{row: int, column: int, bytes: string, extension: string, hyperlink?: string}>,
      *     fixedWidths?: array<int, float>,
-     *     highlightRows?: list<int>
+     *     highlightRows?: list<int>,
+     *     outlineLevels?: array<int, int>
      * } $options
      */
     public static function build(string $sheetName, array $headers, array $rows, array $options = []): string
@@ -74,6 +75,17 @@ final class XlsxWorkbook
             if (is_int($highlightRow)) {
                 $highlightRows[$highlightRow] = true;
             }
+        }
+        // 行分组（2026-11-23）：Excel 大纲级别，明细行给 1 级、汇总行留 0 级，
+        // 用户点左侧 +/- 即可折叠/展开每种材料。只接受 1–7 级与存在的行号。
+        $outlineLevels = [];
+        $maxOutlineLevel = 0;
+        foreach (is_array($options['outlineLevels'] ?? null) ? $options['outlineLevels'] : [] as $outlineRow => $outlineLevel) {
+            if (!is_int($outlineRow) || !is_int($outlineLevel) || $outlineLevel < 1 || $outlineLevel > 7) {
+                continue;
+            }
+            $outlineLevels[$outlineRow] = $outlineLevel;
+            $maxOutlineLevel = max($maxOutlineLevel, $outlineLevel);
         }
 
         $reportLayout = $title !== null || $meta !== [];
@@ -109,7 +121,8 @@ final class XlsxWorkbook
                 ? ' ht="' . self::IMAGE_ROW_HEIGHT . '" customHeight="1"'
                 : '';
             $rowStyle = isset($highlightRows[$rowNumber]) ? self::STYLE_SUMMARY : self::STYLE_BODY;
-            $xmlRows[] = '<row r="' . $rowNumber . '"' . $height . '>'
+            $outline = isset($outlineLevels[$rowNumber]) ? ' outlineLevel="' . $outlineLevels[$rowNumber] . '"' : '';
+            $xmlRows[] = '<row r="' . $rowNumber . '"' . $height . $outline . '>'
                 . self::rowCells($rowNumber, $values, $rowStyle)
                 . '</row>';
         }
@@ -138,6 +151,9 @@ final class XlsxWorkbook
                 : '<sheetViews><sheetView workbookViewId="0">'
                     . '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
                     . '</sheetView></sheetViews>')
+            . ($maxOutlineLevel > 0
+                ? '<sheetFormatPr outlineLevelRow="' . $maxOutlineLevel . '" defaultRowHeight="15"/>'
+                : '')
             . '<cols>' . $columns . '</cols>'
             . '<sheetData>' . implode('', $xmlRows) . '</sheetData>'
             . ($reportLayout ? '' : '<autoFilter ref="A1:' . $lastColumn . $lastRowNumber . '"/>')
@@ -426,6 +442,11 @@ final class XlsxWorkbook
             . '</workbook>';
     }
 
+    /**
+     * 汇总行底色（Excel 始终浅色，对应页面浅色主题的柔和暖灰；暗色主题仅页面）。
+     */
+    private const HIGHLIGHT_FILL = 'FFF4F1E8';
+
     private static function styles(): string
     {
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -439,7 +460,7 @@ final class XlsxWorkbook
             . '<fill><patternFill patternType="none"/></fill>'
             . '<fill><patternFill patternType="gray125"/></fill>'
             . '<fill><patternFill patternType="solid"><fgColor rgb="FF4F81BD"/><bgColor indexed="64"/></patternFill></fill>'
-            . '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill>'
+            . '<fill><patternFill patternType="solid"><fgColor rgb="' . self::HIGHLIGHT_FILL . '"/><bgColor indexed="64"/></patternFill></fill>'
             . '</fills>'
             . '<borders count="2">'
             . '<border><left/><right/><top/><bottom/><diagonal/></border>'

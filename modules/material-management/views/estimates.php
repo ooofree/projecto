@@ -107,12 +107,28 @@ $renderRecord = static function (array $estimate) use ($groupMode, $choices, $ca
     $placeLabel = $groupMode === 'category' ? $spaceLabel : $roomLabel;
     $quantityText = $formatQuantity((string) $estimate['estimated_quantity']) . ' ' . $estimate['unit'];
     $remarksText = trim((string) ($estimate['remarks'] ?? ''));
+    // 历史行可能指向子材料（组成关系后建）：候选里已经没有它，这里补回本行自身，
+    // 保证存量记录仍能打开、改数量或改绑到顶层项，而不是被迫清空材料。
+    $currentMaterials = $choices['materials'];
+    $currentMaterialIds = array_map(static fn (array $material): int => (int) $material['material_id'], $currentMaterials);
+    if (!in_array((int) $estimate['material_id'], $currentMaterialIds, true)) {
+        $currentMaterials[] = [
+            'material_id' => (int) $estimate['material_id'],
+            'material_code' => (string) ($estimate['material_code'] ?? ''),
+            'material_name' => (string) $estimate['material_name'],
+            'unit' => (string) $estimate['unit'],
+        ];
+    }
+    $isChildMaterial = in_array((int) $estimate['material_id'], $choices['child_material_ids'] ?? [], true);
+    // 既不是组成子件、也没有 BOM 组成的存量行：口径收紧后不参与拆解，页面明确标记待整改。
+    $isUncomposedMaterial = !$isChildMaterial && !in_array((int) $estimate['material_id'], $currentMaterialIds, true);
     ob_start(); ?>
     <details class="record-card ledger-record" data-ledger-record data-estimate-id="<?= (int) $estimate['estimate_detail_id'] ?>" data-search="<?= $escape($searchText($estimate)) ?>">
         <summary class="ledger-record-head">
             <span class="ledger-record-title">
                 <strong><?= $escape($estimate['material_name']) ?></strong>
                 <?php if (($estimate['material_code'] ?? '') !== ''): ?><span class="ledger-record-code"><?= $escape($estimate['material_code']) ?></span><?php endif; ?>
+                <?php if ($isChildMaterial): ?><span class="badge badge-neutral" title="该材料现在是他项的组成子件：历史测算保留可编辑，新录入请改按父项测算">子材料</span><?php elseif ($isUncomposedMaterial): ?><span class="badge badge-warning" title="该材料还没有 BOM 组成：先建组成才会参与子材料拆解；新录入不能选它">未建 BOM</span><?php endif; ?>
             </span>
             <span class="ledger-record-place"><?= $escape($placeLabel) ?></span>
             <?php if ($remarksText !== ''): ?><span class="ledger-record-remarks" title="<?= $escape($remarksText) ?>"><?= $escape(mb_strimwidth($remarksText, 0, 36, '…', 'UTF-8')) ?></span><?php endif; ?>
@@ -126,7 +142,7 @@ $renderRecord = static function (array $estimate) use ($groupMode, $choices, $ca
                     <input type="hidden" name="estimate_detail_id" value="<?= (int) $estimate['estimate_detail_id'] ?>">
                     <div class="field-wide ledger-material-field">
                         <span class="field-label">材料</span>
-                        <?= $renderMaterialCombo($choices['materials'], (int) $estimate['material_id']) ?>
+                        <?= $renderMaterialCombo($currentMaterials, (int) $estimate['material_id']) ?>
                     </div>
                     <label>楼栋<select name="building_id" required data-cascade-building><option value="">请选择楼栋</option><?php foreach ($choices['buildings'] as $building): ?><option value="<?= (int) $building['building_id'] ?>" <?= (int) $building['building_id'] === (int) $estimate['building_id'] ? 'selected' : '' ?>><?= $escape($building['building_number'] . ' ' . $building['building_name']) ?></option><?php endforeach; ?></select></label>
                     <label>楼层（可选）<select name="floor_id" data-cascade-floor><option value="">不指定</option><?php foreach ($choices['floors'] as $floor): ?><option value="<?= (int) $floor['floor_id'] ?>" data-building-id="<?= (int) $floor['building_id'] ?>" <?= (int) $floor['floor_id'] === (int) $estimate['floor_id'] ? 'selected' : '' ?>><?= $escape($floor['floor_number'] . ' ' . ($floor['floor_name'] ?? '')) ?></option><?php endforeach; ?></select></label>
@@ -144,14 +160,28 @@ $renderRecord = static function (array $estimate) use ($groupMode, $choices, $ca
     <?php return (string) ob_get_clean();
 };
 ?>
-<section class="page-heading"><div><p class="eyebrow">项目测算 · 材料数量</p><h1>材料测算明细</h1><p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。本期仅记录空间、材料、测算数量和备注，不计算金额、税费、BOM 或汇总成本。</p></div></section>
-<?php if ($canEdit && ($choices['buildings'] === [] || $choices['materials'] === [])): ?><div class="notice notice-info">创建测算明细前，请先建立当前项目楼栋，并在材料管理中维护材料。</div><?php endif; ?>
+<section class="page-heading"><div><p class="eyebrow">项目测算 · 材料数量</p><h1>材料测算明细</h1><p class="muted">项目：<?= $escape($currentProject['project_name']) ?>。本期仅记录空间、材料、测算数量和备注，不计算金额、税费、BOM 或汇总成本。测算按 BOM 基本单位（顶层项）计量：有下级组成的父项按它自己的单位（套／个／m／m²）测算，子材料的量随父项组价展开，不单独测算。</p></div></section>
+<?php if ($canEdit && ($choices['buildings'] === [] || $choices['materials'] === [])): ?>
+    <div class="notice notice-info">
+        <?php if ($choices['materials'] === [] && ($choices['material_count'] ?? 0) > 0): ?>
+            当前项目还没有任何建立了 BOM 组成的父材料，无法录入测算。测算只按父材料记数量、再按组成拆解到子材料：请先在材料管理里创建组合产品（父项）并添加子材料与用量系数；需要单独计价的部位（如墙面玻璃、吧台玻璃）也先父项化再建组成。
+        <?php else: ?>
+            创建测算明细前，请先建立当前项目楼栋，并在材料管理中维护材料。
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
+<?php if (($unmeasurableCount ?? 0) > 0): ?>
+    <div class="notice notice-warning">
+        有 <?= (int) $unmeasurableCount ?> 条测算行的材料还没有 BOM 组成，暂不参与拆解。请到 <a href="?page=materials">材料管理</a> 为这些材料建立组成，或改按已有父材料录入；拆解结果见 <a href="?page=demand-summary">子材料数量汇总</a>。
+    </div>
+<?php endif; ?>
 <?php if ($canEdit && $choices['buildings'] !== [] && $choices['materials'] !== []): ?>
     <section class="panel estimate-entry-panel">
         <div class="panel-heading">
             <div>
                 <h2>快速录入</h2>
                 <p class="muted">搜材料 → 填数量 → 回车即存，光标自动回到材料框，可连续录入。楼栋/楼层/房间会沿用上次选择，仅在换位置时调整。</p>
+                <?php if (($choices['child_material_ids'] ?? []) !== [] || ($choices['uncomposed_material_count'] ?? 0) > 0): ?><p class="muted">候选只列已建立 BOM 组成的父材料<?php if (($choices['child_material_ids'] ?? []) !== []): ?>，已隐藏 <?= count($choices['child_material_ids']) ?> 项子材料：它们按父项的用量系数展开，单独测算会与父项重复计成本<?php endif; ?><?php if (($choices['uncomposed_material_count'] ?? 0) > 0): ?>；另有 <?= (int) $choices['uncomposed_material_count'] ?> 项材料还没有组成，不能直接测算（需先建 BOM）<?php endif; ?>。</p><?php endif; ?>
             </div>
             <span class="entry-counter" data-entry-counter aria-live="polite">本次已录 <strong>0</strong> 条</span>
         </div>

@@ -62,7 +62,7 @@ $previewHtml = (string) ob_get_clean();
             <div class="panel-heading">
                 <div>
                     <h2>材料组成</h2>
-                    <span class="muted">用量系数＝每 1 <?= $escape((string) $costing['unit']) ?> 父项直接消耗的子材料量；改数量右栏立刻试算，点底部“保存全部改动”一次写库并重算（增删仍写回材料管理的组成）</span>
+                    <span class="muted">用量系数＝每 1 <?= $escape((string) $costing['unit']) ?> 父项直接消耗的子材料量；改数量右栏立刻试算，点底部“保存全部改动”一次写库并重算（增删直接改材料管理同一套父—子关系）</span>
                 </div>
                 <div class="cost-editor-head-actions">
                     <span class="muted"><?= count($compositionRows) ?> 行</span>
@@ -344,12 +344,17 @@ $previewHtml = (string) ob_get_clean();
             <?php else: ?>
                 <div class="form-grid">
                     <label class="field-wide">子材料
-                        <select name="child_material_id" required>
-                            <option value="">请选择子材料</option>
-                            <?php foreach ($compositionCandidates as $candidate): ?>
-                                <option value="<?= (int) $candidate['material_id'] ?>"><?= $escape(trim(((string) ($candidate['material_code'] ?? '')) . ' · ' . (string) $candidate['material_name'], ' ·')) ?>（<?= $escape((string) ($candidate['unit'] ?? '')) ?>）</option>
-                            <?php endforeach; ?>
-                        </select>
+                        <?php /* Same shared searchable picker as 新建组价: select is the submitted value, input searches name / code. */ ?>
+                        <div class="combo" data-combo data-combo-noun="子材料" data-combo-empty="没有匹配的子材料">
+                            <select name="child_material_id" data-combo-select required aria-label="可加入组成的子材料">
+                                <option value="">请选择子材料</option>
+                                <?php foreach ($compositionCandidates as $candidate): ?>
+                                    <option value="<?= (int) $candidate['material_id'] ?>"><?= $escape(trim(((string) ($candidate['material_code'] ?? '')) . ' · ' . (string) $candidate['material_name'], ' ·')) ?>（<?= $escape((string) ($candidate['unit'] ?? '')) ?>）</option>
+                                <?php endforeach; ?>
+                            </select>
+                            <input type="text" class="combo-input" data-combo-input placeholder="输入名称或编码搜索" autocomplete="off" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-label="搜索并选择子材料">
+                            <ul class="combo-options" data-combo-options role="listbox" hidden></ul>
+                        </div>
                     </label>
                     <label>用量系数
                         <input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required>

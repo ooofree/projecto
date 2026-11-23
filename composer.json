@@ -25,6 +25,8 @@
             "php tests/bom_costing_test.php",
             "php tests/bom_costing_sql_placeholder_test.php",
             "php tests/bom_costing_web_smoke_test.php",
+            "php tests/closeout_management_test.php",
+            "php tests/closeout_management_web_smoke_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php",
             "php tests/layout_v21_smoke_test.php"
@@ -37,7 +39,8 @@
             "ProjectO\\Modules\\DocumentManagement\\": "modules/document-management/src/",
             "ProjectO\\Modules\\MaterialManagement\\": "modules/material-management/src/",
             "ProjectO\\Modules\\LaborCrew\\": "modules/labor-crew/src/",
-        "ProjectO\\Modules\\BomCosting\\": "modules/bom-costing/src/"
+            "ProjectO\\Modules\\BomCosting\\": "modules/bom-costing/src/",
+            "ProjectO\\Modules\\CloseoutManagement\\": "modules/closeout-management/src/"
         }
     }
 }

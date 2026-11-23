@@ -436,6 +436,41 @@ final class MaterialCatalogService
     }
 
     /**
+     * 可加入某个父材料组成的子件候选。规则与材料管理页、BOM 组价页共用：
+     * 排除父材料自身、已有自己子项的定制项（单层规则），以及本父材料已加入的子件。
+     * 被其他定制项引用的子件仍可共享。
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function compositionCandidates(int $projectId, int $parentMaterialId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT m.material_id, m.material_code, m.material_name, m.unit
+             FROM Materials m
+             WHERE m.project_id = :project_id
+               AND m.material_id <> :parent_self
+               AND NOT EXISTS (
+                   SELECT 1 FROM Material_Compositions own
+                   WHERE own.project_id = m.project_id AND own.parent_material_id = m.material_id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM Material_Compositions used
+                   WHERE used.project_id = m.project_id
+                     AND used.parent_material_id = :parent_used
+                     AND used.child_material_id = m.material_id
+               )
+             ORDER BY m.material_name, m.material_id'
+        );
+        $stmt->execute([
+            'project_id' => $projectId,
+            'parent_self' => $parentMaterialId,
+            'parent_used' => $parentMaterialId,
+        ]);
+
+        return $stmt->fetchAll();
+    }
+
+    /**
      * Create or update one parent→child composition edge. Enforces the confirmed
      * single-level rule in both directions inside a transaction: a material that
      * already has children cannot become a child, and a material already used as

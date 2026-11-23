@@ -973,7 +973,7 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
     }
 
     function initCascades() {
-        for (const form of document.querySelectorAll('form[data-estimate-form]')) {
+        for (const form of document.querySelectorAll('form[data-estimate-form], form[data-cascade-form]')) {
             if (form.dataset.cascadeInit === '1') continue;
             form.dataset.cascadeInit = '1';
             const building = form.querySelector('select[data-cascade-building]');

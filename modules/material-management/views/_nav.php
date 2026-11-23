@@ -13,6 +13,7 @@ foreach ([
     ['tenders', 'tender-list', '招标清单'],
     ['samples', 'samples', '样品跟踪'],
     ['estimates', 'estimates', '测算明细'],
+    ['demandSummary', 'demand-summary', '子材料汇总'],
 ] as [$key, $page, $label]) {
     if (!empty($nav[$key])) {
         $navItems[] = ['page' => $page, 'label' => $label];

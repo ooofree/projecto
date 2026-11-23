@@ -32,7 +32,7 @@
 | 单一组成·实时引用 | **Material_Compositions 是唯一组成来源**，组价按 parent_material_id 实时读取当前边，不复制；样品管理与组价共用此来源；保持已验收契约（单层/decimal(10,2)/送样联动） | 【已确认】DR-1 |
 | 组成动态更新 | 组成边增删改→事件触发组价自动重算（与价格同机制，输入驱动**不退草稿**）；历史组成靠审计前后值重建，不靠冻结副本；**废除"复制组成/人工同步组成"** | 【已确认】DR-1（推翻原"副本冻结/人工同步"规则） |
 | 系数与计算数量 | 原始系数＝Material_Compositions.quantity decimal(10,2)（契约不动）；含损耗计算数量在计算时得出、存 cost_line_results.quantity；无副本表双字段 | 【已确认】DR-1 |
-| 组成边删除 | 边删→重算时清理对应结果行（当前态明细随组成）；材料删除保护契约不变；结果行 composition_id FK 处置 DDL 评审定 | 【设计提案】DR-1 |
+| 组成边删除 | 边删→结果行随边级联清理（ON DELETE CASCADE，迁移 202611220001），随后重算按剩余结构重建；材料删除保护契约不变；若用 RESTRICT，结果行会反查上游，删边直接报 1451 | 【已确认】DR-1 |
 | 资源类型化 | 三类型化可空 FK（aux_id/catalog_id/material_id）＋CHECK 恰一＋类型匹配；parent_self 必须指向头表父材料（受控写入）；catalog_id→resource_catalog（DR-2 统一目录） | 【设计提案】DR-2 |
 | 资源行实时引用 | **资源行无 unit/name 快照，实时读目录/材料表**（与组件口径对齐，DR-2）；目录改名/改单位即时反映；计算时点所用值落结果表（F8） | 【已确认】DR-2 |
 | 统一资源目录 | resource_catalog 单表（catalog_type 区分加工/机械/人工），共享归属、不带价格、UNIQUE(catalog_type,name)、受保护删除；辅材仍用 Auxiliary_Materials（项目内，性质不同不合并） | 【已确认】DR-2 |
@@ -114,7 +114,7 @@
 | 规则 | 内容 | 效力 |
 |---|---|---|
 | 项目隔离 | 项目表 project_id NOT NULL；跨表引用复合外键；楼栋引用 (building_id,project_id)；**数据库强制，不靠 PHP 自觉** | 【已确认】F9 |
-| 删除保护 | 成本域外键全 RESTRICT 无 CASCADE；唯一例外：来源追溯字段 SET NULL | 【设计提案】 |
+| 删除保护 | 成本域外键默认 RESTRICT 无 CASCADE；例外：来源追溯字段 SET NULL；cost_line_results.composition_id 用 ON DELETE CASCADE（结果行是派生当前态，随组成边清理，迁移 202611220001） | 【已确认】 |
 | 唯一键 | 类型化唯一索引（pack/prices 分类别建，NULL 不去重防跨类型误判）；费率 UNIQUE(project_id,building_key)（生成列解决 NULL） | 【设计提案】 |
 | CHECK 前提 | 涉及可空列的 CHECK 须防三值逻辑 UNKNOWN 绕过（cost_category NOT NULL 等） | 【设计提案】 |
 | 跨行校验 | 累计冲销/净额上限/目标 normal/币种一致等跨行规则＝事务内行锁校验＋可选守卫触发器兜底（不声称纯声明式保证） | 【设计提案】 |
