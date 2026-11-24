@@ -237,6 +237,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                 <?php if ($canEdit && $rfi['available_transitions'] !== []): ?>
                     <details class="record-tools">
                         <summary>更新状态 / 答复 / 关闭</summary>
+                        <p class="muted record-meta">流程为「草稿 → 已提交 → 审核中 → 已答复 → 已关闭」：只有进入「已答复」后才会出现「已关闭」。关闭前须完成全部后续事项；需要证据的 RFI 还须填写证据档案引用。关闭最后一份关联 RFI 后，其问题会自动转为「待关闭」；重新打开已关闭 RFI 会把「待关闭」的问题退回「处理中」。</p>
                         <form method="post" class="form-grid record-form">
                             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                             <input type="hidden" name="action" value="rfi.transition">
@@ -357,7 +358,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                         <ol class="history-list">
                             <?php foreach ($rfi['status_history'] as $event): ?>
                                 <li>
-                                    <strong><?= $escape($event['old_status'] ?? '新建') ?> → <?= $escape($event['new_status']) ?></strong>
+                                    <strong><?= $escape($event['old_status'] === null ? '新建' : ($statusLabels[$event['old_status']] ?? $event['old_status'])) ?> → <?= $escape($statusLabels[$event['new_status']] ?? $event['new_status']) ?></strong>
                                     <span><?= $escape(\ProjectO\Support::formatDateTime($event['changed_at'])) ?> · 操作人 #<?= (int) $event['changed_by'] ?></span>
                                     <p><?= nl2br($escape($event['reason'])) ?></p>
                                     <?php if ($event['evidence_reference']): ?><p>证据档案：<?= $escape($event['evidence_reference']) ?></p><?php endif; ?>

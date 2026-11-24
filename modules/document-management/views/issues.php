@@ -26,6 +26,20 @@ $severityBadgeClass = [
     'high' => 'is-orange',
     'critical' => 'is-red',
 ];
+$rfiStatusLabels = [
+    'draft' => '草稿',
+    'submitted' => '已提交',
+    'under_review' => '审核中',
+    'responded' => '已答复',
+    'closed' => '已关闭',
+];
+$rfiStatusBadgeClass = [
+    'draft' => 'is-neutral',
+    'submitted' => 'is-blue',
+    'under_review' => 'is-amber',
+    'responded' => 'is-green',
+    'closed' => 'is-neutral',
+];
 $locationOptions = $locationCatalog['options'] ?? [];
 $locationLabels = $locationCatalog['labels'] ?? [];
 $spaceSelectionReady = !empty($spaceSelectionReady);
@@ -302,9 +316,18 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                     <p><strong>处理结果：</strong><?= nl2br($escape($issue['resolution_result'])) ?></p>
                 <?php endif; ?>
 
+                <?php
+                $openLinkedRfis = 0;
+                foreach ($issue['linked_rfis'] ?? [] as $linkedRfi) {
+                    if ($linkedRfi['status'] !== 'closed') {
+                        $openLinkedRfis++;
+                    }
+                }
+                ?>
                 <?php if ($canEdit && $issue['available_transitions'] !== []): ?>
                     <details class="record-tools">
                         <summary>更新状态与关闭校验</summary>
+                        <p class="muted record-meta">流程为「待评估 → 处理中 → 待关闭 → 已关闭」：只有进入「待关闭」后才会出现「已关闭」。关闭前须完成全部后续事项与关联 RFI，并填写现场验证与证据档案引用。<?php if ($openLinkedRfis > 0): ?>当前仍有 <?= $openLinkedRfis ?> 份关联 RFI 未关闭，暂不能选择「已关闭」。<?php endif; ?></p>
                         <form method="post" class="form-grid record-form">
                             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                             <input type="hidden" name="action" value="issue.transition">
@@ -313,7 +336,8 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                                 转换至
                                 <select name="status" required>
                                     <?php foreach ($issue['available_transitions'] as $status): ?>
-                                        <option value="<?= $escape($status) ?>"><?= $escape($statusLabels[$status] ?? $status) ?></option>
+                                        <?php $closable = $status !== 'closed' || $openLinkedRfis === 0; ?>
+                                        <option value="<?= $escape($status) ?>" <?= $closable ? '' : 'disabled' ?>><?= $escape(($statusLabels[$status] ?? $status) . ($closable ? '' : '（先关闭关联 RFI）')) ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </label>
@@ -385,6 +409,27 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                     </details>
                 <?php endif; ?>
 
+                <?php $linkedRfis = $issue['linked_rfis'] ?? []; ?>
+                <details class="record-tools">
+                    <summary>关联 RFI（<?= count($linkedRfis) ?>）</summary>
+                    <?php if ($linkedRfis === []): ?>
+                        <p class="muted">该问题尚未派生 RFI。</p>
+                    <?php else: ?>
+                        <ul class="follow-up-list">
+                            <?php foreach ($linkedRfis as $linkedRfi): ?>
+                                <li>
+                                    <div>
+                                        <a href="?page=rfis"><?= $escape($linkedRfi['rfi_number'] !== '' ? $linkedRfi['rfi_number'] : '#' . $linkedRfi['rfi_id']) ?></a>
+                                        <span class="status-badge <?= $escape($rfiStatusBadgeClass[$linkedRfi['status']] ?? 'is-neutral') ?>"><?= $escape($rfiStatusLabels[$linkedRfi['status']] ?? $linkedRfi['status']) ?></span>
+                                        <span class="muted record-meta"><?= $linkedRfi['is_primary'] ? '主问题' : '关联问题' ?></span>
+                                    </div>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                        <p class="muted record-meta">RFI 全部关闭后，问题会自动转为「待关闭」；最终关闭仍需人工填写处理结果、现场验证与证据引用。</p>
+                    <?php endif; ?>
+                </details>
+
                 <details class="record-tools">
                     <summary>图片附件（<?= count($issue['images']) ?>）</summary>
                     <?php if ($issue['images'] !== []): ?>
@@ -436,7 +481,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                         <ol class="history-list">
                             <?php foreach ($issue['status_history'] as $event): ?>
                                 <li>
-                                    <strong><?= $escape($event['old_status'] ?? '新建') ?> → <?= $escape($event['new_status']) ?></strong>
+                                    <strong><?= $escape($event['old_status'] === null ? '新建' : ($statusLabels[$event['old_status']] ?? $event['old_status'])) ?> → <?= $escape($statusLabels[$event['new_status']] ?? $event['new_status']) ?></strong>
                                     <span><?= $escape(\ProjectO\Support::formatDateTime($event['changed_at'])) ?> · 操作人 #<?= (int) $event['changed_by'] ?></span>
                                     <p><?= nl2br($escape($event['reason'])) ?></p>
                                     <?php if ($event['evidence_reference']): ?><p>证据档案：<?= $escape($event['evidence_reference']) ?></p><?php endif; ?>

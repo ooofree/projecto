@@ -318,7 +318,10 @@ body.sidebar-collapsed .sidebar-collapse .sidebar-icon { transform: rotate(180de
 .current-project h2 { font-size: 1.05rem; }
 .current-project .eyebrow { margin-bottom: 3px; }
 .panel { padding: 0; margin: 14px 0; }
-.panel > :not(.panel-heading):not(.toolbar):not(.panel-body) { margin-inline: 17px; }
+/* Dialogs are not content blocks: they rely on the UA `margin: auto` to center
+   in the top layer. A dialog written inside a panel (issues/rfis) must not
+   inherit the 17px content gutter, or it pins itself to the left edge. */
+.panel > :not(.panel-heading):not(.toolbar):not(.panel-body):not(dialog) { margin-inline: 17px; }
 .panel-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 18px; padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .panel-heading p { max-width: 80ch; }
 .panel-body { padding: 16px 17px; }

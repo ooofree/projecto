@@ -379,11 +379,13 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         $project = $this->context->requireCurrentProject();
         $canManage = Support::hasPermission($this->context->db, 'manage_issues');
         $issues = $this->documents->listIssues((int) $project['project_id']);
+        $linkedRfis = $this->documents->issueLinkedRfis((int) $project['project_id']);
         foreach ($issues as &$issue) {
             $issue['available_transitions'] = $this->documents->availableIssueTransitions(
                 (string) $issue['status'],
                 $canManage
             );
+            $issue['linked_rfis'] = $linkedRfis[(int) $issue['issue_id']] ?? [];
         }
         unset($issue);
         $imageStorageReady = $this->imageStorage->isConfigured();

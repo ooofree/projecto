@@ -469,11 +469,6 @@ final class DocumentService
         array $closureData,
         bool $canManage
     ): void {
-        $reason = $this->requiredText($reason, '状态变更原因', 2000);
-        if (!in_array($targetStatus, self::ISSUE_STATUSES, true)) {
-            throw new HttpException('问题状态无效。', 422);
-        }
-
         $this->transaction(function () use (
             $projectId,
             $userId,
@@ -483,32 +478,70 @@ final class DocumentService
             $closureData,
             $canManage
         ): void {
-            $issue = $this->lockIssue($projectId, $issueId);
-            $oldStatus = (string) $issue['status'];
-            if ($oldStatus === 'closed' && $targetStatus === 'open' && !$canManage) {
-                throw new HttpException('只有问题管理员可以重新打开已关闭的问题。', 403);
-            }
-            if (!in_array($targetStatus, self::ISSUE_TRANSITIONS[$oldStatus] ?? [], true)) {
-                throw new HttpException('不允许的问题状态转换。', 409);
-            }
-
-            $updates = ['status = :status'];
-            $params = [
-                'status' => $targetStatus,
-                'issue_id' => $issueId,
-                'project_id' => $projectId,
-            ];
-            $resolution = $issue['resolution_result'];
-            $verificationStatus = $issue['verification_status'];
-            $verificationNote = $issue['verification_note'];
-            $evidenceReference = $issue['evidence_reference'];
-            $eventEvidence = $this->optionalText(
-                $closureData['evidence_reference'] ?? null,
-                '证据档案引用',
-                1000
+            $this->applyIssueTransition(
+                $projectId,
+                $userId,
+                $issueId,
+                $targetStatus,
+                $reason,
+                $closureData,
+                $canManage
             );
+        });
+    }
 
-            if ($targetStatus === 'resolved' || $targetStatus === 'closed') {
+    /**
+     * Applies one issue transition inside the caller's transaction.
+     *
+     * `$systemAdvance` marks transitions derived from RFI milestones. Those may
+     * enter `resolved` without a human-written resolution (an RFI answer is
+     * reference material, never an automatic conclusion) and never require the
+     * manage permission reserved for reopening a closed issue.
+     */
+    private function applyIssueTransition(
+        int $projectId,
+        int $userId,
+        int $issueId,
+        string $targetStatus,
+        string $reason,
+        array $closureData,
+        bool $canManage,
+        bool $systemAdvance = false
+    ): void {
+        $reason = $this->requiredText($reason, '状态变更原因', 2000);
+        if (!in_array($targetStatus, self::ISSUE_STATUSES, true)) {
+            throw new HttpException('问题状态无效。', 422);
+        }
+
+        $issue = $this->lockIssue($projectId, $issueId);
+        $oldStatus = (string) $issue['status'];
+        if (!$systemAdvance && $oldStatus === 'closed' && $targetStatus === 'open' && !$canManage) {
+            throw new HttpException('只有问题管理员可以重新打开已关闭的问题。', 403);
+        }
+        if (!in_array($targetStatus, self::ISSUE_TRANSITIONS[$oldStatus] ?? [], true)) {
+            throw new HttpException('不允许的问题状态转换。', 409);
+        }
+
+        $updates = ['status = :status', 'updated_at = CURRENT_TIMESTAMP'];
+        $params = [
+            'status' => $targetStatus,
+            'issue_id' => $issueId,
+            'project_id' => $projectId,
+        ];
+        $resolution = $issue['resolution_result'];
+        $verificationStatus = $issue['verification_status'];
+        $verificationNote = $issue['verification_note'];
+        $evidenceReference = $issue['evidence_reference'];
+        $eventEvidence = $this->optionalText(
+            $closureData['evidence_reference'] ?? null,
+            '证据档案引用',
+            1000
+        );
+
+        if ($targetStatus === 'resolved' || $targetStatus === 'closed') {
+            // A system advance only moves the issue into the review queue; the
+            // person closing it still has to author the resolution.
+            if (!$systemAdvance || $targetStatus === 'closed') {
                 $resolution = $this->requiredText(
                     $closureData['resolution_result'] ?? $issue['resolution_result'],
                     '处理结果',
@@ -517,79 +550,291 @@ final class DocumentService
                 $updates[] = 'resolution_result = :resolution_result';
                 $params['resolution_result'] = $resolution;
             }
+        }
 
-            if ($targetStatus === 'closed') {
-                $verificationStatus = $this->enumValue(
-                    $closureData['verification_status'] ?? null,
-                    ['passed', 'not_required'],
-                    '现场验证结果'
-                );
-                $verificationNote = $this->optionalText(
-                    $closureData['verification_note'] ?? null,
-                    '现场验证说明',
-                    2000
-                );
-                if ($verificationStatus === 'not_required' && $verificationNote === null) {
-                    throw new HttpException('现场验证不适用时必须填写原因。', 422);
-                }
-
-                $evidenceReference = $this->requiredText(
-                    $closureData['evidence_reference'] ?? null,
-                    '证据档案引用',
-                    1000
-                );
-                if ($this->hasOpenIssueFollowUps($projectId, $issueId)) {
-                    throw new HttpException('请先完成该问题的所有后续事项。', 409);
-                }
-
-                $updates[] = 'verification_status = :verification_status';
-                $updates[] = 'verification_note = :verification_note';
-                $updates[] = 'evidence_reference = :evidence_reference';
-                $updates[] = 'closed_at = CURRENT_TIMESTAMP';
-                $updates[] = 'closed_by = :closed_by';
-                $params['verification_status'] = $verificationStatus;
-                $params['verification_note'] = $verificationNote;
-                $params['evidence_reference'] = $evidenceReference;
-                $params['closed_by'] = $userId;
-                $eventEvidence = $evidenceReference;
-            } elseif ($oldStatus === 'closed' && $targetStatus === 'open') {
-                $updates[] = "verification_status = 'pending'";
-                $updates[] = 'verification_note = NULL';
-                $updates[] = 'evidence_reference = NULL';
-                $updates[] = 'resolution_result = NULL';
-                $updates[] = 'closed_at = NULL';
-                $updates[] = 'closed_by = NULL';
+        if ($targetStatus === 'closed') {
+            $this->assertLinkedRfisClosed($projectId, $issueId);
+            $verificationStatus = $this->enumValue(
+                $closureData['verification_status'] ?? null,
+                ['passed', 'not_required'],
+                '现场验证结果'
+            );
+            $verificationNote = $this->optionalText(
+                $closureData['verification_note'] ?? null,
+                '现场验证说明',
+                2000
+            );
+            if ($verificationStatus === 'not_required' && $verificationNote === null) {
+                throw new HttpException('现场验证不适用时必须填写原因。', 422);
             }
 
-            $stmt = $this->db->prepare(
-                'UPDATE document_issues
-                 SET ' . implode(', ', $updates) . '
-                 WHERE issue_id = :issue_id AND project_id = :project_id'
+            $evidenceReference = $this->requiredText(
+                $closureData['evidence_reference'] ?? null,
+                '证据档案引用',
+                1000
             );
-            $stmt->execute($params);
+            if ($this->hasOpenIssueFollowUps($projectId, $issueId)) {
+                throw new HttpException('请先完成该问题的所有后续事项。', 409);
+            }
 
-            $transitionData = [
-                'resolution_result' => $resolution,
-                'verification_status' => $verificationStatus,
-                'verification_note' => $verificationNote,
-                'evidence_reference' => $eventEvidence ?? $evidenceReference,
+            $updates[] = 'verification_status = :verification_status';
+            $updates[] = 'verification_note = :verification_note';
+            $updates[] = 'evidence_reference = :evidence_reference';
+            $updates[] = 'closed_at = CURRENT_TIMESTAMP';
+            $updates[] = 'closed_by = :closed_by';
+            $params['verification_status'] = $verificationStatus;
+            $params['verification_note'] = $verificationNote;
+            $params['evidence_reference'] = $evidenceReference;
+            $params['closed_by'] = $userId;
+            $eventEvidence = $evidenceReference;
+        } elseif ($oldStatus === 'closed' && $targetStatus === 'open') {
+            $updates[] = "verification_status = 'pending'";
+            $updates[] = 'verification_note = NULL';
+            $updates[] = 'evidence_reference = NULL';
+            $updates[] = 'resolution_result = NULL';
+            $updates[] = 'closed_at = NULL';
+            $updates[] = 'closed_by = NULL';
+        }
+
+        $stmt = $this->db->prepare(
+            'UPDATE document_issues
+             SET ' . implode(', ', $updates) . '
+             WHERE issue_id = :issue_id AND project_id = :project_id'
+        );
+        $stmt->execute($params);
+
+        $transitionData = [
+            'resolution_result' => $resolution,
+            'verification_status' => $verificationStatus,
+            'verification_note' => $verificationNote,
+            'evidence_reference' => $eventEvidence ?? $evidenceReference,
+        ];
+        $this->recordIssueStatus(
+            $projectId,
+            $issueId,
+            $oldStatus,
+            $targetStatus,
+            $reason,
+            $eventEvidence,
+            $transitionData,
+            $userId
+        );
+        Support::audit(
+            $this->db,
+            'document.issue.status_change',
+            "Issue {$issueId}: {$oldStatus} -> {$targetStatus}. Reason: {$reason}"
+        );
+    }
+
+    /**
+     * @return list<array{rfi_id:int, rfi_number:string, status:string, is_primary:bool}>
+     */
+    private function linkedRfisForIssue(int $projectId, int $issueId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT r.rfi_id, r.rfi_number, r.status,
+                    CASE WHEN r.primary_issue_id = :primary_match THEN 1 ELSE 0 END AS is_primary
+             FROM document_rfis r
+             WHERE r.project_id = :project_id
+               AND (r.primary_issue_id = :owner_match
+                    OR EXISTS (
+                        SELECT 1 FROM document_rfi_related_issues ri
+                        WHERE ri.project_id = r.project_id
+                          AND ri.rfi_id = r.rfi_id
+                          AND ri.issue_id = :related_match
+                    ))
+             ORDER BY r.rfi_id'
+        );
+        $stmt->execute([
+            'primary_match' => $issueId,
+            'project_id' => $projectId,
+            'owner_match' => $issueId,
+            'related_match' => $issueId,
+        ]);
+
+        $rows = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $rows[] = [
+                'rfi_id' => (int) $row['rfi_id'],
+                'rfi_number' => (string) ($row['rfi_number'] ?? ''),
+                'status' => (string) $row['status'],
+                'is_primary' => (int) $row['is_primary'] === 1,
             ];
-            $this->recordIssueStatus(
-                $projectId,
-                $issueId,
-                $oldStatus,
-                $targetStatus,
-                $reason,
-                $eventEvidence,
-                $transitionData,
-                $userId
-            );
-            Support::audit(
-                $this->db,
-                'document.issue.status_change',
-                "Issue {$issueId}: {$oldStatus} -> {$targetStatus}. Reason: {$reason}"
-            );
-        });
+        }
+
+        return $rows;
+    }
+
+    private function hasOpenLinkedRfis(int $projectId, int $issueId): bool
+    {
+        foreach ($this->linkedRfisForIssue($projectId, $issueId) as $rfi) {
+            if ($rfi['status'] !== 'closed') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function assertLinkedRfisClosed(int $projectId, int $issueId): void
+    {
+        $open = array_values(array_filter(
+            $this->linkedRfisForIssue($projectId, $issueId),
+            static fn (array $rfi): bool => $rfi['status'] !== 'closed'
+        ));
+        if ($open === []) {
+            return;
+        }
+
+        $labels = [
+            'draft' => '草稿',
+            'submitted' => '已提交',
+            'under_review' => '审核中',
+            'responded' => '已答复',
+            'closed' => '已关闭',
+        ];
+        $sample = array_slice($open, 0, 5);
+        $parts = [];
+        foreach ($sample as $rfi) {
+            $number = $rfi['rfi_number'] !== '' ? $rfi['rfi_number'] : '#' . $rfi['rfi_id'];
+            $parts[] = $number . '（' . ($labels[$rfi['status']] ?? $rfi['status']) . '）';
+        }
+
+        $suffix = count($open) > count($sample) ? ' 等 ' . count($open) . ' 条' : '';
+        throw new HttpException(
+            '该问题仍有未关闭的 RFI：' . implode('、', $parts) . $suffix . '；请先完成答复并关闭 RFI 后再关闭问题。',
+            409
+        );
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function rfiLinkedIssueIds(int $projectId, int $rfiId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT primary_issue_id AS issue_id
+             FROM document_rfis
+             WHERE project_id = :project_id AND rfi_id = :rfi_id
+             UNION
+             SELECT issue_id
+             FROM document_rfi_related_issues
+             WHERE project_id = :link_project_id AND rfi_id = :link_rfi_id'
+        );
+        $stmt->execute([
+            'project_id' => $projectId,
+            'rfi_id' => $rfiId,
+            'link_project_id' => $projectId,
+            'link_rfi_id' => $rfiId,
+        ]);
+
+        return array_values(array_unique(array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN))));
+    }
+
+    /**
+     * Keeps the issue workflow in step with its RFI milestones without ever
+     * closing an issue on its own: closing the last RFI moves an in-review
+     * issue to `resolved` (the review queue), and reopening a closed RFI sends a
+     * `resolved` issue back to `in_review`.
+     */
+    private function syncIssuesAfterRfiTransition(
+        int $projectId,
+        int $userId,
+        int $rfiId,
+        string $oldStatus,
+        string $newStatus,
+        string $rfiNumber
+    ): void {
+        $reasonPrefix = '关联 RFI ' . $rfiNumber;
+        foreach ($this->rfiLinkedIssueIds($projectId, $rfiId) as $issueId) {
+            $issue = $this->lockIssue($projectId, $issueId);
+            $issueStatus = (string) $issue['status'];
+
+            if ($newStatus === 'closed' && $oldStatus !== 'closed' && $issueStatus === 'in_review') {
+                if ($this->hasOpenLinkedRfis($projectId, $issueId)) {
+                    continue;
+                }
+                $this->applyIssueTransition(
+                    $projectId,
+                    $userId,
+                    $issueId,
+                    'resolved',
+                    $reasonPrefix . ' 已关闭，该问题名下 RFI 已全部收口，系统自动转为待关闭，等待复核。',
+                    [],
+                    false,
+                    true
+                );
+                continue;
+            }
+
+            if ($oldStatus === 'closed' && $newStatus === 'submitted' && $issueStatus === 'resolved') {
+                $this->applyIssueTransition(
+                    $projectId,
+                    $userId,
+                    $issueId,
+                    'in_review',
+                    $reasonPrefix . ' 重新打开，问题依据失效，系统自动退回处理中。',
+                    [],
+                    false,
+                    true
+                );
+            }
+        }
+    }
+
+    /**
+     * @return array<int, list<array{rfi_id:int, rfi_number:string, status:string, is_primary:bool}>>
+     */
+    public function issueLinkedRfis(int $projectId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT rfi_id, rfi_number, status, primary_issue_id
+             FROM document_rfis
+             WHERE project_id = :project_id
+             ORDER BY rfi_id'
+        );
+        $stmt->execute(['project_id' => $projectId]);
+
+        $byId = [];
+        $links = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $rfiId = (int) $row['rfi_id'];
+            $primaryIssueId = (int) $row['primary_issue_id'];
+            $byId[$rfiId] = $row;
+            $links[$primaryIssueId][] = [
+                'rfi_id' => $rfiId,
+                'rfi_number' => (string) ($row['rfi_number'] ?? ''),
+                'status' => (string) $row['status'],
+                'is_primary' => true,
+            ];
+        }
+
+        $relStmt = $this->db->prepare(
+            'SELECT rfi_id, issue_id
+             FROM document_rfi_related_issues
+             WHERE project_id = :project_id'
+        );
+        $relStmt->execute(['project_id' => $projectId]);
+        foreach ($relStmt->fetchAll() as $row) {
+            $rfiId = (int) $row['rfi_id'];
+            $issueId = (int) $row['issue_id'];
+            if (!isset($byId[$rfiId]) || (int) $byId[$rfiId]['primary_issue_id'] === $issueId) {
+                continue;
+            }
+            $links[$issueId][] = [
+                'rfi_id' => $rfiId,
+                'rfi_number' => (string) ($byId[$rfiId]['rfi_number'] ?? ''),
+                'status' => (string) $byId[$rfiId]['status'],
+                'is_primary' => false,
+            ];
+        }
+
+        foreach ($links as $issueId => $rows) {
+            usort($rows, static fn (array $a, array $b): int => $a['rfi_id'] <=> $b['rfi_id']);
+            $links[$issueId] = $rows;
+        }
+
+        return $links;
     }
 
     public function addIssueFollowUp(int $projectId, int $userId, int $issueId, string $title): int
@@ -724,6 +969,10 @@ final class DocumentService
                     $this->assertIssueInProject($projectId, $relatedIssueId);
                 }
             }
+            $primaryIssue = $this->lockIssue($projectId, $primaryIssueId);
+            if ((string) $primaryIssue['status'] === 'closed') {
+                throw new HttpException('已关闭的问题不能新增 RFI；请先由问题管理员重新打开该问题。', 409);
+            }
             $user = $this->db->prepare('SELECT 1 FROM Users WHERE user_id = :user_id AND is_active = 1');
             $user->execute(['user_id' => $assignedTo]);
             if ($user->fetchColumn() === false) {
@@ -765,6 +1014,19 @@ final class DocumentService
                     'rfi_id' => $rfiId,
                     'issue_id' => $relatedIssueId,
                 ]);
+            }
+
+            if ((string) $primaryIssue['status'] === 'open') {
+                $this->applyIssueTransition(
+                    $projectId,
+                    $userId,
+                    $primaryIssueId,
+                    'in_review',
+                    '创建 RFI ' . $rfiNumber . '，问题自动进入处理中。',
+                    [],
+                    false,
+                    true
+                );
             }
 
             $this->recordRfiStatus(
@@ -922,7 +1184,7 @@ final class DocumentService
                 throw new HttpException('不允许的 RFI 状态转换。', 409);
             }
 
-            $updates = ['status = :status'];
+            $updates = ['status = :status', 'updated_at = CURRENT_TIMESTAMP'];
             $params = [
                 'status' => $targetStatus,
                 'rfi_id' => $rfiId,
@@ -1027,6 +1289,15 @@ final class DocumentService
                 $this->db,
                 $action,
                 "RFI {$rfi['rfi_number']}: {$oldStatus} -> {$targetStatus}. Reason: {$reason}"
+            );
+
+            $this->syncIssuesAfterRfiTransition(
+                $projectId,
+                $userId,
+                $rfiId,
+                $oldStatus,
+                $targetStatus,
+                (string) $rfi['rfi_number']
             );
         });
     }

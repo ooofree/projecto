@@ -487,6 +487,9 @@ documentTestExpectStatus(
 );
 
 $issueFollowUpId = $documents->addIssueFollowUp(1, 1, $issueId, 'Verify repair on site');
+// Regression: the ledger sorts and labels by updated_at, so a status change
+// must bump it even though it only touches workflow columns.
+$db->exec("UPDATE document_issues SET updated_at = '2026-01-01 00:00:00' WHERE issue_id = {$issueId}");
 $documents->transitionIssue(
     1,
     1,
@@ -495,6 +498,10 @@ $documents->transitionIssue(
     'Assigned for investigation',
     ['evidence_reference' => 'ARCH-INVESTIGATION-01'],
     false
+);
+documentTestCheck(
+    (string) $db->query('SELECT updated_at FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() !== '2026-01-01 00:00:00',
+    'Issue status transitions must refresh updated_at.'
 );
 $documents->transitionIssue(
     1,
@@ -556,6 +563,16 @@ documentTestExpectStatus(
     static fn () => $documents->transitionIssue(1, 1, $issueId, 'open', 'Reopen', [], false),
     403,
     'Only managers should reopen a closed issue.'
+);
+documentTestExpectStatus(
+    static fn () => $documents->createRfi(1, 1, [
+        'primary_issue_id' => $issueId,
+        'assigned_to' => 2,
+        'due_date' => '2030-01-15T17:00',
+        'description' => 'RFI attempt on a closed issue',
+    ]),
+    409,
+    'A closed issue must not spawn new RFIs.'
 );
 $documents->transitionIssue(1, 1, $issueId, 'open', 'New evidence requires review', [], true);
 documentTestCheck(
@@ -625,6 +642,15 @@ documentTestCheck(
     )->fetchColumn() === 2,
     'A primary issue should be allowed to have multiple RFIs.'
 );
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'in_review',
+    'Creating the first RFI must move the open issue into in_review.'
+);
+$linkedRfis = $documents->issueLinkedRfis(1);
+documentTestCheck(
+    isset($linkedRfis[$issueId]) && count($linkedRfis[$issueId]) === 2,
+    'Issue detail must expose its linked RFIs.'
+);
 $otherProjectRfiId = $documents->createRfi(2, 1, [
     'primary_issue_id' => $otherProjectIssueId,
     'assigned_to' => 2,
@@ -691,7 +717,12 @@ documentTestCheck(
     (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $rfiId)->fetchColumn() === 'submitted',
     'Editing non-association RFI fields must preserve its workflow status.'
 );
+$db->exec("UPDATE document_rfis SET updated_at = '2026-01-01 00:00:00' WHERE rfi_id = {$rfiId}");
 $documents->transitionRfi(1, 1, $rfiId, 'under_review', 'Recipient started review', [], false);
+documentTestCheck(
+    (string) $db->query('SELECT updated_at FROM document_rfis WHERE rfi_id = ' . $rfiId)->fetchColumn() !== '2026-01-01 00:00:00',
+    'RFI status transitions must refresh updated_at.'
+);
 documentTestExpectStatus(
     static fn () => $documents->transitionRfi(
         1,
@@ -715,8 +746,8 @@ $documents->transitionRfi(
     false
 );
 documentTestCheck(
-    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'open',
-    'Responding to an RFI must not automatically change the issue status.'
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'in_review',
+    'A formal RFI response must not change the issue status by itself.'
 );
 $rfiFollowUpId = $documents->addRfiFollowUp(1, 1, $rfiId, 'Update coordination drawing');
 documentTestExpectStatus(
@@ -772,8 +803,24 @@ $documents->transitionRfi(
     false
 );
 documentTestCheck(
-    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'open',
-    'Closing an RFI must leave its primary issue state independent.'
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'in_review',
+    'Closing one RFI must keep the issue in review while another linked RFI is still open.'
+);
+$documents->transitionRfi(1, 1, $secondRfiId, 'submitted', 'Send the second request', [], false);
+$documents->transitionRfi(1, 1, $secondRfiId, 'under_review', 'Second review started', [], false);
+$documents->transitionRfi(
+    1,
+    1,
+    $secondRfiId,
+    'responded',
+    'Second answer complete',
+    ['response_text' => 'Door opening detail confirmed.', 'response_complete' => true],
+    false
+);
+$documents->transitionRfi(1, 1, $secondRfiId, 'closed', 'Second RFI closed', [], false);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'resolved',
+    'Closing the last linked RFI must move the in-review issue to resolved for review.'
 );
 documentTestExpectStatus(
     static fn () => $documents->transitionRfi(1, 1, $rfiId, 'submitted', 'Reopen', [], false),
@@ -788,6 +835,36 @@ documentTestCheck(
            AND evidence_reference = 'ARCH-RFI-01'"
     )->fetchColumn() === 1,
     'RFI closure evidence should remain in the status history after reopening.'
+);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $issueId)->fetchColumn() === 'in_review',
+    'Reopening a closed RFI must move the resolved issue back to in_review.'
+);
+$documents->transitionIssue(
+    1,
+    1,
+    $issueId,
+    'resolved',
+    'Ready for closure after re-review',
+    ['resolution_result' => 'Reopened RFI answer applied on site.'],
+    false
+);
+documentTestExpectStatus(
+    static fn () => $documents->transitionIssue(
+        1,
+        1,
+        $issueId,
+        'closed',
+        'Close while an RFI is open',
+        [
+            'resolution_result' => 'Reopened RFI answer applied on site.',
+            'verification_status' => 'passed',
+            'evidence_reference' => 'ARCH-ISSUE-GATE',
+        ],
+        false
+    ),
+    409,
+    'An issue must not close while any linked RFI is still open.'
 );
 documentTestExpectStatus(
     static fn () => $documents->transitionIssue(1, 1, $otherProjectIssueId, 'in_review', 'Cross-project', [], false),
@@ -841,7 +918,9 @@ documentTestCheck(
         && str_contains($renderedIssuesPage, '登记问题')
         && str_contains($renderedIssuesPage, 'Updated north facade dimension conflict')
         && str_contains($renderedIssuesPage, 'issues-table')
-        && str_contains($renderedIssuesPage, 'issue.update'),
+        && str_contains($renderedIssuesPage, 'issue.update')
+        && str_contains($renderedIssuesPage, '关联 RFI（2）')
+        && str_contains($renderedIssuesPage, 'P1-RFI-001'),
     'The issues route should render project-scoped records through the host application.'
 );
 $_GET = ['page' => 'documents'];
