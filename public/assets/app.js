@@ -30,7 +30,10 @@
     const recentBox = document.querySelector('[data-entry-recent]');
     const recentChips = document.querySelector('[data-entry-recent-chips]');
     const unitList = document.getElementById('material-unit-options');
+    const unitQuick = document.querySelector('[data-unit-quick]');
+    const mobileBar = document.querySelector('[data-mobile-actions]');
     const dialogsHost = document.querySelector('[data-material-dialogs]');
+    const isPhoneLayout = () => window.matchMedia('(max-width: 760px)').matches;
 
     let rows = [...workspace.querySelectorAll('.material-row')];
     let railButtons = rail ? [...rail.querySelectorAll('[data-rail-category]')] : [];
@@ -53,6 +56,43 @@
                 follow: followToggle ? followToggle.checked : true,
             }));
         } catch { /* storage unavailable (private mode); the form still works */ }
+    };
+
+    // ---- mobile unit quick-pick -----------------------------------------
+    // iOS/Android browsers largely ignore <datalist> or show it only after a
+    // long press, so the same unit suggestions are exposed as big tap targets
+    // on phones. Both controls write the same input; chips never replace the
+    // text field, so arbitrary units can still be typed.
+    const unitInputOf = () => (entryForm ? entryForm.querySelector('[data-entry-unit]') : null);
+
+    const syncUnitQuick = () => {
+        if (!unitQuick) return;
+        const value = (unitInputOf()?.value ?? '').trim();
+        for (const chip of unitQuick.querySelectorAll('[data-unit-value]')) {
+            const active = chip.dataset.unitValue === value;
+            chip.classList.toggle('is-active', active);
+            chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+        }
+    };
+
+    const renderUnitQuick = () => {
+        if (!unitQuick) return;
+        if (!unitList) { unitQuick.hidden = true; return; }
+        const units = [...unitList.querySelectorAll('option')]
+            .map(option => option.value.trim())
+            .filter(unit => unit !== '');
+        if (units.length === 0) { unitQuick.hidden = true; return; }
+        const chips = units.slice(0, 18).map(unit => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'unit-chip';
+            chip.dataset.unitValue = unit;
+            chip.textContent = unit;
+            return chip;
+        });
+        unitQuick.replaceChildren(...chips);
+        unitQuick.hidden = false;
+        syncUnitQuick();
     };
 
     // ---- filtering -------------------------------------------------------
@@ -217,7 +257,7 @@
         while (recentChips.children.length > 10) recentChips.lastElementChild.remove();
     };
 
-    const refreshCatalogue = async highlightId => {
+    const refreshCatalogue = async (highlightId, { scroll = true } = {}) => {
         const response = await fetch(window.location.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
         if (!response.ok) return;
         const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
@@ -236,13 +276,14 @@
         if (freshDialogs && dialogsHost) dialogsHost.replaceChildren(...freshDialogs.childNodes);
         const freshUnits = doc.getElementById('material-unit-options');
         if (freshUnits && unitList) unitList.replaceChildren(...freshUnits.childNodes);
+        renderUnitQuick();
         const freshTotal = doc.querySelector('[data-material-total]');
         if (freshTotal && totalLabel) totalLabel.textContent = freshTotal.textContent;
         if (highlightId != null) {
             const row = tbody ? tbody.querySelector(`[data-material-id="${highlightId}"]`) : null;
             if (row) {
                 row.classList.add('is-new');
-                row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                if (scroll) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
             }
         }
         // Re-apply the active category; do not touch the entry form itself.
@@ -323,7 +364,11 @@
             });
         }
         if (unitInput) {
-            unitInput.addEventListener('input', persistEntry);
+            unitInput.addEventListener('input', () => {
+                persistEntry();
+                syncUnitQuick();
+            });
+            unitInput.addEventListener('change', syncUnitQuick);
         }
         // Returning to the page keeps the last batch context visible: the list
         // opens on the category that was last being entered.
@@ -365,7 +410,9 @@
                 persistEntry();
                 // Refresh first, then suggest the next code against the new
                 // list; refocus immediately so typing is never blocked.
-                refreshCatalogue(material.material_id)
+                // Phones keep the entry panel and the soft keyboard in place for
+                // continuous entry; the status line confirms the new row.
+                refreshCatalogue(material.material_id, { scroll: !isPhoneLayout() })
                     .catch(() => {})
                     .finally(() => refreshCodeTools());
                 if (nameInput) nameInput.focus();
@@ -440,16 +487,50 @@
             if (button) selectCategory(button.dataset.railCategory);
         });
     }
+    if (unitQuick) {
+        unitQuick.addEventListener('click', event => {
+            const chip = event.target.closest('[data-unit-value]');
+            const unitInput = unitInputOf();
+            if (!chip || !unitInput) return;
+            unitInput.value = chip.dataset.unitValue ?? '';
+            unitInput.dispatchEvent(new Event('input', { bubbles: true }));
+            persistEntry();
+            syncUnitQuick();
+        });
+    }
+    // On phones the whole material card is a comfortable edit target; taps on
+    // the delete form, the edit button or any field keep their own behaviour.
+    const materialsTable = document.getElementById('materials-table');
+    if (materialsTable) {
+        materialsTable.addEventListener('click', event => {
+            if (!isPhoneLayout()) return;
+            if (event.target.closest('button, a, input, select, textarea, form, summary, label')) return;
+            if (!event.target.closest('.material-cell-main, .material-cell-status')) return;
+            const row = event.target.closest('.material-row');
+            if (!row || row.hidden) return;
+            row.querySelector('[data-dialog-open]')?.click();
+        });
+    }
     // ---- collapsible entry panel ------------------------------------------
     // The catalogue owns the first screen; the full entry form lives in a
     // <details> that starts closed. The user's choice is remembered per project
     // (client-side only, same mechanism as the batch context). Without JS the
     // details element still toggles natively and the form posts normally.
     const entryDisclosure = document.getElementById('material-entry');
+    const categoryDisclosure = document.getElementById('material-categories');
     const disclosureKey = storageKey + ':open';
+    // The fixed bottom action bar is for browsing only: while the entry panel
+    // or the category manager is open it would cover their own controls.
+    const syncMobileBar = () => {
+        if (!mobileBar) return;
+        const entryOpen = Boolean(entryDisclosure && entryDisclosure.tagName === 'DETAILS' && entryDisclosure.open);
+        const categoriesOpen = Boolean(categoryDisclosure && categoryDisclosure.open);
+        mobileBar.hidden = entryOpen || categoriesOpen;
+    };
     const openEntry = ({ focus = true } = {}) => {
         if (!entryDisclosure) return;
         entryDisclosure.open = true;
+        syncMobileBar();
         try { window.localStorage.setItem(disclosureKey, '1'); } catch { /* private mode */ }
         if (focus) {
             const nameInput = entryForm ? entryForm.querySelector('[data-entry-name]') : null;
@@ -462,12 +543,15 @@
         if (savedOpen === '1') entryDisclosure.open = true;
         entryDisclosure.addEventListener('toggle', () => {
             try { window.localStorage.setItem(disclosureKey, entryDisclosure.open ? '1' : '0'); } catch { /* private mode */ }
+            syncMobileBar();
             if (entryDisclosure.open) {
                 refreshCodeTools();
                 updateCategoryStat();
             }
         });
     }
+    if (categoryDisclosure) categoryDisclosure.addEventListener('toggle', syncMobileBar);
+    syncMobileBar();
     document.addEventListener('click', event => {
         const trigger = event.target.closest('[data-entry-focus]');
         if (!trigger || !entryForm) return;
@@ -480,6 +564,7 @@
     initEntry();
     initEditDialogs();
     applyFilter();
+    renderUnitQuick();
 })();
 
 document.addEventListener('click', event => {

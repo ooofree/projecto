@@ -1219,6 +1219,289 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
     .toolbar-export .button { width: 100%; }
 }
 
+/* == SECTION 5f-1: MODULE material-management — phone workbench ============
+   手机端不再横向滚动 6 列表格：每条材料折叠成一张卡片（名称／编码·分类·单位
+   ／规格／送样状态 + 通栏操作按钮），录入与分类管理改用 ≥40px 触控控件，
+   编辑弹窗在窄屏变成全屏抽屉并固定头部与保存栏。桌面端样式完全不变。 */
+.material-mobile-bar,
+.entry-unit-quick,
+.category-mobile-meta { display: none; }
+
+@media (max-width: 760px) {
+    /* iOS 聚焦小于 16px 的输入框会自动放大页面，手机端统一 16px。 */
+    .material-toolbar input,
+    .material-toolbar select,
+    .material-entry input,
+    .material-entry select,
+    .material-entry textarea,
+    .material-edit-dialog input,
+    .material-edit-dialog select,
+    .material-edit-dialog textarea,
+    .category-disclosure input,
+    .category-disclosure select {
+        font-size: 16px;
+    }
+    .material-toolbar input,
+    .material-toolbar select,
+    .material-entry input,
+    .material-entry select,
+    .material-entry textarea {
+        min-height: 44px;
+    }
+    .entry-context-field select { min-height: 44px; }
+    .category-disclosure input,
+    .category-disclosure select { min-height: 44px; }
+    .category-disclosure .inline-editor { display: grid; gap: 9px; }
+    .category-disclosure .inline-editor .button { width: 100%; min-height: 44px; }
+
+    /* ---- filters: search on its own line, then category + export ---- */
+    .material-toolbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        min-width: 0;
+        gap: 8px;
+        padding: 10px;
+    }
+    .material-toolbar > label { display: grid; gap: 4px; min-width: 0; }
+    .material-toolbar > .material-toolbar-search { grid-column: 1 / -1; }
+    .material-toolbar > .material-toolbar-category { grid-column: 1; }
+    .material-toolbar > .toolbar-export { grid-column: 2; grid-row: 2; }
+    .material-toolbar > .toolbar-export .button { min-height: 44px; padding-inline: 15px; white-space: nowrap; }
+    .material-toolbar select { width: 100%; }
+    .material-toolbar .toolbar-count { grid-column: 1 / -1; margin: 0; }
+
+    /* ---- category rail: bigger tap targets, no hint text ---- */
+    .material-rail { border-radius: 12px; box-shadow: none; }
+    .rail-head { min-height: 34px; padding-bottom: 6px; }
+    .rail-manage { min-height: 34px; padding: 5px 11px; border-radius: 8px; font-size: .78rem; }
+    .rail-list { gap: 6px; }
+    .rail-item { min-height: 40px; padding: 8px 12px; }
+
+    /* ---- quick entry ---- */
+    #material-entry,
+    #material-categories { scroll-margin-top: 120px; }
+    .material-entry-panel > summary { min-height: 46px; }
+    .material-entry-summary-hint { display: none; }
+    .material-entry-panel[open] > summary { padding-bottom: 9px; margin-bottom: 11px; }
+    .entry-context { padding: 10px 11px; gap: 8px; }
+    .entry-context-field { min-width: 0; flex: 1 1 100%; }
+    .entry-context-toggle { align-self: flex-start; white-space: normal; }
+    .entry-context-stat { align-self: flex-start; }
+    .entry-grid { gap: 10px; }
+    .entry-field { gap: 4px; }
+    .entry-field-label { font-size: .78rem; }
+    .entry-field-name input { min-height: 48px; font-size: 16px; }
+    .entry-submit { min-height: 48px; font-size: .95rem; }
+    .entry-submit-key { display: none; }
+    .entry-code-tools { margin-top: 0; gap: 8px; }
+    .entry-grid-secondary { gap: 8px; }
+    .entry-grid-secondary textarea { min-height: 76px; }
+
+    /* Datalist is unreliable on iOS/Android; these are the same units as
+       tappable chips. Both controls write the one unit input. */
+    .entry-unit-quick {
+        display: flex;
+        grid-column: 1 / -1;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin: 0;
+    }
+    .entry-unit-quick[hidden] { display: none; }
+    .unit-chip {
+        min-height: 40px;
+        padding: 6px 15px;
+        color: var(--text-secondary);
+        background: var(--surface-muted);
+        border: 1px solid var(--border-strong);
+        border-radius: 999px;
+        font-size: .84rem;
+        font-weight: 620;
+        cursor: pointer;
+    }
+    .unit-chip.is-active { color: var(--accent-text); background: var(--accent-soft); border-color: var(--brand-border-soft); font-weight: 700; }
+
+    /* ---- catalogue as cards ---- */
+    /* Grid/flex children default to min-width:auto; a wide table would then
+       stretch the whole panel past the phone viewport. Constrain them so the
+       cards wrap to the available width instead of causing page-level scroll. */
+    .material-workspace > * { min-width: 0; }
+    #materials-table-wrap { width: auto; overflow: visible; background: transparent; border: 0; }
+    #materials-table { min-width: 0; display: block; }
+    #materials-table thead { display: none; }
+    #materials-table tbody { display: grid; min-width: 0; gap: 10px; }
+    #materials-table tr.material-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            "main status"
+            "actions actions";
+        align-items: start;
+        gap: 8px 10px;
+        padding: 12px 13px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        cursor: pointer;
+    }
+    #materials-table tr.material-row[hidden] { display: none; }
+    #materials-table tr.material-row > td {
+        display: none;
+        height: auto;
+        padding: 0;
+        border: 0;
+        font-size: .8rem;
+    }
+    #materials-table tr.material-row > td.material-cell-main { display: block; grid-area: main; min-width: 0; }
+    #materials-table tr.material-row > td.material-cell-status {
+        display: flex;
+        grid-area: status;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 3px;
+        text-align: right;
+    }
+    #materials-table tr.material-row > td.material-cell-actions { display: block; grid-area: actions; }
+    #materials-table .material-primary { font-size: 1rem; line-height: 1.35; }
+    .material-mobile-meta { display: block; margin-top: 3px; color: var(--text-tertiary); font-size: .75rem; overflow-wrap: anywhere; }
+    #materials-table .material-cell-status .material-secondary { margin-top: 0; text-align: right; }
+    #materials-table .material-cell-actions .row-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        gap: 8px;
+        padding-top: 9px;
+        border-top: 1px dashed var(--border);
+    }
+    #materials-table .material-cell-actions .row-actions form { display: block; width: 100%; }
+    #materials-table .material-cell-actions .button { width: 100%; min-height: 42px; justify-content: center; font-size: .84rem; }
+    #materials-table .material-cell-actions .button-quiet { color: var(--status-danger-text); background: var(--status-danger-bg); border-color: transparent; }
+    #materials-no-match { margin: 10px 0 0; }
+
+    /* ---- category manager as cards ---- */
+    .category-disclosure .table-wrap { overflow: visible; background: transparent; border: 0; }
+    .category-disclosure .table-wrap table { min-width: 0; }
+    .category-table { display: block; min-width: 0; }
+    .category-table thead { display: none; }
+    .category-table tbody { display: grid; gap: 9px; }
+    .category-table tr.category-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        padding: 11px 12px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 11px;
+    }
+    .category-table tr.category-row > td { display: none; height: auto; padding: 0; border: 0; }
+    .category-table tr.category-row > td.category-cell-name { display: block; color: var(--text); font-size: .9rem; font-weight: 650; }
+    .category-table tr.category-row > td.category-cell-actions { display: block; grid-column: 1 / -1; }
+    .category-mobile-meta { display: block; margin-top: 3px; color: var(--text-tertiary); font-size: .74rem; font-weight: 500; }
+    .category-table .row-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 7px; padding-top: 8px; border-top: 1px dashed var(--border); }
+    .category-table .row-actions form { display: block; }
+    .category-table .row-actions .button,
+    .category-table .row-actions summary { min-height: 40px; }
+    .category-table .row-actions .button { width: 100%; justify-content: center; }
+    .category-table .row-actions .button-quiet { color: var(--status-danger-text); background: var(--status-danger-bg); border-color: transparent; }
+    .category-table .row-actions .category-editor { display: block; }
+    .category-table .row-actions .category-editor[open] { grid-column: 1 / -1; width: 100%; max-width: 100%; }
+    .category-table .category-editor > summary { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; padding: 0 12px; color: var(--accent-text); background: var(--accent-soft); border: 1px solid var(--brand-border-soft); border-radius: 8px; font-size: .8rem; font-weight: 650; list-style: none; cursor: pointer; }
+    .category-table .category-editor > summary::-webkit-details-marker { display: none; }
+    .category-table .inline-editor { display: grid; gap: 9px; margin-top: 9px; }
+    .category-table .inline-editor .button { width: 100%; min-height: 42px; }
+
+    /* ---- advance/edit dialog becomes a full-screen sheet ---- */
+    .material-edit-dialog {
+        width: 100vw;
+        max-width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        max-height: 100dvh;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        overscroll-behavior: contain;
+    }
+    .material-edit-dialog::backdrop { background: var(--backdrop); }
+    .material-edit-dialog > .dialog-heading {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        margin: 0;
+        padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+        background: var(--surface);
+    }
+    .material-edit-dialog > form,
+    .material-edit-dialog > .dialog-section { padding-inline: 14px; }
+    .material-edit-dialog > form { padding-top: 12px; }
+    .material-edit-dialog > .dialog-section { margin-top: 14px; padding-bottom: 16px; }
+    .material-edit-dialog .form-grid { gap: 11px; }
+    .material-edit-dialog textarea { min-height: 88px; }
+    .material-edit-dialog .field-wide.dialog-actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 5;
+        margin: 6px -14px 0;
+        padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+    }
+    .material-edit-dialog .dialog-actions .button { flex: 1 1 auto; min-height: 46px; }
+    .material-edit-dialog .entry-submit-key { display: none; }
+
+    /* composition rows: one compact block per child instead of a wide table */
+    .material-edit-dialog .dialog-section .table-wrap { overflow: visible; background: transparent; border: 0; }
+    .material-edit-dialog .dialog-section .report-table { min-width: 0; display: block; }
+    .material-edit-dialog .dialog-section .report-table thead { display: none; }
+    .material-edit-dialog .dialog-section .report-table tbody { display: grid; gap: 8px; }
+    .material-edit-dialog .dialog-section .report-table tr {
+        display: grid;
+        gap: 8px;
+        padding: 10px 11px;
+        background: var(--surface-muted);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+    }
+    .material-edit-dialog .dialog-section .report-table td { display: block; height: auto; padding: 0; border: 0; font-size: .8rem; }
+    .material-edit-dialog .dialog-section .report-table .inline-form { flex-direction: row; align-items: center; gap: 7px; margin: 0; }
+    .material-edit-dialog .dialog-section .report-table .inline-form input[type="number"] { flex: 1 1 auto; width: auto; min-width: 0; min-height: 42px; }
+    .material-edit-dialog .dialog-section .report-table .inline-form .button { min-height: 42px; white-space: nowrap; }
+    .material-edit-dialog .dialog-section .report-table td:last-child .button-quiet { color: var(--status-danger-text); background: var(--status-danger-bg); min-height: 40px; }
+
+    /* ---- fixed bottom actions while browsing the catalogue ---- */
+    .material-mobile-bar {
+        position: fixed;
+        z-index: 20;
+        left: 50%;
+        bottom: calc(12px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        display: flex;
+        gap: 8px;
+        width: min(430px, calc(100vw - 24px));
+        padding: 8px;
+        background: var(--overlay-strong);
+        border: 1px solid var(--border-strong);
+        border-radius: 999px;
+        box-shadow: var(--shadow-raised);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+    }
+    .material-mobile-bar[hidden] { display: none; }
+    .material-mobile-bar .button { flex: 1 1 0; min-height: 44px; border-radius: 999px; font-size: .86rem; }
+    .material-workspace { padding-bottom: 78px; }
+}
+
+/* Phone-only field order: name first, then the (auto-filled) code, unit,
+   unit chips and the save button. 601–760px keeps the 2-column layout. */
+@media (max-width: 600px) {
+    .entry-field-name { order: 1; }
+    .entry-field-code { order: 2; }
+    .entry-field-unit { order: 3; }
+    .entry-unit-quick { order: 4; }
+    .entry-grid .entry-submit { order: 5; }
+}
+
 /* Dark residuals for the materials workbench: none — all colors resolve via
    the semantic token flip in body.theme-dark above. */
 /* == SECTION 5k: BOM 组价 — 清单 + 成本预览（.cost-*） ======================

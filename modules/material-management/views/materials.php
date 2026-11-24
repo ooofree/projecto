@@ -98,16 +98,17 @@ foreach ($materials as $material) {
             <div class="entry-grid">
                 <label class="entry-field entry-field-code">
                     <span class="entry-field-label">材料编码 <span class="entry-field-hint">可选 · 尾号自动递增</span></span>
-                    <input name="material_code" maxlength="50" placeholder="如 DG-001" autocomplete="off" data-entry-code>
+                    <input name="material_code" maxlength="50" placeholder="如 DG-001" autocomplete="off" data-entry-code inputmode="text" autocapitalize="off" spellcheck="false" enterkeyhint="done">
                 </label>
                 <label class="entry-field entry-field-name">
                     <span class="entry-field-label">材料名称</span>
-                    <input name="material_name" maxlength="255" required placeholder="如 筒灯" autocomplete="off" data-entry-name>
+                    <input name="material_name" maxlength="255" required placeholder="如 筒灯" autocomplete="off" data-entry-name enterkeyhint="done">
                 </label>
                 <label class="entry-field entry-field-unit">
                     <span class="entry-field-label">计量单位</span>
-                    <input name="unit" maxlength="50" required list="material-unit-options" placeholder="个" autocomplete="off" data-entry-unit>
+                    <input name="unit" maxlength="50" required list="material-unit-options" placeholder="个" autocomplete="off" data-entry-unit autocapitalize="off" spellcheck="false" enterkeyhint="done">
                 </label>
+                <div class="entry-unit-quick" data-unit-quick role="group" aria-label="常用单位快捷选择" hidden></div>
                 <button class="button button-primary entry-submit" type="submit">保存并继续<span class="entry-submit-key" aria-hidden="true">Enter ↵</span></button>
             </div>
             <div class="entry-code-tools">
@@ -120,8 +121,8 @@ foreach ($materials as $material) {
                 <?php endforeach; ?>
             </datalist>
             <div class="entry-grid entry-grid-secondary">
-                <label class="entry-field">规格（可选）<textarea name="specifications" rows="1" maxlength="20000" placeholder="尺寸 / 型号 / 材质等，回车保存" data-entry-single-line></textarea></label>
-                <label class="entry-field">材料说明（可选）<textarea name="material_description_detailed" rows="1" maxlength="20000" placeholder="补充说明，回车保存" data-entry-single-line></textarea></label>
+                <label class="entry-field">规格（可选）<textarea name="specifications" rows="1" maxlength="20000" placeholder="尺寸 / 型号 / 材质等，回车保存" data-entry-single-line autocapitalize="off" enterkeyhint="done"></textarea></label>
+                <label class="entry-field">材料说明（可选）<textarea name="material_description_detailed" rows="1" maxlength="20000" placeholder="补充说明，回车保存" data-entry-single-line autocapitalize="off" enterkeyhint="done"></textarea></label>
             </div>
             <p class="entry-status" data-entry-status role="status" aria-live="polite" hidden></p>
         </form>
@@ -164,12 +165,12 @@ foreach ($materials as $material) {
             <h2>材料清单</h2>
             <span class="muted" data-material-total><?= count($materials) ?> 项</span>
         </div>
-        <div class="toolbar" role="search" aria-label="筛选材料">
-            <label>
+        <div class="toolbar material-toolbar" role="search" aria-label="筛选材料">
+            <label class="material-toolbar-search">
                 搜索目录
-                <input id="material-search" type="search" placeholder="名称、编码或规格" autocomplete="off">
+                <input id="material-search" type="search" placeholder="名称、编码或规格" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
             </label>
-            <label>
+            <label class="material-toolbar-category">
                 材料分类
                 <select id="material-category" name="category_id" form="material-export-form">
                     <option value="">全部分类</option>
@@ -214,17 +215,17 @@ foreach ($materials as $material) {
                         data-material-id="<?= (int) $material['material_id'] ?>"
                         data-search="<?= $escape(mb_strtolower($searchText, 'UTF-8')) ?>"
                         data-category="<?= (int) ($material['category_id'] ?? 0) ?>">
-                        <td><span class="report-code"><?= $escape($material['material_code'] ?: '—') ?></span></td>
-                        <td>
+                        <td class="material-cell-code"><span class="report-code"><?= $escape($material['material_code'] ?: '—') ?></span></td>
+                        <td class="material-cell-main">
                             <span class="material-primary"><?= $escape($material['material_name']) ?></span>
-                            <span class="material-mobile-meta"><?= $escape($material['material_code'] ?: '—') ?> · <?= $escape($material['category_name'] ?? '未分类') ?></span>
+                            <span class="material-mobile-meta"><?= $escape($material['material_code'] ?: '—') ?> · <?= $escape($material['category_name'] ?? '未分类') ?> · <?= $escape($material['unit']) ?></span>
                             <?php if (trim((string) ($material['specifications'] ?? '')) !== ''): ?>
                                 <span class="material-secondary"><?= $escape($material['specifications']) ?></span>
                             <?php endif; ?>
                         </td>
-                        <td><?= $escape($material['category_name'] ?? '未分类') ?></td>
-                        <td><?= $escape($material['unit']) ?></td>
-                        <td>
+                        <td class="material-cell-category"><?= $escape($material['category_name'] ?? '未分类') ?></td>
+                        <td class="material-cell-unit"><?= $escape($material['unit']) ?></td>
+                        <td class="material-cell-status">
                             <?php $childCount = (int) ($material['child_count'] ?? 0); ?>
                             <?php if (($material['sample_required'] ?? 'required') === 'exempt'): ?>
                                 <span class="status-badge is-neutral">无需送样</span>
@@ -237,17 +238,17 @@ foreach ($materials as $material) {
                                 <span class="material-secondary">组成子件</span>
                             <?php endif; ?>
                         </td>
-                        <td>
+                        <td class="material-cell-actions">
                             <div class="row-actions">
                                 <?php if ($canEdit): ?>
-                                    <button class="button button-secondary" type="button" data-dialog-open="material-edit-<?= (int) $material['material_id'] ?>">编辑</button>
+                                    <button class="button button-secondary" type="button" data-dialog-open="material-edit-<?= (int) $material['material_id'] ?>" aria-label="编辑材料「<?= $escape($material['material_name']) ?>」">编辑</button>
                                 <?php endif; ?>
                                 <?php if ($canDelete): ?>
                                     <form method="post" action="" data-confirm="确定删除材料「<?= $escape($material['material_name']) ?>」？已被报价、测算、样品、招标或材料组成引用的材料无法删除。">
                                         <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                                         <input type="hidden" name="action" value="material.delete">
                                         <input type="hidden" name="material_id" value="<?= (int) $material['material_id'] ?>">
-                                        <button class="button button-quiet" type="submit">删除</button>
+                                        <button class="button button-quiet" type="submit" aria-label="删除材料「<?= $escape($material['material_name']) ?>」">删除</button>
                                     </form>
                                 <?php endif; ?>
                             </div>
@@ -260,6 +261,13 @@ foreach ($materials as $material) {
         </div>
     </section>
 </div>
+
+<?php if ($canEdit): ?>
+    <div class="material-mobile-bar" data-mobile-actions role="group" aria-label="材料快捷操作" hidden>
+        <button class="button button-primary" type="button" data-entry-focus>＋ 新增材料</button>
+        <button class="button button-secondary" type="button" data-disclosure-open="material-categories">管理分类</button>
+    </div>
+<?php endif; ?>
 
 <?php if ($data['categories'] !== [] || $canEdit): ?>
     <details class="disclosure category-disclosure" id="material-categories">
@@ -291,11 +299,14 @@ foreach ($materials as $material) {
                         </thead>
                         <tbody>
                         <?php foreach ($categories as $category): ?>
-                            <tr>
-                                <td class="category-name"><?= $escape($category['category_name']) ?></td>
-                                <td><?= $escape($category['parent_name'] ?? '—') ?></td>
-                                <td><?= (int) $category['sort_order'] ?></td>
-                                <td>
+                            <tr class="category-row">
+                                <td class="category-cell-name">
+                                    <?= $escape($category['category_name']) ?>
+                                    <span class="category-mobile-meta">上级 <?= $escape($category['parent_name'] ?? '—') ?> · 排序 <?= (int) $category['sort_order'] ?></span>
+                                </td>
+                                <td class="category-cell-parent"><?= $escape($category['parent_name'] ?? '—') ?></td>
+                                <td class="category-cell-sort"><?= (int) $category['sort_order'] ?></td>
+                                <td class="category-cell-actions">
                                     <div class="row-actions">
                                         <?php if ($canEdit): ?>
                                             <details class="category-editor">
@@ -343,7 +354,7 @@ foreach ($materials as $material) {
 <?php if ($canEdit): ?>
     <div data-material-dialogs>
     <?php foreach ($materials as $material): ?>
-        <dialog class="edit-dialog" id="material-edit-<?= (int) $material['material_id'] ?>" aria-labelledby="material-edit-title-<?= (int) $material['material_id'] ?>">
+        <dialog class="edit-dialog material-edit-dialog" id="material-edit-<?= (int) $material['material_id'] ?>" aria-labelledby="material-edit-title-<?= (int) $material['material_id'] ?>">
             <div class="dialog-heading">
                 <div>
                     <p class="eyebrow">材料主数据</p>
@@ -355,9 +366,9 @@ foreach ($materials as $material) {
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="material.save">
                 <input type="hidden" name="material_id" value="<?= (int) $material['material_id'] ?>">
-                <label>材料编码<input name="material_code" maxlength="50" value="<?= $escape($material['material_code'] ?? '') ?>"></label>
+                <label>材料编码<input name="material_code" maxlength="50" value="<?= $escape($material['material_code'] ?? '') ?>" autocapitalize="off" spellcheck="false"></label>
                 <label>材料名称<input name="material_name" maxlength="255" value="<?= $escape($material['material_name']) ?>" required></label>
-                <label>计量单位<input name="unit" maxlength="50" list="material-unit-options" value="<?= $escape($material['unit']) ?>" required></label>
+                <label>计量单位<input name="unit" maxlength="50" list="material-unit-options" value="<?= $escape($material['unit']) ?>" required autocapitalize="off" spellcheck="false"></label>
                 <label>分类
                     <select name="category_id">
                         <option value="">未分类</option>
@@ -398,7 +409,7 @@ foreach ($materials as $material) {
                                             <input type="hidden" name="composition_id" value="<?= (int) $composition['composition_id'] ?>">
                                             <input type="hidden" name="parent_material_id" value="<?= (int) $material['material_id'] ?>">
                                             <input type="hidden" name="child_material_id" value="<?= (int) $composition['child_material_id'] ?>">
-                                            <input type="number" name="quantity" min="0.01" step="0.01" value="<?= $escape((string) $composition['quantity']) ?>" required aria-label="数量系数">
+                                            <input type="number" name="quantity" min="0.01" step="0.01" value="<?= $escape((string) $composition['quantity']) ?>" required aria-label="数量系数" inputmode="decimal">
                                             <button class="button button-secondary" type="submit">保存系数</button>
                                         </form>
                                     </td>
@@ -435,7 +446,7 @@ foreach ($materials as $material) {
                                     <?php endforeach; ?>
                                 </select>
                             </label>
-                            <label>数量系数<input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required></label>
+                            <label>数量系数<input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required inputmode="decimal"></label>
                             <button class="button button-primary" type="submit">添加组成</button>
                         </form>
                         <p class="muted">添加首条组成后，本材料默认转为“无需送样”，可在上方送样要求中改回。</p>
