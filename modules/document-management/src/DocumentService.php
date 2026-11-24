@@ -837,6 +837,81 @@ final class DocumentService
         return $links;
     }
 
+    /**
+     * Row-level shortcuts used by the ledger quick actions. The step owns the
+     * target status and a default audit reason; every validation of the normal
+     * transition still applies.
+     */
+    public function quickIssue(
+        int $projectId,
+        int $userId,
+        int $issueId,
+        string $step,
+        array $data,
+        bool $canManage
+    ): void {
+        $steps = [
+            'start' => ['in_review', '快捷操作：开始处理。'],
+            'resolve' => ['resolved', '快捷操作：转待关闭。'],
+            'close' => ['closed', '快捷操作：关闭问题。'],
+        ];
+        if (!isset($steps[$step])) {
+            throw new HttpException('不支持的问题快捷操作。', 422);
+        }
+
+        [$targetStatus, $defaultReason] = $steps[$step];
+        $reason = $this->optionalText($data['reason'] ?? null, '状态变更原因', 2000) ?? $defaultReason;
+        $this->transitionIssue(
+            $projectId,
+            $userId,
+            $issueId,
+            $targetStatus,
+            $reason,
+            [
+                'resolution_result' => $data['resolution_result'] ?? null,
+                'verification_status' => $data['verification_status'] ?? null,
+                'verification_note' => $data['verification_note'] ?? null,
+                'evidence_reference' => $data['evidence_reference'] ?? null,
+            ],
+            $canManage
+        );
+    }
+
+    public function quickRfi(
+        int $projectId,
+        int $userId,
+        int $rfiId,
+        string $step,
+        array $data,
+        bool $canManage
+    ): void {
+        $steps = [
+            'submit' => ['submitted', '快捷操作：提交 RFI。'],
+            'review' => ['under_review', '快捷操作：开始审核。'],
+            'respond' => ['responded', '快捷操作：答复 RFI。'],
+            'close' => ['closed', '快捷操作：关闭 RFI。'],
+        ];
+        if (!isset($steps[$step])) {
+            throw new HttpException('不支持的 RFI 快捷操作。', 422);
+        }
+
+        [$targetStatus, $defaultReason] = $steps[$step];
+        $reason = $this->optionalText($data['reason'] ?? null, '状态变更原因', 2000) ?? $defaultReason;
+        $this->transitionRfi(
+            $projectId,
+            $userId,
+            $rfiId,
+            $targetStatus,
+            $reason,
+            [
+                'response_text' => $data['response_text'] ?? null,
+                'response_complete' => $data['response_complete'] ?? false,
+                'evidence_reference' => $data['evidence_reference'] ?? null,
+            ],
+            $canManage
+        );
+    }
+
     public function addIssueFollowUp(int $projectId, int $userId, int $issueId, string $title): int
     {
         $title = $this->requiredText($title, '后续事项', 255);

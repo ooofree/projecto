@@ -132,7 +132,15 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                             $statusLabels[$rfi['status']] ?? $rfi['status'],
                             $priorityLabels[$rfi['priority']] ?? $rfi['priority'],
                         ])); ?>
-                        <tr data-list-item data-search="<?= $escape($searchText) ?>">
+                        <?php
+                        $openRfiFollowUps = 0;
+                        foreach ($rfi['follow_ups'] ?? [] as $followUp) {
+                            if ((int) $followUp['is_completed'] !== 1) {
+                                $openRfiFollowUps++;
+                            }
+                        }
+                        ?>
+                        <tr id="rfi-<?= (int) $rfi['rfi_id'] ?>" data-list-item data-search="<?= $escape($searchText) ?>">
                             <td><?= $escape($rfi['rfi_number']) ?></td>
                             <td>
                                 <span class="table-primary-cell"><?= $escape(mb_strimwidth($rfi['description'], 0, 85, '…')) ?></span>
@@ -143,7 +151,38 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                             <td><span class="badge"><?= $escape($statusLabels[$rfi['status']] ?? $rfi['status']) ?></span></td>
                             <td><?= $escape(\ProjectO\Support::formatDateTime($rfi['due_date'])) ?></td>
                             <td><?= count($rfi['images']) ?></td>
-                            <td><button class="button button-secondary" type="button" data-dialog-open="rfi-dialog-<?= (int) $rfi['rfi_id'] ?>">查看 / 编辑</button></td>
+                            <td>
+                                <div class="row-actions">
+                                    <button class="button button-secondary" type="button" data-dialog-open="rfi-dialog-<?= (int) $rfi['rfi_id'] ?>">查看 / 编辑</button>
+                                    <?php if ($canEdit): ?>
+                                        <?php if ($rfi['status'] === 'draft'): ?>
+                                            <form method="post">
+                                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                                <input type="hidden" name="action" value="rfi.quick">
+                                                <input type="hidden" name="step" value="submit">
+                                                <input type="hidden" name="rfi_id" value="<?= (int) $rfi['rfi_id'] ?>">
+                                                <button class="button button-secondary" type="submit">提交</button>
+                                            </form>
+                                        <?php elseif ($rfi['status'] === 'submitted'): ?>
+                                            <form method="post">
+                                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                                <input type="hidden" name="action" value="rfi.quick">
+                                                <input type="hidden" name="step" value="review">
+                                                <input type="hidden" name="rfi_id" value="<?= (int) $rfi['rfi_id'] ?>">
+                                                <button class="button button-secondary" type="submit">开始审核</button>
+                                            </form>
+                                        <?php elseif ($rfi['status'] === 'under_review'): ?>
+                                            <button class="button button-secondary" type="button" data-dialog-open="rfi-quick-respond-<?= (int) $rfi['rfi_id'] ?>">答复</button>
+                                        <?php elseif ($rfi['status'] === 'responded'): ?>
+                                            <?php if ($openRfiFollowUps > 0): ?>
+                                                <button class="button button-secondary" type="button" disabled title="请先完成该 RFI 的后续事项">关闭</button>
+                                            <?php else: ?>
+                                                <button class="button button-secondary" type="button" data-dialog-open="rfi-quick-close-<?= (int) $rfi['rfi_id'] ?>">关闭</button>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -367,6 +406,61 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                         </ol>
                     <?php endif; ?>
                 </details>
+            </dialog>
+
+            <dialog class="edit-dialog is-compact" id="rfi-quick-respond-<?= (int) $rfi['rfi_id'] ?>">
+                <div class="dialog-heading">
+                    <div>
+                        <p class="eyebrow"><?= $escape($rfi['rfi_number']) ?> · 快捷操作</p>
+                        <h2>提交正式答复</h2>
+                    </div>
+                    <button class="button button-quiet" type="button" data-dialog-close>关闭</button>
+                </div>
+                <form method="post" class="form-grid">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="rfi.quick">
+                    <input type="hidden" name="step" value="respond">
+                    <input type="hidden" name="rfi_id" value="<?= (int) $rfi['rfi_id'] ?>">
+                    <label class="field-wide">
+                        正式答复
+                        <textarea name="response_text" rows="4" maxlength="10000" required><?= $escape($rfi['response_text'] ?? '') ?></textarea>
+                    </label>
+                    <label class="field-wide">
+                        证据档案引用（可选）
+                        <input name="evidence_reference" maxlength="1000" value="<?= $escape($rfi['evidence_reference'] ?? '') ?>">
+                    </label>
+                    <label class="checkbox-field field-wide">
+                        <input type="checkbox" name="response_complete" value="1" required>
+                        已确认答复完整
+                    </label>
+                    <div class="field-wide dialog-actions">
+                        <button class="button button-primary" type="submit">提交答复</button>
+                    </div>
+                </form>
+            </dialog>
+
+            <dialog class="edit-dialog is-compact" id="rfi-quick-close-<?= (int) $rfi['rfi_id'] ?>">
+                <div class="dialog-heading">
+                    <div>
+                        <p class="eyebrow"><?= $escape($rfi['rfi_number']) ?> · 快捷操作</p>
+                        <h2>关闭 RFI</h2>
+                    </div>
+                    <button class="button button-quiet" type="button" data-dialog-close>关闭</button>
+                </div>
+                <form method="post" class="form-grid">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="rfi.quick">
+                    <input type="hidden" name="step" value="close">
+                    <input type="hidden" name="rfi_id" value="<?= (int) $rfi['rfi_id'] ?>">
+                    <label class="field-wide">
+                        证据档案引用<?= (int) $rfi['evidence_required'] === 1 ? '（必填）' : '（可选）' ?>
+                        <input name="evidence_reference" maxlength="1000"<?= (int) $rfi['evidence_required'] === 1 ? ' required' : '' ?> value="<?= $escape($rfi['evidence_reference'] ?? '') ?>">
+                    </label>
+                    <p class="muted field-wide record-meta">关闭后该 RFI 收口；若这是主问题最后一份未关闭 RFI，问题会转为待关闭。</p>
+                    <div class="field-wide dialog-actions">
+                        <button class="button button-primary" type="submit">确认关闭</button>
+                    </div>
+                </form>
             </dialog>
         <?php endforeach; ?>
     <?php endif; ?>

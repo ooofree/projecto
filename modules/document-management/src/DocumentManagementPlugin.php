@@ -98,11 +98,13 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             'issue.create' => $this->createIssue($input),
             'issue.update' => $this->updateIssue($input),
             'issue.transition' => $this->transitionIssue($input),
+            'issue.quick' => $this->quickIssue($input),
             'issue.followup.create' => $this->createIssueFollowUp($input),
             'issue.followup.complete' => $this->completeIssueFollowUp($input),
             'rfi.create' => $this->createRfi($input),
             'rfi.update' => $this->updateRfi($input),
             'rfi.transition' => $this->transitionRfi($input),
+            'rfi.quick' => $this->quickRfi($input),
             'rfi.followup.create' => $this->createRfiFollowUp($input),
             'rfi.followup.complete' => $this->completeRfiFollowUp($input),
             'settings.save' => $this->saveSettings($input),
@@ -483,24 +485,64 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
     {
         $this->requireEdit();
         $project = $this->context->requireCurrentProject();
+        $issueId = $this->requiredId($input, 'issue_id', '问题');
         $targetStatus = $this->requiredString($input, 'status', '问题状态');
-        $this->documents->transitionIssue(
-            (int) $project['project_id'],
-            $this->userId(),
-            $this->requiredId($input, 'issue_id', '问题'),
-            $targetStatus,
-            $this->requiredString($input, 'reason', '状态变更原因'),
-            [
-                'resolution_result' => $input['resolution_result'] ?? null,
-                'verification_status' => $input['verification_status'] ?? null,
-                'verification_note' => $input['verification_note'] ?? null,
-                'evidence_reference' => $input['evidence_reference'] ?? null,
-            ],
-            Support::hasPermission($this->context->db, 'manage_issues')
-        );
+        $reason = $this->requiredString($input, 'reason', '状态变更原因');
+        try {
+            $this->documents->transitionIssue(
+                (int) $project['project_id'],
+                $this->userId(),
+                $issueId,
+                $targetStatus,
+                $reason,
+                [
+                    'resolution_result' => $input['resolution_result'] ?? null,
+                    'verification_status' => $input['verification_status'] ?? null,
+                    'verification_note' => $input['verification_note'] ?? null,
+                    'evidence_reference' => $input['evidence_reference'] ?? null,
+                ],
+                Support::hasPermission($this->context->db, 'manage_issues')
+            );
+        } catch (HttpException $exception) {
+            return $this->transitionFailure($exception, 'issues', $issueId, 'issue-');
+        }
 
         Support::flash('问题状态已更新。');
-        return PluginResponse::redirect('?page=issues');
+        return PluginResponse::redirect('?page=issues#issue-' . $issueId);
+    }
+
+    private function quickIssue(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $issueId = $this->requiredId($input, 'issue_id', '问题');
+        $step = $this->requiredString($input, 'step', '快捷操作');
+        $flashes = [
+            'start' => '问题已转处理中。',
+            'resolve' => '问题已转待关闭，请补齐现场验证与证据后关闭。',
+            'close' => '问题已关闭。',
+        ];
+        try {
+            $this->documents->quickIssue(
+                (int) $project['project_id'],
+                $this->userId(),
+                $issueId,
+                $step,
+                [
+                    'reason' => $input['reason'] ?? null,
+                    'resolution_result' => $input['resolution_result'] ?? null,
+                    'verification_status' => $input['verification_status'] ?? null,
+                    'verification_note' => $input['verification_note'] ?? null,
+                    'evidence_reference' => $input['evidence_reference'] ?? null,
+                ],
+                Support::hasPermission($this->context->db, 'manage_issues')
+            );
+        } catch (HttpException $exception) {
+            return $this->transitionFailure($exception, 'issues', $issueId, 'issue-');
+        }
+
+        Support::flash($flashes[$step] ?? '问题状态已更新。');
+        return PluginResponse::redirect('?page=issues#issue-' . $issueId);
     }
 
     private function updateIssue(array $input): PluginResponse
@@ -586,26 +628,79 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
     {
         $this->requireEdit();
         $project = $this->context->requireCurrentProject();
+        $rfiId = $this->requiredId($input, 'rfi_id', 'RFI');
         $targetStatus = $this->requiredString($input, 'status', 'RFI 状态');
-        $this->documents->transitionRfi(
-            (int) $project['project_id'],
-            $this->userId(),
-            $this->requiredId($input, 'rfi_id', 'RFI'),
-            $targetStatus,
-            $this->requiredString($input, 'reason', '状态变更原因'),
-            [
-                'response_text' => $input['response_text'] ?? null,
-                'response_complete' => $this->checkbox($input, 'response_complete'),
-                'evidence_reference' => $input['evidence_reference'] ?? null,
-            ],
-            Support::hasPermission($this->context->db, 'manage_issues')
-        );
+        $reason = $this->requiredString($input, 'reason', '状态变更原因');
+        try {
+            $this->documents->transitionRfi(
+                (int) $project['project_id'],
+                $this->userId(),
+                $rfiId,
+                $targetStatus,
+                $reason,
+                [
+                    'response_text' => $input['response_text'] ?? null,
+                    'response_complete' => $this->checkbox($input, 'response_complete'),
+                    'evidence_reference' => $input['evidence_reference'] ?? null,
+                ],
+                Support::hasPermission($this->context->db, 'manage_issues')
+            );
+        } catch (HttpException $exception) {
+            return $this->transitionFailure($exception, 'rfis', $rfiId, 'rfi-');
+        }
 
         $message = $targetStatus === 'responded'
             ? 'RFI 已答复；请重新评估主问题，系统未自动改变问题状态。'
             : 'RFI 状态已更新。';
         Support::flash($message);
-        return PluginResponse::redirect('?page=rfis');
+        return PluginResponse::redirect('?page=rfis#rfi-' . $rfiId);
+    }
+
+    private function quickRfi(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $rfiId = $this->requiredId($input, 'rfi_id', 'RFI');
+        $step = $this->requiredString($input, 'step', '快捷操作');
+        $flashes = [
+            'submit' => 'RFI 已提交。',
+            'review' => 'RFI 已进入审核中。',
+            'respond' => 'RFI 已答复，请评估主问题是否可收口。',
+            'close' => 'RFI 已关闭；若这是该问题最后一份 RFI，问题会自动转为待关闭。',
+        ];
+        try {
+            $this->documents->quickRfi(
+                (int) $project['project_id'],
+                $this->userId(),
+                $rfiId,
+                $step,
+                [
+                    'reason' => $input['reason'] ?? null,
+                    'response_text' => $input['response_text'] ?? null,
+                    'response_complete' => $this->checkbox($input, 'response_complete'),
+                    'evidence_reference' => $input['evidence_reference'] ?? null,
+                ],
+                Support::hasPermission($this->context->db, 'manage_issues')
+            );
+        } catch (HttpException $exception) {
+            return $this->transitionFailure($exception, 'rfis', $rfiId, 'rfi-');
+        }
+
+        Support::flash($flashes[$step] ?? 'RFI 状态已更新。');
+        return PluginResponse::redirect('?page=rfis#rfi-' . $rfiId);
+    }
+
+    private function transitionFailure(
+        HttpException $exception,
+        string $page,
+        int $recordId,
+        string $anchorPrefix
+    ): PluginResponse {
+        if ($exception->statusCode >= 500) {
+            throw $exception;
+        }
+        Support::flash($exception->getMessage(), 'error');
+        return PluginResponse::redirect('?page=' . $page . '#' . $anchorPrefix . $recordId);
     }
 
     private function updateRfi(array $input): PluginResponse

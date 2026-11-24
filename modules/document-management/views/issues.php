@@ -252,7 +252,21 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                             $statusLabels[$issue['status']] ?? $issue['status'],
                             $severityLabels[$issue['severity']] ?? $issue['severity'],
                         ])); ?>
-                        <tr data-list-item data-search="<?= $escape($searchText) ?>"
+                        <?php
+                        $openLinkedRfis = 0;
+                        foreach ($issue['linked_rfis'] ?? [] as $linkedRfi) {
+                            if ($linkedRfi['status'] !== 'closed') {
+                                $openLinkedRfis++;
+                            }
+                        }
+                        $openIssueFollowUps = 0;
+                        foreach ($issue['follow_ups'] ?? [] as $followUp) {
+                            if ((int) $followUp['is_completed'] !== 1) {
+                                $openIssueFollowUps++;
+                            }
+                        }
+                        ?>
+                        <tr id="issue-<?= (int) $issue['issue_id'] ?>" data-list-item data-search="<?= $escape($searchText) ?>"
                             data-status="<?= $escape($issue['status']) ?>"
                             data-severity="<?= $escape($issue['severity']) ?>">
                             <td><?= $escape($issue['issue_number'] ?: '#' . $issue['issue_id']) ?></td>
@@ -262,7 +276,32 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                             <td><?= $escape(($issue['location_display'] ?? '') !== '' ? $issue['location_display'] : '—') ?></td>
                             <td><?= count($issue['images']) ?></td>
                             <td><?= $escape(\ProjectO\Support::formatDateTime($issue['updated_at'])) ?></td>
-                            <td><button class="button button-secondary" type="button" data-dialog-open="issue-dialog-<?= (int) $issue['issue_id'] ?>">查看 / 编辑</button></td>
+                            <td>
+                                <div class="row-actions">
+                                    <button class="button button-secondary" type="button" data-dialog-open="issue-dialog-<?= (int) $issue['issue_id'] ?>">查看 / 编辑</button>
+                                    <?php if ($canEdit): ?>
+                                        <?php if ($issue['status'] === 'open'): ?>
+                                            <form method="post">
+                                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                                <input type="hidden" name="action" value="issue.quick">
+                                                <input type="hidden" name="step" value="start">
+                                                <input type="hidden" name="issue_id" value="<?= (int) $issue['issue_id'] ?>">
+                                                <button class="button button-secondary" type="submit">开始处理</button>
+                                            </form>
+                                        <?php elseif ($issue['status'] === 'in_review'): ?>
+                                            <button class="button button-secondary" type="button" data-dialog-open="issue-quick-resolve-<?= (int) $issue['issue_id'] ?>">转待关闭</button>
+                                        <?php elseif ($issue['status'] === 'resolved'): ?>
+                                            <?php if ($openLinkedRfis > 0): ?>
+                                                <button class="button button-secondary" type="button" disabled title="请先关闭该问题的关联 RFI">关闭</button>
+                                            <?php elseif ($openIssueFollowUps > 0): ?>
+                                                <button class="button button-secondary" type="button" disabled title="请先完成该问题的后续事项">关闭</button>
+                                            <?php else: ?>
+                                                <button class="button button-secondary" type="button" data-dialog-open="issue-quick-close-<?= (int) $issue['issue_id'] ?>">关闭</button>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -316,14 +355,6 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                     <p><strong>处理结果：</strong><?= nl2br($escape($issue['resolution_result'])) ?></p>
                 <?php endif; ?>
 
-                <?php
-                $openLinkedRfis = 0;
-                foreach ($issue['linked_rfis'] ?? [] as $linkedRfi) {
-                    if ($linkedRfi['status'] !== 'closed') {
-                        $openLinkedRfis++;
-                    }
-                }
-                ?>
                 <?php if ($canEdit && $issue['available_transitions'] !== []): ?>
                     <details class="record-tools">
                         <summary>更新状态与关闭校验</summary>
@@ -490,6 +521,70 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                         </ol>
                     <?php endif; ?>
                 </details>
+            </dialog>
+
+            <dialog class="edit-dialog is-compact" id="issue-quick-resolve-<?= (int) $issue['issue_id'] ?>">
+                <div class="dialog-heading">
+                    <div>
+                        <p class="eyebrow">问题 <?= $escape($issue['issue_number'] ?: '#' . $issue['issue_id']) ?> · 快捷操作</p>
+                        <h2>转待关闭</h2>
+                    </div>
+                    <button class="button button-quiet" type="button" data-dialog-close>关闭</button>
+                </div>
+                <form method="post" class="form-grid">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="issue.quick">
+                    <input type="hidden" name="step" value="resolve">
+                    <input type="hidden" name="issue_id" value="<?= (int) $issue['issue_id'] ?>">
+                    <label class="field-wide">
+                        处理结果
+                        <textarea name="resolution_result" rows="3" maxlength="10000" required><?= $escape($issue['resolution_result'] ?? '') ?></textarea>
+                    </label>
+                    <p class="muted field-wide record-meta">现场验证与证据引用在最终关闭时必填。</p>
+                    <div class="field-wide dialog-actions">
+                        <button class="button button-primary" type="submit">保存为待关闭</button>
+                    </div>
+                </form>
+            </dialog>
+
+            <dialog class="edit-dialog is-compact" id="issue-quick-close-<?= (int) $issue['issue_id'] ?>">
+                <div class="dialog-heading">
+                    <div>
+                        <p class="eyebrow">问题 <?= $escape($issue['issue_number'] ?: '#' . $issue['issue_id']) ?> · 快捷操作</p>
+                        <h2>关闭问题</h2>
+                    </div>
+                    <button class="button button-quiet" type="button" data-dialog-close>关闭</button>
+                </div>
+                <form method="post" class="form-grid">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="issue.quick">
+                    <input type="hidden" name="step" value="close">
+                    <input type="hidden" name="issue_id" value="<?= (int) $issue['issue_id'] ?>">
+                    <label class="field-wide">
+                        处理结果
+                        <textarea name="resolution_result" rows="3" maxlength="10000" required><?= $escape($issue['resolution_result'] ?? '') ?></textarea>
+                    </label>
+                    <label>
+                        现场验证
+                        <select name="verification_status" required>
+                            <option value="">请选择</option>
+                            <option value="passed" <?= $issue['verification_status'] === 'passed' ? 'selected' : '' ?>>通过</option>
+                            <option value="not_required" <?= $issue['verification_status'] === 'not_required' ? 'selected' : '' ?>>不适用</option>
+                        </select>
+                    </label>
+                    <label>
+                        验证说明
+                        <input name="verification_note" maxlength="2000" value="<?= $escape($issue['verification_note'] ?? '') ?>">
+                    </label>
+                    <label class="field-wide">
+                        证据档案引用
+                        <input name="evidence_reference" maxlength="1000" required value="<?= $escape($issue['evidence_reference'] ?? '') ?>">
+                    </label>
+                    <p class="muted field-wide record-meta">选择“不适用”时必须填写验证说明；有后续事项或未关闭 RFI 时无法关闭。</p>
+                    <div class="field-wide dialog-actions">
+                        <button class="button button-primary" type="submit">确认关闭</button>
+                    </div>
+                </form>
             </dialog>
         <?php endforeach; ?>
     <?php endif; ?>

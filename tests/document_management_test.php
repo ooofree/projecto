@@ -904,7 +904,9 @@ documentTestCheck(
         && str_contains($renderedRfiPage, 'href="?page=issues">问题管理</a>')
         && str_contains($renderedRfiPage, 'href="?page=documents">文档管理首页</a>')
         && str_contains($renderedRfiPage, 'rfis-table')
-        && str_contains($renderedRfiPage, 'rfi.update'),
+        && str_contains($renderedRfiPage, 'rfi.update')
+        && str_contains($renderedRfiPage, 'id="rfi-')
+        && str_contains($renderedRfiPage, 'rfi.quick'),
     'The RFI route should render project-scoped records and module navigation through the host application.'
 );
 $_GET = ['page' => 'issues'];
@@ -919,6 +921,8 @@ documentTestCheck(
         && str_contains($renderedIssuesPage, 'Updated north facade dimension conflict')
         && str_contains($renderedIssuesPage, 'issues-table')
         && str_contains($renderedIssuesPage, 'issue.update')
+        && str_contains($renderedIssuesPage, 'id="issue-')
+        && str_contains($renderedIssuesPage, 'issue.quick')
         && str_contains($renderedIssuesPage, '关联 RFI（2）')
         && str_contains($renderedIssuesPage, 'P1-RFI-001'),
     'The issues route should render project-scoped records through the host application.'
@@ -975,6 +979,66 @@ $registry = new PluginRegistry($db, dirname(__DIR__) . '/modules');
 documentTestCheck(
     isset($registry->migrations()['document.management/202611010002_document_management.sql']),
     'Enabled plugin migrations should be exposed to the installer.'
+);
+
+// Regression: quick actions live in the plugin dispatch table, so the manifest
+// must expose them as POST routes or the ledger buttons answer "未找到对应操作".
+$routes = (new ReflectionProperty(PluginRegistry::class, 'routes'))->getValue($registry);
+documentTestCheck(
+    isset($routes['POST issue.quick']) && isset($routes['POST rfi.quick']),
+    'The issue and RFI quick actions must be declared as plugin POST routes.'
+);
+
+$quickIssueId = $documents->createIssue(1, 1, [
+    'description' => 'Quick action smoke issue',
+    'severity' => 'low',
+]);
+$documents->quickIssue(1, 1, $quickIssueId, 'start', [], false);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $quickIssueId)->fetchColumn() === 'in_review'
+        && (int) $db->query(
+            "SELECT COUNT(*) FROM document_issue_status_history
+             WHERE issue_id = {$quickIssueId} AND new_status = 'in_review'
+               AND reason = '快捷操作：开始处理。'"
+        )->fetchColumn() === 1,
+    'A one-click issue start should enter review and write the default audit reason.'
+);
+$documents->quickIssue(1, 1, $quickIssueId, 'resolve', [
+    'resolution_result' => 'Quick action resolution.',
+], false);
+$documents->quickIssue(1, 1, $quickIssueId, 'close', [
+    'verification_status' => 'passed',
+    'evidence_reference' => 'ARCH-QUICK-ISSUE-01',
+], false);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $quickIssueId)->fetchColumn() === 'closed',
+    'Quick issue actions should walk the issue to closed with the same closure gates.'
+);
+
+$quickRfiIssueId = $documents->createIssue(1, 1, [
+    'description' => 'Quick action RFI host issue',
+    'severity' => 'low',
+]);
+$quickRfiId = $documents->createRfi(1, 1, [
+    'primary_issue_id' => $quickRfiIssueId,
+    'assigned_to' => 2,
+    'due_date' => '2030-01-20T17:00',
+    'description' => 'Quick action smoke RFI',
+    'evidence_required' => '1',
+]);
+$documents->quickRfi(1, 1, $quickRfiId, 'submit', [], false);
+$documents->quickRfi(1, 1, $quickRfiId, 'review', [], false);
+$documents->quickRfi(1, 1, $quickRfiId, 'respond', [
+    'response_text' => 'Quick action answer.',
+    'response_complete' => true,
+], false);
+$documents->quickRfi(1, 1, $quickRfiId, 'close', [
+    'evidence_reference' => 'ARCH-QUICK-RFI-01',
+], false);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $quickRfiId)->fetchColumn() === 'closed'
+        && (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $quickRfiIssueId)->fetchColumn() === 'resolved',
+    'Quick RFI actions should close the RFI and advance its issue to resolved.'
 );
 
 documentTestCheck(
