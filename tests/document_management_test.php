@@ -906,7 +906,8 @@ documentTestCheck(
         && str_contains($renderedRfiPage, 'rfis-table')
         && str_contains($renderedRfiPage, 'rfi.update')
         && str_contains($renderedRfiPage, 'id="rfi-')
-        && str_contains($renderedRfiPage, 'rfi.quick'),
+        && str_contains($renderedRfiPage, 'rfi.quick')
+        && str_contains($renderedRfiPage, 'rfi.quick.bulk'),
     'The RFI route should render project-scoped records and module navigation through the host application.'
 );
 $_GET = ['page' => 'issues'];
@@ -985,7 +986,9 @@ documentTestCheck(
 // must expose them as POST routes or the ledger buttons answer "未找到对应操作".
 $routes = (new ReflectionProperty(PluginRegistry::class, 'routes'))->getValue($registry);
 documentTestCheck(
-    isset($routes['POST issue.quick']) && isset($routes['POST rfi.quick']),
+    isset($routes['POST issue.quick'])
+        && isset($routes['POST rfi.quick'])
+        && isset($routes['POST rfi.quick.bulk']),
     'The issue and RFI quick actions must be declared as plugin POST routes.'
 );
 
@@ -1014,6 +1017,11 @@ documentTestCheck(
     (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $quickIssueId)->fetchColumn() === 'closed',
     'Quick issue actions should walk the issue to closed with the same closure gates.'
 );
+$documents->quickIssue(1, 1, $quickIssueId, 'reopen', [], true);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $quickIssueId)->fetchColumn() === 'open',
+    'A manager quick reopen should return the closed issue to open.'
+);
 
 $quickRfiIssueId = $documents->createIssue(1, 1, [
     'description' => 'Quick action RFI host issue',
@@ -1040,10 +1048,44 @@ documentTestCheck(
         && (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $quickRfiIssueId)->fetchColumn() === 'resolved',
     'Quick RFI actions should close the RFI and advance its issue to resolved.'
 );
+$documents->quickRfi(1, 1, $quickRfiId, 'reopen', [], true);
+documentTestCheck(
+    (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $quickRfiId)->fetchColumn() === 'submitted'
+        && (string) $db->query('SELECT status FROM document_issues WHERE issue_id = ' . $quickRfiIssueId)->fetchColumn() === 'in_review',
+    'A manager quick reopen of a closed RFI should return it to submitted and its issue to in review.'
+);
 
 documentTestCheck(
     (int) $db->query('SELECT COUNT(*) FROM document_rfis WHERE rfi_id = ' . $secondRfiId)->fetchColumn() === 1,
     'A second RFI linked to the same primary issue should persist independently.'
+);
+
+$bulkIssueId = $documents->createIssue(2, 1, [
+    'description' => 'Bulk advance host issue',
+    'severity' => 'low',
+]);
+$bulkRfiIds = [];
+foreach ([1, 2] as $index) {
+    $bulkRfiIds[] = $documents->createRfi(2, 1, [
+        'primary_issue_id' => $bulkIssueId,
+        'assigned_to' => 2,
+        'due_date' => '2030-02-0' . $index . 'T17:00',
+        'description' => 'Bulk advance RFI ' . $index,
+    ]);
+}
+$bulkSubmit = $documents->bulkAdvanceRfis(2, 1, 'submit', false);
+documentTestCheck(
+    $bulkSubmit['advanced'] >= 2
+        && (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $bulkRfiIds[0])->fetchColumn() === 'submitted'
+        && (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $bulkRfiIds[1])->fetchColumn() === 'submitted',
+    'A bulk submit must move every draft RFI of the project to submitted.'
+);
+$bulkReview = $documents->bulkAdvanceRfis(2, 1, 'review', false);
+documentTestCheck(
+    $bulkReview['advanced'] >= 2
+        && (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $bulkRfiIds[0])->fetchColumn() === 'under_review'
+        && (string) $db->query('SELECT status FROM document_rfis WHERE rfi_id = ' . $bulkRfiIds[1])->fetchColumn() === 'under_review',
+    'A bulk review must move every submitted RFI of the project to under review.'
 );
 
 // --- Document module system settings: shared image object storage ---

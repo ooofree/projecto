@@ -27,6 +27,7 @@
         "POST rfi.update": "rfi.update",
         "POST rfi.transition": "rfi.transition",
         "POST rfi.quick": "rfi.quick",
+        "POST rfi.quick.bulk": "rfi.quick.bulk",
         "POST rfi.followup.create": "rfi.followup.create",
         "POST rfi.followup.complete": "rfi.followup.complete",
         "POST document.settings.save": "settings.save",

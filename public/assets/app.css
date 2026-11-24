@@ -718,6 +718,10 @@ tbody tr:hover { background: var(--row-hover); }
 .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .row-actions form, .actions form { display: inline-flex; }
 .row-actions .button { min-height: 33px; padding: 5px 9px; }
+.bulk-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; margin: 0 0 10px; background: var(--surface-muted); border: 1px solid var(--border); border-radius: 9px; }
+.bulk-toolbar-label { font-size: .82rem; font-weight: 650; }
+.bulk-toolbar form { display: inline-flex; margin: 0; }
+.bulk-toolbar .muted { font-size: .78rem; }
 .inline-form { align-items: flex-end; }
 .inline-form + .inline-form { margin-top: 9px; }
 .entry-disclosure {

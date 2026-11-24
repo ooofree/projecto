@@ -105,6 +105,7 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             'rfi.update' => $this->updateRfi($input),
             'rfi.transition' => $this->transitionRfi($input),
             'rfi.quick' => $this->quickRfi($input),
+            'rfi.quick.bulk' => $this->quickRfiBulk($input),
             'rfi.followup.create' => $this->createRfiFollowUp($input),
             'rfi.followup.complete' => $this->completeRfiFollowUp($input),
             'settings.save' => $this->saveSettings($input),
@@ -521,6 +522,7 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             'start' => '问题已转处理中。',
             'resolve' => '问题已转待关闭，请补齐现场验证与证据后关闭。',
             'close' => '问题已关闭。',
+            'reopen' => '问题已重新打开。',
         ];
         try {
             $this->documents->quickIssue(
@@ -667,6 +669,7 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             'review' => 'RFI 已进入审核中。',
             'respond' => 'RFI 已答复，请评估主问题是否可收口。',
             'close' => 'RFI 已关闭；若这是该问题最后一份 RFI，问题会自动转为待关闭。',
+            'reopen' => 'RFI 已重新打开为已提交，关联问题回到处理中。',
         ];
         try {
             $this->documents->quickRfi(
@@ -688,6 +691,47 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
 
         Support::flash($flashes[$step] ?? 'RFI 状态已更新。');
         return PluginResponse::redirect('?page=rfis#rfi-' . $rfiId);
+    }
+
+    private function quickRfiBulk(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $step = $this->requiredString($input, 'step', '批量操作');
+        $labels = ['submit' => '提交', 'review' => '开始审核'];
+        if (!isset($labels[$step])) {
+            Support::flash('不支持的 RFI 批量操作。', 'error');
+            return PluginResponse::redirect('?page=rfis#rfis-table');
+        }
+
+        try {
+            $result = $this->documents->bulkAdvanceRfis(
+                (int) $project['project_id'],
+                $this->userId(),
+                $step,
+                Support::hasPermission($this->context->db, 'manage_issues')
+            );
+        } catch (HttpException $exception) {
+            if ($exception->statusCode >= 500) {
+                throw $exception;
+            }
+            Support::flash($exception->getMessage(), 'error');
+            return PluginResponse::redirect('?page=rfis#rfis-table');
+        }
+
+        $message = '已批量' . $labels[$step] . ' ' . $result['advanced'] . ' 份 RFI。';
+        if ($result['failed'] !== []) {
+            $details = array_slice($result['failed'], 0, 3);
+            $message .= ' ' . count($result['failed']) . ' 份未处理：' . implode('；', $details);
+            if (count($result['failed']) > 3) {
+                $message .= '；其余略。';
+            }
+            Support::flash($message, 'error');
+            return PluginResponse::redirect('?page=rfis#rfis-table');
+        }
+
+        Support::flash($message);
+        return PluginResponse::redirect('?page=rfis#rfis-table');
     }
 
     private function transitionFailure(

@@ -298,6 +298,14 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                                             <?php else: ?>
                                                 <button class="button button-secondary" type="button" data-dialog-open="issue-quick-close-<?= (int) $issue['issue_id'] ?>">关闭</button>
                                             <?php endif; ?>
+                                        <?php elseif ($issue['status'] === 'closed' && $canManage): ?>
+                                            <form method="post" data-confirm="重新打开此问题？问题会回到待评估状态。">
+                                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                                <input type="hidden" name="action" value="issue.quick">
+                                                <input type="hidden" name="step" value="reopen">
+                                                <input type="hidden" name="issue_id" value="<?= (int) $issue['issue_id'] ?>">
+                                                <button class="button button-secondary" type="submit">重新打开</button>
+                                            </form>
                                         <?php endif; ?>
                                     <?php endif; ?>
                                 </div>

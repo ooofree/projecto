@@ -103,6 +103,17 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
     </dialog>
 <?php endif; ?>
 
+<?php
+$draftRfiCount = 0;
+$submittedRfiCount = 0;
+foreach ($rfis as $rfi) {
+    if ($rfi['status'] === 'draft') {
+        $draftRfiCount++;
+    } elseif ($rfi['status'] === 'submitted') {
+        $submittedRfiCount++;
+    }
+}
+?>
 <section class="panel">
     <div class="panel-heading">
         <div>
@@ -114,6 +125,28 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
             <input type="search" placeholder="搜索 RFI…" data-list-search="rfis-table">
         </label>
     </div>
+    <?php if ($canEdit && ($draftRfiCount > 0 || $submittedRfiCount > 0)): ?>
+        <div class="bulk-toolbar">
+            <span class="bulk-toolbar-label">批量推进</span>
+            <?php if ($draftRfiCount > 0): ?>
+                <form method="post" data-confirm="将把当前项目全部草稿 RFI 提交，提交后不能退回草稿。">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="rfi.quick.bulk">
+                    <input type="hidden" name="step" value="submit">
+                    <button class="button button-secondary" type="submit">提交全部草稿（<?= $draftRfiCount ?>）</button>
+                </form>
+            <?php endif; ?>
+            <?php if ($submittedRfiCount > 0): ?>
+                <form method="post" data-confirm="将把当前项目全部已提交 RFI 转为审核中；该步骤可退回已提交。">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="rfi.quick.bulk">
+                    <input type="hidden" name="step" value="review">
+                    <button class="button button-secondary" type="submit">审核全部已提交（<?= $submittedRfiCount ?>）</button>
+                </form>
+            <?php endif; ?>
+            <span class="muted">答复与关闭仍需在行内填写内容后完成。</span>
+        </div>
+    <?php endif; ?>
     <?php if ($rfis === []): ?>
         <p class="empty-state">当前项目还没有 RFI。</p>
     <?php else: ?>
@@ -179,6 +212,14 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                                             <?php else: ?>
                                                 <button class="button button-secondary" type="button" data-dialog-open="rfi-quick-close-<?= (int) $rfi['rfi_id'] ?>">关闭</button>
                                             <?php endif; ?>
+                                        <?php elseif ($rfi['status'] === 'closed' && $canManage): ?>
+                                            <form method="post" data-confirm="重新打开此 RFI？RFI 回到已提交，关联的待关闭问题回到处理中。">
+                                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                                <input type="hidden" name="action" value="rfi.quick">
+                                                <input type="hidden" name="step" value="reopen">
+                                                <input type="hidden" name="rfi_id" value="<?= (int) $rfi['rfi_id'] ?>">
+                                                <button class="button button-secondary" type="submit">重新打开</button>
+                                            </form>
                                         <?php endif; ?>
                                     <?php endif; ?>
                                 </div>

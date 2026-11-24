@@ -854,6 +854,7 @@ final class DocumentService
             'start' => ['in_review', '快捷操作：开始处理。'],
             'resolve' => ['resolved', '快捷操作：转待关闭。'],
             'close' => ['closed', '快捷操作：关闭问题。'],
+            'reopen' => ['open', '快捷操作：重新打开问题。'],
         ];
         if (!isset($steps[$step])) {
             throw new HttpException('不支持的问题快捷操作。', 422);
@@ -890,6 +891,7 @@ final class DocumentService
             'review' => ['under_review', '快捷操作：开始审核。'],
             'respond' => ['responded', '快捷操作：答复 RFI。'],
             'close' => ['closed', '快捷操作：关闭 RFI。'],
+            'reopen' => ['submitted', '快捷操作：重新打开 RFI。'],
         ];
         if (!isset($steps[$step])) {
             throw new HttpException('不支持的 RFI 快捷操作。', 422);
@@ -910,6 +912,60 @@ final class DocumentService
             ],
             $canManage
         );
+    }
+
+    /**
+     * Advances every RFI currently sitting in the step's source status so a
+     * whole submitted batch can move with one click. Each record keeps its own
+     * transition and audit entry; a record that fails validation is reported
+     * instead of blocking the rest of the batch.
+     *
+     * @return array{advanced: int, failed: list<string>}
+     */
+    public function bulkAdvanceRfis(
+        int $projectId,
+        int $userId,
+        string $step,
+        bool $canManage
+    ): array {
+        $sourceStatuses = [
+            'submit' => 'draft',
+            'review' => 'submitted',
+        ];
+        if (!isset($sourceStatuses[$step])) {
+            throw new HttpException('不支持的 RFI 批量操作。', 422);
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT rfi_id, rfi_number FROM document_rfis
+             WHERE project_id = :project_id AND status = :status
+             ORDER BY rfi_id'
+        );
+        $stmt->execute(['project_id' => $projectId, 'status' => $sourceStatuses[$step]]);
+        $rows = $stmt->fetchAll();
+
+        $advanced = 0;
+        $failed = [];
+        foreach ($rows as $row) {
+            try {
+                $this->quickRfi(
+                    $projectId,
+                    $userId,
+                    (int) $row['rfi_id'],
+                    $step,
+                    [],
+                    $canManage
+                );
+                $advanced++;
+            } catch (HttpException $exception) {
+                if ($exception->statusCode >= 500) {
+                    throw $exception;
+                }
+                $failed[] = $row['rfi_number'] . '：' . $exception->getMessage();
+            }
+        }
+
+        return ['advanced' => $advanced, 'failed' => $failed];
     }
 
     public function addIssueFollowUp(int $projectId, int $userId, int $issueId, string $title): int
