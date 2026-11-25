@@ -1528,6 +1528,64 @@ materialTestExpectStatus(
     'Composition save must enforce the material edit permission.'
 );
 $db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, ' . (int) $compPermissionRow['permission_id'] . ')');
+// 对话框内连续添加（2026-11-25）：组成保存/删除支持异步 JSON，弹窗不关闭、
+// 不跳回列表页；非异步提交仍保持整页跳转兜底。
+$compAsyncParentId = $catalog->saveMaterial(1, ['material_name' => '异步连续添加定制项', 'unit' => '樘']);
+$compAsyncChildAId = $catalog->saveMaterial(1, ['material_name' => '异步子材料甲', 'unit' => 'm2']);
+$compAsyncChildBId = $catalog->saveMaterial(1, ['material_name' => '异步子材料乙', 'unit' => '个']);
+$compAsyncChildCId = $catalog->saveMaterial(1, ['material_name' => '异步子材料丙', 'unit' => '套']);
+$compAsyncFirstResponse = $plugin->dispatch('material.composition.save', [
+    'async' => '1',
+    'parent_material_id' => (string) $compAsyncParentId,
+    'child_material_id' => (string) $compAsyncChildAId,
+    'quantity' => '2.50',
+]);
+$compAsyncFirstJson = json_decode((string) ($compAsyncFirstResponse->data['body'] ?? ''), true);
+materialTestCheck(
+    $compAsyncFirstResponse->type === 'raw'
+        && str_contains((string) ($compAsyncFirstResponse->data['content_type'] ?? ''), 'application/json')
+        && is_array($compAsyncFirstJson)
+        && ($compAsyncFirstJson['ok'] ?? false) === true
+        && (int) ($compAsyncFirstJson['composition']['child_material_id'] ?? 0) === $compAsyncChildAId
+        && (string) ($compAsyncFirstJson['composition']['material_name'] ?? '') === '异步子材料甲'
+        && abs((float) ($compAsyncFirstJson['composition']['quantity'] ?? 0) - 2.5) < 0.0001
+        && (int) ($compAsyncFirstJson['parent']['child_count'] ?? 0) === 1
+        && (string) ($compAsyncFirstJson['parent']['sample_required'] ?? '') === 'exempt',
+    'Async composition save must return the new child and parent state as JSON so the dialog can add another without reloading.'
+);
+$compAsyncSecondResponse = $plugin->dispatch('material.composition.save', [
+    'async' => '1',
+    'parent_material_id' => (string) $compAsyncParentId,
+    'child_material_id' => (string) $compAsyncChildBId,
+    'quantity' => '1',
+]);
+$compAsyncSecondJson = json_decode((string) ($compAsyncSecondResponse->data['body'] ?? ''), true);
+materialTestCheck(
+    (int) ($compAsyncSecondJson['parent']['child_count'] ?? 0) === 2
+        && (int) ($compAsyncSecondJson['composition']['child_material_id'] ?? 0) === $compAsyncChildBId,
+    'A second async composition save must keep the dialog flow and report the updated child count.'
+);
+$compAsyncDeleteResponse = $plugin->dispatch('material.composition.delete', [
+    'async' => '1',
+    'composition_id' => (string) (int) ($compAsyncFirstJson['id'] ?? 0),
+]);
+$compAsyncDeleteJson = json_decode((string) ($compAsyncDeleteResponse->data['body'] ?? ''), true);
+materialTestCheck(
+    $compAsyncDeleteResponse->type === 'raw'
+        && ($compAsyncDeleteJson['ok'] ?? false) === true
+        && (int) ($compAsyncDeleteJson['removed']['child_material_id'] ?? 0) === $compAsyncChildAId
+        && (int) ($compAsyncDeleteJson['parent']['child_count'] ?? 0) === 1,
+    'Async composition delete must report the removed child and the remaining count without a page reload.'
+);
+$compSyncResponse = $plugin->dispatch('material.composition.save', [
+    'parent_material_id' => (string) $compAsyncParentId,
+    'child_material_id' => (string) $compAsyncChildCId,
+    'quantity' => '1',
+]);
+materialTestCheck(
+    $compSyncResponse->type === 'redirect' && $compSyncResponse->location === '?page=materials',
+    'Without the async flag the composition form must still fall back to the list redirect.'
+);
 // 父材料历史样品（验收场景 4）：已有审批通过的样品，首次组成自动转为无需送样后，
 // 历史记录与审批信息完整保留；候选过滤；存量编辑兼容。
 $compHistoryParentId = $catalog->saveMaterial(1, ['material_name' => '历史样品定制项', 'unit' => '樘']);
@@ -1617,6 +1675,10 @@ materialTestCheck(
         && str_contains($compMaterialsHtml, '组成关系（定制项 · 父—子单层）')
         && str_contains($compMaterialsHtml, 'material.composition.save')
         && str_contains($compMaterialsHtml, 'material.composition.delete')
+        && str_contains($compMaterialsHtml, 'data-composition-section')
+        && str_contains($compMaterialsHtml, 'data-composition-add')
+        && str_contains($compMaterialsHtml, 'data-composition-row-template')
+        && str_contains($compMaterialsHtml, 'data-composition-status')
         && str_contains($compMaterialsHtml, '无需送样')
         && str_contains($compMaterialsHtml, '送样 / 组成'),
     'The material edit dialog must expose the sample requirement and composition management.'
@@ -1659,7 +1721,7 @@ materialTestExpectStatus(
     404,
     'Deleting a composition edge twice must report 404.'
 );
-foreach ([$compDoorId, $compGlassId, $compSteelId, $compHandleId, $compNestedParentId, $compExemptId, $compExplicitNewId, $compHistoryParentId, $compPartitionId, $compColumnId] as $compCleanupId) {
+foreach ([$compDoorId, $compGlassId, $compSteelId, $compHandleId, $compNestedParentId, $compExemptId, $compExplicitNewId, $compHistoryParentId, $compPartitionId, $compColumnId, $compAsyncParentId, $compAsyncChildAId, $compAsyncChildBId, $compAsyncChildCId] as $compCleanupId) {
     $catalog->deleteMaterial(1, $compCleanupId);
 }
 $catalog->deleteMaterial(2, $compProjectTwoChildId);

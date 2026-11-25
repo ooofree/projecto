@@ -588,7 +588,13 @@ final class MaterialCatalogService
         }
     }
 
-    public function deleteComposition(int $projectId, int $compositionId): void
+    /**
+     * Remove one edge and return the removed pair so callers can answer
+     * asynchronous editors without a second read after the row is gone.
+     *
+     * @return array{parent_material_id: int, child_material_id: int}
+     */
+    public function deleteComposition(int $projectId, int $compositionId): array
     {
         $this->db->beginTransaction();
         try {
@@ -611,13 +617,17 @@ final class MaterialCatalogService
                 throw new HttpException('组成关系不存在或不属于当前项目。', 404);
             }
             $this->db->commit();
+            // 删除组成不自动翻转送样要求：是否恢复送样由人工在材料表单决定。
+            return [
+                'parent_material_id' => (int) $row['parent_material_id'],
+                'child_material_id' => (int) $row['child_material_id'],
+            ];
         } catch (Throwable $exception) {
             if ($this->db->inTransaction()) {
                 $this->db->rollBack();
             }
             throw $exception;
         }
-        // 删除组成不自动翻转送样要求：是否恢复送样由人工在材料表单决定。
     }
 
     /**

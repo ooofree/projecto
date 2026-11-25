@@ -14,7 +14,7 @@ final class AuthService
     public function login(string $username, string $password): bool
     {
         $stmt = $this->db->prepare(
-            'SELECT user_id, username, password_hash
+            'SELECT user_id, username, display_name, password_hash
              FROM Users
              WHERE username = :username AND is_active = 1
              LIMIT 1'
@@ -29,6 +29,7 @@ final class AuthService
         session_regenerate_id(true);
         $_SESSION['user_id'] = (int) $user['user_id'];
         $_SESSION['username'] = (string) $user['username'];
+        $_SESSION['display_name'] = trim((string) ($user['display_name'] ?? ''));
         unset($_SESSION['csrf_token']);
         unset($_SESSION['active_project_id']);
 

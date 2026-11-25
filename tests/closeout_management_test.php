@@ -35,7 +35,7 @@ $db = new PDO('sqlite::memory:', options: [
 $db->exec('PRAGMA foreign_keys = ON');
 
 $db->exec('CREATE TABLE Projects (project_id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT NOT NULL, status TEXT)');
-$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, is_active INTEGER NOT NULL DEFAULT 1, timezone TEXT)');
+$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, is_active INTEGER NOT NULL DEFAULT 1, timezone TEXT)');
 $db->exec('CREATE TABLE Suppliers (supplier_id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_name TEXT NOT NULL)');
 $db->exec('CREATE TABLE Materials (
     material_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, material_code TEXT, material_name TEXT NOT NULL,

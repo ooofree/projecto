@@ -18,7 +18,7 @@ $db->exec('PRAGMA foreign_keys = ON');
 
 $db->exec('CREATE TABLE Projects (project_id INTEGER PRIMARY KEY, project_name TEXT, start_date TEXT, end_date TEXT, status TEXT)');
 $db->exec('CREATE TABLE project_foundation_archive_records (archive_id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT, entity_id INTEGER, project_id INTEGER)');
-$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT, country_code TEXT, is_active INTEGER, timezone TEXT)');
+$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, password_hash TEXT, country_code TEXT, is_active INTEGER, timezone TEXT)');
 $db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY, role_name TEXT)');
 $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
 $db->exec('CREATE TABLE Permissions (permission_id INTEGER PRIMARY KEY AUTOINCREMENT, permission_name TEXT UNIQUE, display_name TEXT, description TEXT, module TEXT)');
@@ -39,8 +39,8 @@ $db->exec('CREATE TABLE document_rfi_status_history (history_id INTEGER PRIMARY 
 $db->exec('CREATE TABLE document_rfi_related_issues (project_id INTEGER, rfi_id INTEGER, issue_id INTEGER, created_at TEXT)');
 $db->exec('CREATE TABLE document_rfi_follow_ups (follow_up_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, rfi_id INTEGER, title TEXT, is_completed INTEGER DEFAULT 0, created_by INTEGER, completed_by INTEGER, completed_at TEXT, created_at TEXT)');
 $db->exec('CREATE TABLE document_rfi_follow_up_history (history_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, follow_up_id INTEGER, old_status TEXT, new_status TEXT, reason TEXT, evidence_reference TEXT, changed_by INTEGER, changed_at TEXT)');
-$db->exec('CREATE TABLE document_issue_images (image_id INTEGER PRIMARY KEY AUTOINCREMENT, issue_id INTEGER, project_id INTEGER, object_key TEXT, original_name TEXT, content_type TEXT, file_size INTEGER, uploaded_by INTEGER, created_at TEXT)');
-$db->exec('CREATE TABLE document_rfi_images (image_id INTEGER PRIMARY KEY AUTOINCREMENT, rfi_id INTEGER, project_id INTEGER, object_key TEXT, original_name TEXT, content_type TEXT, file_size INTEGER, uploaded_by INTEGER, created_at TEXT)');
+$db->exec('CREATE TABLE document_issue_images (image_id INTEGER PRIMARY KEY AUTOINCREMENT, issue_id INTEGER, project_id INTEGER, object_key TEXT, external_url TEXT, original_name TEXT, content_type TEXT, file_size INTEGER, uploaded_by INTEGER, created_at TEXT)');
+$db->exec('CREATE TABLE document_rfi_images (image_id INTEGER PRIMARY KEY AUTOINCREMENT, rfi_id INTEGER, project_id INTEGER, object_key TEXT, external_url TEXT, original_name TEXT, content_type TEXT, file_size INTEGER, uploaded_by INTEGER, created_at TEXT)');
 $db->exec('CREATE TABLE document_number_sequences (project_id INTEGER, document_type TEXT, last_number INTEGER DEFAULT 0)');
 
 $db->exec("INSERT INTO Projects (project_id, project_name, status) VALUES (1, '杭州测试项目', 'ongoing'), (2, '空项目', 'planning')");

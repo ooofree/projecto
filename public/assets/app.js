@@ -470,6 +470,232 @@
         });
     };
 
+    // ---- composition editor: add several children in one dialog ---------
+    // Adding a child used to be a plain form post: the page reloaded, the edit
+    // dialog closed and the user landed back on the list for every single
+    // component. These forms now post asynchronously, append the new row in
+    // place, clear the picker and keep the dialog open, so a custom item can be
+    // assembled without leaving it. Without fetch the POST still works and
+    // falls back to the old redirect.
+    const initCompositionEditors = () => {
+        if (typeof window.fetch !== 'function') return;
+        const template = document.querySelector('[data-composition-row-template]');
+        const hintTimers = new WeakMap();
+
+        const hint = (section, message, isError) => {
+            const node = section ? section.querySelector('[data-composition-status]') : null;
+            if (!node) return;
+            window.clearTimeout(hintTimers.get(node));
+            node.textContent = message;
+            node.classList.toggle('is-error', Boolean(isError));
+            node.classList.toggle('is-success', !isError);
+            node.hidden = false;
+            // Long enough to add the next child without the confirmation
+            // disappearing mid-entry.
+            if (!isError) hintTimers.set(node, window.setTimeout(() => { node.hidden = true; }, 6000));
+        };
+
+        const postComposition = async form => {
+            const body = new FormData(form);
+            body.set('async', '1');
+            const response = await fetch(window.location.href, {
+                method: 'POST',
+                body,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            if (!response.ok) throw new Error(await extractError(response));
+            const payload = await response.json().catch(() => null);
+            if (!payload || payload.ok !== true) throw new Error('保存失败，请重试。');
+            return payload;
+        };
+
+        const sectionOf = node => node.closest('[data-composition-section]');
+        const childSelectOf = section => section ? section.querySelector('form[data-composition-add] select[name="child_material_id"]') : null;
+        const labelOf = row => (row.querySelector('[data-composition-name]')?.textContent ?? '').trim();
+
+        const buildRow = (section, composition) => {
+            if (!template || !composition) return null;
+            const row = template.content.cloneNode(true).querySelector('[data-composition-row]');
+            if (!row) return null;
+            row.dataset.compositionId = String(composition.composition_id);
+            row.dataset.childId = String(composition.child_material_id);
+            const code = String(composition.material_code ?? '');
+            row.querySelector('[data-composition-name]').textContent = (code !== '' ? code + ' · ' : '') + String(composition.material_name ?? '');
+            row.querySelector('[data-composition-unit]').textContent = String(composition.unit ?? '');
+            row.querySelector('input[name="quantity"]').value = String(composition.quantity ?? '1.00');
+            for (const input of row.querySelectorAll('input[name="composition_id"]')) input.value = String(composition.composition_id);
+            for (const input of row.querySelectorAll('input[name="parent_material_id"]')) input.value = String(section.dataset.parentId ?? '');
+            for (const input of row.querySelectorAll('input[name="child_material_id"]')) input.value = String(composition.child_material_id);
+            return row;
+        };
+
+        // Keep the same ordering as the server (by child material name).
+        const insertRow = (section, row) => {
+            const body = section ? section.querySelector('[data-composition-body]') : null;
+            if (!body) return;
+            const label = labelOf(row);
+            const next = [...body.querySelectorAll('[data-composition-row]')]
+                .find(item => labelOf(item).localeCompare(label, 'zh-Hans-CN') > 0);
+            body.insertBefore(row, next ?? null);
+        };
+
+        const syncAddForm = section => {
+            const form = section ? section.querySelector('form[data-composition-add]') : null;
+            const select = childSelectOf(section);
+            if (!form || !select) return;
+            const hasOptions = [...select.options].some(option => option.value !== '');
+            form.hidden = !hasOptions;
+            const exhausted = section.querySelector('[data-composition-exhausted]');
+            if (exhausted) exhausted.hidden = hasOptions;
+            // The "first composition flips the sample requirement" hint only
+            // applies while the list is empty and more children can be added.
+            const note = section.querySelector('[data-composition-note]');
+            if (note) note.hidden = !hasOptions || section.querySelectorAll('[data-composition-row]').length !== 0;
+        };
+
+        const syncTable = section => {
+            if (!section) return;
+            const count = section.querySelectorAll('[data-composition-row]').length;
+            const table = section.querySelector('[data-composition-table]');
+            const empty = section.querySelector('[data-composition-empty]');
+            if (table) table.hidden = count === 0;
+            if (empty) empty.hidden = count !== 0;
+        };
+
+        // The first composition flips the parent to "no sample needed" server
+        // side; mirror that in the dialog select so the visible state matches.
+        const syncSampleSelect = (section, parent) => {
+            const select = section
+                ? section.closest('dialog')?.querySelector('form[data-material-edit] select[name="sample_required"]')
+                : null;
+            if (!select) return false;
+            const next = String(parent.sample_required ?? '') === 'exempt' ? 'exempt' : 'required';
+            if (select.value === next) return false;
+            select.value = next;
+            return true;
+        };
+
+        // Same refresh the list rows get after a normal save, but scoped to the
+        // one row so the open dialog is untouched.
+        const syncCatalogueRow = parent => {
+            if (!tbody) return;
+            const row = tbody.querySelector(`.material-row[data-material-id="${parent.material_id}"]`);
+            const cell = row ? row.querySelector('.material-cell-status') : null;
+            if (!cell) return;
+            const childCount = Number(parent.child_count ?? 0);
+            const parentCount = Number(parent.parent_count ?? 0);
+            const exempt = String(parent.sample_required ?? 'required') === 'exempt';
+
+            let badge = cell.querySelector('.status-badge');
+            if (!badge) {
+                badge = document.createElement('span');
+                cell.prepend(badge);
+            }
+            badge.textContent = exempt ? '无需送样' : '需送样';
+            badge.className = 'status-badge ' + (exempt ? 'is-neutral' : 'is-green');
+
+            const text = childCount > 0 ? `定制项 · ${childCount} 个组件` : parentCount > 0 ? '组成子件' : '';
+            let secondary = cell.querySelector('.material-secondary');
+            if (text === '') {
+                if (secondary) secondary.remove();
+            } else {
+                if (!secondary) {
+                    secondary = document.createElement('span');
+                    secondary.className = 'material-secondary';
+                    cell.append(secondary);
+                }
+                secondary.textContent = text;
+            }
+        };
+
+        const syncParent = (section, parent) => {
+            syncTable(section);
+            syncAddForm(section);
+            syncCatalogueRow(parent);
+            return syncSampleSelect(section, parent);
+        };
+
+        // Restore a removed child to the picker, in the picker's own order.
+        const restoreOption = (section, childId, label, unit) => {
+            const select = childSelectOf(section);
+            if (!select || childId <= 0 || label === '') return;
+            if ([...select.options].some(option => option.value === String(childId))) return;
+            const option = document.createElement('option');
+            option.value = String(childId);
+            option.textContent = label + (unit !== '' ? `（${unit}）` : '');
+            const next = [...select.options].find(item => item.value !== '' && item.textContent.trim().localeCompare(option.textContent.trim(), 'zh-Hans-CN') > 0);
+            select.insertBefore(option, next ?? null);
+        };
+
+        document.addEventListener('submit', async event => {
+            const addForm = event.target.closest('form[data-composition-add]');
+            const quantityForm = event.target.closest('form[data-composition-quantity]');
+            const deleteForm = event.target.closest('form[data-composition-delete]');
+            const form = addForm ?? quantityForm ?? deleteForm;
+            if (!form) return;
+            event.preventDefault();
+            // Ask for consent here, then stop propagation so the page-level
+            // data-confirm handler does not prompt a second time.
+            if (deleteForm && deleteForm.dataset.confirm && !window.confirm(deleteForm.dataset.confirm)) {
+                event.stopImmediatePropagation();
+                return;
+            }
+            event.stopImmediatePropagation();
+            if (form.dataset.busy === '1') return;
+            if (!form.reportValidity()) return;
+
+            form.dataset.busy = '1';
+            const submit = form.querySelector('button[type="submit"]');
+            if (submit) submit.disabled = true;
+            const section = sectionOf(form);
+            try {
+                const payload = await postComposition(form);
+                const composition = payload.composition ?? null;
+                const parent = payload.parent ?? {};
+                if (addForm && composition) {
+                    const row = buildRow(section, composition);
+                    if (row) insertRow(section, row);
+                    const select = childSelectOf(section);
+                    if (select) {
+                        const option = [...select.options].find(item => item.value === String(composition.child_material_id));
+                        if (option) option.remove();
+                        select.value = '';
+                    }
+                    const quantity = addForm.querySelector('input[name="quantity"]');
+                    if (quantity) quantity.value = '1.00';
+                    const flipped = syncParent(section, parent);
+                    hint(
+                        section,
+                        `已添加「${composition.material_name}」，可继续选择下一个子材料。`
+                            + (flipped ? ' 本材料已自动转为“无需送样”。' : ''),
+                        false
+                    );
+                    // Focus stays in the picker for the next child.
+                    if (select && !addForm.hidden) select.focus();
+                } else if (quantityForm && composition) {
+                    const input = quantityForm.querySelector('input[name="quantity"]');
+                    if (input) input.value = String(composition.quantity ?? input.value);
+                    syncParent(section, parent);
+                    hint(section, `数量系数已保存：${input ? input.value : ''}（每 1 ${section?.dataset.parentUnit ?? ''} 父项）。`, false);
+                } else if (deleteForm) {
+                    const row = deleteForm.closest('[data-composition-row]');
+                    const childId = Number(payload.removed?.child_material_id ?? row?.dataset.childId ?? 0);
+                    const label = row ? labelOf(row) : '';
+                    const unit = (row?.querySelector('[data-composition-unit]')?.textContent ?? '').trim();
+                    if (row) row.remove();
+                    restoreOption(section, childId, label, unit);
+                    syncParent(section, parent);
+                    hint(section, `已移除「${label || '该子材料'}」。`, false);
+                }
+            } catch (error) {
+                hint(section, error instanceof Error && error.message ? error.message : '网络异常，保存失败，请重试。', true);
+            } finally {
+                form.dataset.busy = '';
+                if (submit) submit.disabled = false;
+            }
+        });
+    };
+
     // ---- wiring -----------------------------------------------------------
     if (!entryForm && categorySelect) {
         // Without the entry panel the "未分类" option only exists for the rail;
@@ -563,6 +789,7 @@
 
     initEntry();
     initEditDialogs();
+    initCompositionEditors();
     applyFilter();
     renderUnitQuick();
 })();
@@ -803,30 +1030,39 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
     // Empty value = no constraint. Pure client-side; the server-rendered list
     // and export stay untouched.
     const filters = panel ? [...panel.querySelectorAll('[data-list-filter]')] : [];
+    // Optional checkboxes that require one attribute value when checked
+    // (data-list-toggle="images" → data-images="1"), e.g. "只看有图".
+    const toggles = panel ? [...panel.querySelectorAll('[data-list-toggle]')] : [];
     const clearButton = panel?.querySelector('[data-list-filter-clear]');
     const filter = () => {
         const query = search.value.trim().toLocaleLowerCase();
         const active = filters
             .map(select => [select.dataset.listFilter, select.value])
             .filter(([, value]) => value !== '');
+        const activeToggles = toggles
+            .filter(toggle => toggle.checked)
+            .map(toggle => [toggle.dataset.listToggle, toggle.value || '1']);
         let visibleCount = 0;
         for (const item of items) {
             const visible = (item.dataset.search ?? '').includes(query)
-                && active.every(([key, value]) => (item.dataset[key] ?? '') === value);
+                && active.every(([key, value]) => (item.dataset[key] ?? '') === value)
+                && activeToggles.every(([key, value]) => (item.dataset[key] ?? '') === value);
             item.hidden = !visible;
             if (visible) visibleCount++;
         }
         if (emptyState) emptyState.hidden = visibleCount !== 0;
         if (count) count.textContent = `${visibleCount}${count.dataset.unit ?? ' 条'}`;
-        if (clearButton) clearButton.hidden = query === '' && active.length === 0;
+        if (clearButton) clearButton.hidden = query === '' && active.length === 0 && activeToggles.length === 0;
     };
 
     search.addEventListener('input', filter);
     for (const select of filters) select.addEventListener('change', filter);
+    for (const toggle of toggles) toggle.addEventListener('change', filter);
     if (clearButton) {
         clearButton.addEventListener('click', () => {
             search.value = '';
             for (const select of filters) select.value = '';
+            for (const toggle of toggles) toggle.checked = false;
             filter();
             search.focus();
         });
@@ -1744,5 +1980,20 @@ for (const search of document.querySelectorAll('[data-list-search]')) {
         if (panel) {
             window.setTimeout(() => focusQuick(panel), 0);
         }
+    }
+})();
+
+// Ledger deep link: ?page=issues#edit-issue-<id> opens that issue's edit
+// dialog. Quick status redirects use #issue-<id> and must stay untouched, so
+// only the explicit edit- prefix opens anything.
+(() => {
+    const match = location.hash.match(/^#edit-issue-(\d+)$/);
+    if (!match) return;
+    const dialog = document.getElementById('issue-dialog-' + match[1]);
+    if (!dialog) return;
+    const trigger = document.getElementById('edit-issue-' + match[1]);
+    trigger?.scrollIntoView({ block: 'center' });
+    if (typeof dialog.showModal === 'function') {
+        dialog.showModal();
     }
 })();

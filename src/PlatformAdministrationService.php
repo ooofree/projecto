@@ -13,6 +13,7 @@ final class PlatformAdministrationService
 {
     private const DEFAULT_PLATFORM_NAME = 'Project O';
     private const MAX_PLATFORM_NAME_LENGTH = 80;
+    private const MAX_DISPLAY_NAME_LENGTH = 100;
 
     private const SECTIONS = [
         'settings' => '系统配置',
@@ -38,7 +39,9 @@ final class PlatformAdministrationService
 
         $settings = $this->settings();
         $users = $this->db->query(
-            'SELECT user_id, username, country_code, is_active FROM Users ORDER BY username'
+            'SELECT user_id, username, display_name, country_code, is_active
+             FROM Users
+             ORDER BY COALESCE(NULLIF(display_name, \'\'), username), username'
         )->fetchAll();
         $userRoles = $this->db->query(
             'SELECT ur.user_id, ur.role_id
@@ -219,6 +222,7 @@ final class PlatformAdministrationService
     private function createUser(array $input): void
     {
         $username = trim($this->requiredString($input, 'username'));
+        $displayName = $this->optionalDisplayName($input);
         $password = $this->requiredRawString($input, 'password');
         $countryCode = strtoupper($this->requiredString($input, 'country_code'));
         $roleIds = $this->selectedIds($input['role_ids'] ?? []);
@@ -235,16 +239,17 @@ final class PlatformAdministrationService
             throw new HttpException('新用户至少需要分配一个角色。', 422);
         }
 
-        $this->transaction(function () use ($username, $password, $countryCode, $roleIds): void {
+        $this->transaction(function () use ($username, $displayName, $password, $countryCode, $roleIds): void {
             $this->lockAdminGuard();
             $this->assertUsernameAvailable($username, null);
             $this->assertRolesExist($roleIds);
             $insert = $this->db->prepare(
-                'INSERT INTO Users (username, password_hash, country_code, is_active)
-                 VALUES (:username, :password_hash, :country_code, 1)'
+                'INSERT INTO Users (username, display_name, password_hash, country_code, is_active)
+                 VALUES (:username, :display_name, :password_hash, :country_code, 1)'
             );
             $insert->execute([
                 'username' => $username,
+                'display_name' => $displayName,
                 'password_hash' => password_hash($password, PASSWORD_DEFAULT),
                 'country_code' => $countryCode,
             ]);
@@ -258,6 +263,7 @@ final class PlatformAdministrationService
     {
         $userId = $this->positiveInt($input['user_id'] ?? null, '用户编号');
         $username = trim($this->requiredString($input, 'username'));
+        $displayName = $this->optionalDisplayName($input);
         $countryCode = strtoupper($this->requiredString($input, 'country_code'));
         $active = $this->requiredString($input, 'is_active');
         $password = $input['password'] ?? '';
@@ -284,6 +290,7 @@ final class PlatformAdministrationService
         $this->transaction(function () use (
             $userId,
             $username,
+            $displayName,
             $countryCode,
             $active,
             $password,
@@ -297,11 +304,13 @@ final class PlatformAdministrationService
             if ($password === '') {
                 $update = $this->db->prepare(
                     'UPDATE Users
-                     SET username = :username, country_code = :country_code, is_active = :is_active
+                     SET username = :username, display_name = :display_name,
+                         country_code = :country_code, is_active = :is_active
                      WHERE user_id = :user_id'
                 );
                 $update->execute([
                     'username' => $username,
+                    'display_name' => $displayName,
                     'country_code' => $countryCode,
                     'is_active' => (int) $active,
                     'user_id' => $userId,
@@ -309,17 +318,26 @@ final class PlatformAdministrationService
             } else {
                 $update = $this->db->prepare(
                     'UPDATE Users
-                     SET username = :username, country_code = :country_code, is_active = :is_active,
+                     SET username = :username, display_name = :display_name,
+                         country_code = :country_code, is_active = :is_active,
                          password_hash = :password_hash
                      WHERE user_id = :user_id'
                 );
                 $update->execute([
                     'username' => $username,
+                    'display_name' => $displayName,
                     'country_code' => $countryCode,
                     'is_active' => (int) $active,
                     'password_hash' => password_hash($password, PASSWORD_DEFAULT),
                     'user_id' => $userId,
                 ]);
+            }
+
+            // Keep the acting administrator's own top bar in sync right away;
+            // other signed-in sessions pick the new name up at next sign-in.
+            if ($userId === (int) ($_SESSION['user_id'] ?? 0)) {
+                $_SESSION['username'] = $username;
+                $_SESSION['display_name'] = $displayName ?? '';
             }
 
             $this->replaceUserRoles($userId, $roleIds);
@@ -655,6 +673,27 @@ final class PlatformAdministrationService
         }
 
         return trim($value);
+    }
+
+    /**
+     * Chinese name for display; empty input is stored as NULL so the UI
+     * falls back to the English login username.
+     */
+    private function optionalDisplayName(array $input): ?string
+    {
+        $value = $input['display_name'] ?? '';
+        if (!is_string($value)) {
+            throw new HttpException('姓名格式无效。', 422);
+        }
+        $value = trim($value);
+        if (mb_strlen($value, 'UTF-8') > self::MAX_DISPLAY_NAME_LENGTH) {
+            throw new HttpException('姓名最多为 ' . self::MAX_DISPLAY_NAME_LENGTH . ' 个字符。', 422);
+        }
+        if (preg_match('/[\x00-\x1F\x7F]/u', $value) === 1) {
+            throw new HttpException('姓名不能包含控制字符。', 422);
+        }
+
+        return $value === '' ? null : $value;
     }
 
     private function requiredRawString(array $input, string $key): string

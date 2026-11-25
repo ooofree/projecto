@@ -131,6 +131,7 @@ $db->exec(
     "CREATE TABLE Users (
         user_id INTEGER PRIMARY KEY,
         username TEXT NOT NULL,
+        display_name TEXT,
         timezone TEXT,
         is_active INTEGER NOT NULL DEFAULT 1
     )"
@@ -413,7 +414,8 @@ $db->exec(
         image_id INTEGER PRIMARY KEY AUTOINCREMENT,
         issue_id INTEGER NOT NULL,
         project_id INTEGER NOT NULL,
-        object_key TEXT NOT NULL,
+        object_key TEXT NULL,
+        external_url TEXT DEFAULT NULL,
         original_name TEXT NOT NULL,
         content_type TEXT NOT NULL,
         file_size INTEGER NOT NULL,
@@ -428,7 +430,8 @@ $db->exec(
         image_id INTEGER PRIMARY KEY AUTOINCREMENT,
         rfi_id INTEGER NOT NULL,
         project_id INTEGER NOT NULL,
-        object_key TEXT NOT NULL,
+        object_key TEXT NULL,
+        external_url TEXT DEFAULT NULL,
         original_name TEXT NOT NULL,
         content_type TEXT NOT NULL,
         file_size INTEGER NOT NULL,
@@ -928,6 +931,21 @@ documentTestCheck(
         && str_contains($renderedIssuesPage, 'P1-RFI-001'),
     'The issues route should render project-scoped records through the host application.'
 );
+$_GET = ['page' => 'issue-browser', 'issue' => (string) $issueId];
+ob_start();
+(new Application($db))->run();
+$renderedBrowserPage = ob_get_clean();
+documentTestCheck(
+    str_contains($renderedBrowserPage, '问题浏览')
+        && str_contains($renderedBrowserPage, 'id="issue-browser-list"')
+        && str_contains($renderedBrowserPage, 'id="issue-detail-' . $issueId . '"')
+        && str_contains($renderedBrowserPage, 'data-ib-stage')
+        && str_contains($renderedBrowserPage, '只看有图')
+        && str_contains($renderedBrowserPage, '图片管理')
+        && str_contains($renderedBrowserPage, '编辑此问题')
+        && str_contains($renderedBrowserPage, 'issue-browser.js'),
+    'The issue browser should render the split list/detail layout with the image stage and https link form.'
+);
 $_GET = ['page' => 'documents'];
 ob_start();
 (new Application($db))->run();
@@ -1355,6 +1373,61 @@ documentTestCheck(
 );
 @unlink((string) $imageTempPath);
 
+// --- https external image links (no object storage involved) ---
+$externalUrl = 'https://cdn.example.com/site/defect-01.jpg';
+$externalImageId = $imageService->addIssueImageLink(1, $issueId, 1, $externalUrl, '现场外链照片');
+$externalRow = $db->query(
+    'SELECT object_key, external_url, content_type, file_size, original_name FROM document_issue_images
+     WHERE image_id = ' . (int) $externalImageId
+)->fetch(PDO::FETCH_ASSOC);
+documentTestCheck(
+    is_array($externalRow)
+        && $externalRow['object_key'] === null
+        && $externalRow['external_url'] === $externalUrl
+        && $externalRow['content_type'] === 'image/external'
+        && (int) $externalRow['file_size'] === 0
+        && $externalRow['original_name'] === '现场外链照片',
+    'External issue images must store only the https URL with no object key.'
+);
+$serviceImages = $imageService->issueImagesForProject(1)[$issueId] ?? [];
+$externalDisplay = null;
+foreach ($serviceImages as $serviceImage) {
+    if ((int) $serviceImage['image_id'] === $externalImageId) {
+        $externalDisplay = DocumentImageService::imageDisplayUrl($serviceImage);
+    }
+}
+documentTestCheck(
+    $externalDisplay === $externalUrl,
+    'External image rows must expose their own URL instead of a proxy route.'
+);
+$deletedBeforeExternal = count($fakeStorage->deleted);
+$imageService->deleteIssueImage(1, $issueId, $externalImageId, $fakeStorage);
+documentTestCheck(
+    (int) $db->query('SELECT COUNT(*) FROM document_issue_images WHERE image_id = ' . (int) $externalImageId)->fetchColumn() === 0
+        && count($fakeStorage->deleted) === $deletedBeforeExternal,
+    'Deleting an external image must not touch object storage.'
+);
+
+foreach ([
+    'http://cdn.example.com/a.jpg' => 'plain http must be rejected',
+    'https://localhost/a.jpg' => 'localhost must be rejected',
+    'https://127.0.0.1/a.jpg' => 'loopback IPs must be rejected',
+    'https://user:pass@cdn.example.com/a.jpg' => 'URL credentials must be rejected',
+    'ftp://cdn.example.com/a.jpg' => 'non-https schemes must be rejected',
+] as $invalidUrl => $reason) {
+    documentTestExpectStatus(
+        static fn () => DocumentImageService::normalizeExternalUrl($invalidUrl),
+        422,
+        'External image URL validation: ' . $reason . '.'
+    );
+}
+$rfiExternalId = $imageService->addRfiImageLink(1, $rfiId, 1, 'https://cdn.example.com/rfi/answer.png', '');
+documentTestCheck(
+    (int) $db->query('SELECT COUNT(*) FROM document_rfi_images WHERE image_id = ' . (int) $rfiExternalId . ' AND object_key IS NULL')->fetchColumn() === 1,
+    'RFI external images must also be accepted without object storage.'
+);
+$imageService->deleteRfiImage(1, $rfiId, $rfiExternalId, $fakeStorage);
+
 $reporter = new DocumentManagementPlugin(
     new PluginContext($db, dirname(__DIR__) . '/modules/document-management', $fakeStorage)
 );
@@ -1373,6 +1446,40 @@ documentTestExpectStatus(
     'Deleting RFI images must require issue editing permission.'
 );
 $db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 3), (1, 4)');
+
+$linkResponse = $reporter->dispatch('issue.image.link', [
+    'issue_id' => (string) $issueId,
+    'image_url' => 'https://cdn.example.com/ledger/link.jpg',
+    'image_name' => '台账外链',
+]);
+$linkedId = (int) $db->query('SELECT MAX(image_id) FROM document_issue_images')->fetchColumn();
+documentTestCheck(
+    $linkResponse->type === 'redirect'
+        && $linkResponse->location === '?page=issues#issue-' . $issueId
+        && (string) $db->query('SELECT external_url FROM document_issue_images WHERE image_id = ' . $linkedId)->fetchColumn()
+            === 'https://cdn.example.com/ledger/link.jpg',
+    'The issue image link route must persist an https link and return to the ledger.'
+);
+$browserDelete = $reporter->dispatch('issue.image.delete', [
+    'issue_id' => (string) $issueId,
+    'image_id' => (string) $linkedId,
+    'return' => 'browser',
+]);
+documentTestCheck(
+    $browserDelete->type === 'redirect'
+        && $browserDelete->location === '?page=issue-browser&issue=' . $issueId . '#issue-detail-' . $issueId,
+    'Image actions from the browser must return to the selected issue detail.'
+);
+$beforeInvalidLink = (int) $db->query('SELECT COUNT(*) FROM document_issue_images')->fetchColumn();
+$invalidLink = $reporter->dispatch('issue.image.link', [
+    'issue_id' => (string) $issueId,
+    'image_url' => 'http://cdn.example.com/insecure.jpg',
+]);
+documentTestCheck(
+    $invalidLink->type === 'redirect'
+        && (int) $db->query('SELECT COUNT(*) FROM document_issue_images')->fetchColumn() === $beforeInvalidLink,
+    'http image links must be rejected without writing a row.'
+);
 
 $unconfiguredPlugin = new DocumentManagementPlugin(
     new PluginContext($db, dirname(__DIR__) . '/modules/document-management')
@@ -1686,8 +1793,8 @@ documentTestCheck($exportPngPath !== false, 'The export image fixture should be 
 file_put_contents((string) $exportPngPath, $faviconPng);
 DocumentTestImageStorage::$fileUrl = 'file://' . $exportPngPath;
 $db->exec(
-    "INSERT INTO document_issue_images (issue_id, project_id, object_key, original_name, content_type, file_size, uploaded_by)
-     VALUES ({$issueId}, 1, 'issues/1/{$issueId}/export.png', 'export.png', 'image/png', 70, 1)"
+    "INSERT INTO document_issue_images (issue_id, project_id, object_key, external_url, original_name, content_type, file_size, uploaded_by)
+     VALUES ({$issueId}, 1, 'issues/1/{$issueId}/export.png', NULL, 'export.png', 'image/png', 70, 1)"
 );
 $exportImagePlugin = new DocumentManagementPlugin(
     new PluginContext($db, dirname(__DIR__) . '/modules/document-management', new DocumentTestImageStorage())

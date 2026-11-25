@@ -338,6 +338,9 @@ final class Application
         $isPublicShareView = $viewData['publicShareView'] ?? false;
         $csrfToken = $isPublicShareView === true ? '' : Support::csrfToken();
         $username = (string) ($_SESSION['username'] ?? '');
+        // Top bar shows the recorded Chinese name; accounts without one fall
+        // back to the login username (see views/layout.php).
+        $displayName = (string) ($_SESSION['display_name'] ?? '');
         $canManagePlatform = isset($_SESSION['user_id'])
             && Support::hasPermission($this->db, 'manage_platform');
         $appearance = $this->platformAdministration->appearance();
@@ -452,12 +455,19 @@ final class Application
 
     private function saveProfile(): void
     {
+        $displayName = $_POST['display_name'] ?? '';
         $timezone = $_POST['timezone'] ?? '';
-        if (!is_string($timezone)) {
-            throw new HttpException('时区选项无效。', 422);
+        if (!is_string($displayName) || !is_string($timezone)) {
+            throw new HttpException('个人设置字段格式无效。', 422);
         }
-        (new ProfileService($this->db))->saveTimezone((int) ($_SESSION['user_id'] ?? 0), $timezone);
-        Support::flash('个人时区设置已保存。');
+        $profile = new ProfileService($this->db);
+        $savedName = $profile->saveProfile(
+            (int) ($_SESSION['user_id'] ?? 0),
+            $displayName,
+            $timezone
+        );
+        $_SESSION['display_name'] = $savedName;
+        Support::flash('个人资料已保存。');
         $this->redirect('?page=profile');
     }
 
@@ -486,9 +496,9 @@ final class Application
     private function profileData(): array
     {
         $userId = (int) ($_SESSION['user_id'] ?? 0);
-        $statement = $this->db->prepare('SELECT username, timezone FROM Users WHERE user_id = :user_id');
+        $statement = $this->db->prepare('SELECT username, display_name, timezone FROM Users WHERE user_id = :user_id');
         $statement->execute(['user_id' => $userId]);
-        $user = $statement->fetch() ?: ['username' => '', 'timezone' => null];
+        $user = $statement->fetch() ?: ['username' => '', 'display_name' => null, 'timezone' => null];
 
         $defaultTimezone = 'Asia/Shanghai';
         $setting = $this->db->prepare("SELECT setting_value FROM System_Settings WHERE setting_key = 'timezone'");
@@ -501,6 +511,8 @@ final class Application
         return [
             'title' => '个人设置',
             'currentUsername' => (string) ($_SESSION['username'] ?? ($user['username'] ?? '')),
+            'currentDisplayName' => (string) ($_SESSION['display_name'] ?? ($user['display_name'] ?? '')),
+            'userDisplayName' => (string) ($user['display_name'] ?? ''),
             'userTimezone' => (string) ($user['timezone'] ?? ''),
             'defaultTimezone' => $defaultTimezone,
             'effectiveTimezone' => Support::displayTimezone()->getName(),

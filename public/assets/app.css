@@ -1164,6 +1164,15 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .button-mini.is-warning { border-color: var(--warning-emphasis-border); }
 .button-mini.is-warning strong { color: var(--warning-text); }
 .entry-code-note { color: var(--text-muted); font-size: .74rem; }
+/* Composition editor inside the material dialog: rows are added in place, so
+   every togglable piece needs an explicit hidden rule (author display rules
+   would otherwise beat the attribute). */
+.composition-section [data-composition-table][hidden],
+.composition-section [data-composition-empty][hidden],
+.composition-section [data-composition-note][hidden],
+.composition-section [data-composition-exhausted][hidden],
+.composition-section .composition-status[hidden],
+.composition-section form[data-composition-add][hidden] { display: none; }
 .material-workspace { display: grid; grid-template-columns: minmax(196px, 236px) minmax(0, 1fr); gap: 16px; align-items: start; margin: 16px 0; }
 .material-workspace:not(.has-entry) { grid-template-columns: minmax(0, 1fr); }
 .material-workspace:not(.has-entry) .material-rail { display: none; }

@@ -62,6 +62,7 @@ $db->exec(
     'CREATE TABLE Users (
         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
+        display_name TEXT,
         password_hash TEXT NOT NULL,
         country_code TEXT NOT NULL,
         timezone TEXT,
@@ -277,6 +278,7 @@ platformAdminExpectStatus(
 $newPassword = '  long-enough-password  ';
 $admin->dispatch('admin.user.create', [
     'username' => 'new-user',
+    'display_name' => '  李四  ',
     'password' => $newPassword,
     'country_code' => 'CN',
     'role_ids' => ['2'],
@@ -284,6 +286,21 @@ $admin->dispatch('admin.user.create', [
 platformAdminCheck(
     (int) $db->query("SELECT COUNT(*) FROM Users WHERE username = 'new-user' AND is_active = 1")->fetchColumn() === 1,
     'A valid account should be created and activated.'
+);
+platformAdminCheck(
+    (string) $db->query("SELECT display_name FROM Users WHERE username = 'new-user'")->fetchColumn() === '李四',
+    'A new account should store the Chinese display name separately from the login username.'
+);
+platformAdminExpectStatus(
+    fn () => $admin->dispatch('admin.user.create', [
+        'username' => 'too-long-name',
+        'display_name' => str_repeat('名', 101),
+        'password' => $newPassword,
+        'country_code' => 'CN',
+        'role_ids' => ['2'],
+    ]),
+    422,
+    'Display names longer than 100 characters must be rejected.'
 );
 platformAdminCheck(
     password_verify(

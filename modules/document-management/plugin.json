@@ -14,6 +14,7 @@
     "routes": {
         "GET documents": "documents",
         "GET issues": "issues",
+        "GET issue-browser": "issue.browser",
         "GET rfis": "rfis",
         "GET document-settings": "settings",
         "GET document-image": "document.image.view",
@@ -32,14 +33,18 @@
         "POST rfi.followup.complete": "rfi.followup.complete",
         "POST document.settings.save": "settings.save",
         "POST issue.image.upload": "issue.image.upload",
+        "POST issue.image.link": "issue.image.link",
         "POST issue.image.delete": "issue.image.delete",
         "POST issue.export": "issue.export",
         "POST rfi.image.upload": "rfi.image.upload",
+        "POST rfi.image.link": "rfi.image.link",
         "POST rfi.image.delete": "rfi.image.delete"
     },
     "assets": [
         "issue-location.css",
-        "issue-location.js"
+        "issue-location.js",
+        "issue-browser.css",
+        "issue-browser.js"
     ],
     "migrations": [
         "database/migrations"

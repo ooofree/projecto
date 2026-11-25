@@ -16,7 +16,7 @@ $db->exec('PRAGMA foreign_keys = ON');
 
 $db->exec('CREATE TABLE Projects (project_id INTEGER PRIMARY KEY, project_name TEXT, start_date TEXT, end_date TEXT, status TEXT)');
 $db->exec('CREATE TABLE project_foundation_archive_records (archive_id INTEGER PRIMARY KEY AUTOINCREMENT, entity_type TEXT, entity_id INTEGER, project_id INTEGER)');
-$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT, country_code TEXT, is_active INTEGER, timezone TEXT)');
+$db->exec('CREATE TABLE Users (user_id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, password_hash TEXT, country_code TEXT, is_active INTEGER, timezone TEXT)');
 $db->exec('CREATE TABLE Roles (role_id INTEGER PRIMARY KEY, role_name TEXT)');
 $db->exec('CREATE TABLE User_Roles (user_id INTEGER, role_id INTEGER)');
 $db->exec('CREATE TABLE Permissions (permission_id INTEGER PRIMARY KEY AUTOINCREMENT, permission_name TEXT UNIQUE, display_name TEXT, description TEXT, module TEXT)');

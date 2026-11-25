@@ -6,20 +6,24 @@ ob_start();
     <div>
         <p class="eyebrow">账户</p>
         <h1>个人设置</h1>
-        <p class="muted">当前账号：<?= $escape($currentUsername) ?>。项目时间统一以 UTC 存储；页面按你的当地时区显示。</p>
+        <p class="muted">当前账号：<?= $escape($currentUsername) ?>（登录名）<?= $currentDisplayName !== '' ? '，显示姓名：' . $escape($currentDisplayName) : '' ?>。项目时间统一以 UTC 存储；页面按你的当地时区显示。</p>
     </div>
 </section>
 
 <section class="panel">
     <div class="panel-heading">
         <div>
-            <h2>显示时区</h2>
-            <p class="muted">当前生效时区：<?= $escape($effectiveTimezone) ?>，当前时间：<?= $escape($currentLocalTime) ?>。未选择时使用项目默认时区（<?= $escape($defaultTimezone) ?>）。</p>
+            <h2>个人资料</h2>
+            <p class="muted">登录用户名保持不变；姓名 / 昵称用于页面、任务负责人和操作记录中的中文显示，留空则显示登录用户名。</p>
         </div>
     </div>
     <form method="post" action="" class="form-grid">
         <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
         <input type="hidden" name="action" value="profile.save">
+        <label>
+            姓名 / 昵称
+            <input name="display_name" value="<?= $escape($userDisplayName) ?>" maxlength="100" placeholder="例如：张三">
+        </label>
         <label>
             时区
             <select name="timezone">

@@ -117,6 +117,7 @@ $navItems = [
     ['page' => 'projects', 'label' => '项目首页'],
     ['page' => 'documents', 'label' => '文档管理首页'],
     ['page' => 'issues', 'label' => '问题管理'],
+    ['page' => 'issue-browser', 'label' => '问题浏览'],
     ['page' => 'rfis', 'label' => 'RFI 管理'],
 ];
 if (!empty($canManageSettings)) {

@@ -50,7 +50,7 @@ foreach ($selectCandidates as $candidate) {
                 <select name="responsible_user_id">
                     <option value="">未指定</option>
                     <?php foreach ($selectUsers as $user): ?>
-                        <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['username']) ?></option>
+                        <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['name']) ?></option>
                     <?php endforeach; ?>
                 </select>
             </label>

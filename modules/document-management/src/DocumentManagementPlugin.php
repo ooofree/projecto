@@ -62,10 +62,10 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
      *
      * @return array<string, string>
      */
-    private function locationAssetVersions(): array
+    private function moduleAssetVersions(): array
     {
         $versions = [];
-        foreach (['issue-location.css', 'issue-location.js'] as $file) {
+        foreach (['issue-location.css', 'issue-location.js', 'issue-browser.css', 'issue-browser.js'] as $file) {
             $versions[$file] = $this->context->assetVersion('document.management', $file);
         }
 
@@ -93,6 +93,7 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         return match ($handler) {
             'documents' => $this->documentsIndex(),
             'issues' => $this->issuesIndex(),
+            'issue.browser' => $this->issueBrowserIndex($input),
             'rfis' => $this->rfisIndex(),
             'settings' => $this->settingsIndex(),
             'issue.create' => $this->createIssue($input),
@@ -110,8 +111,10 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             'rfi.followup.complete' => $this->completeRfiFollowUp($input),
             'settings.save' => $this->saveSettings($input),
             'issue.image.upload' => $this->uploadIssueImage($input),
+            'issue.image.link' => $this->linkIssueImage($input),
             'issue.image.delete' => $this->deleteIssueImage($input),
             'rfi.image.upload' => $this->uploadRfiImage($input),
+            'rfi.image.link' => $this->linkRfiImage($input),
             'rfi.image.delete' => $this->deleteRfiImage($input),
             'document.image.view' => $this->viewDocumentImage($input),
             'issue.export' => $this->exportIssues($input),
@@ -394,14 +397,12 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         $imageStorageReady = $this->imageStorage->isConfigured();
         $images = $this->images->issueImagesForProject((int) $project['project_id']);
         foreach ($issues as &$issue) {
-            $issue['images'] = $images[(int) $issue['issue_id']] ?? [];
-            if ($imageStorageReady) {
-                foreach ($issue['images'] as &$image) {
-                    $image['url'] = '?page=document-image&type=issue&issue_id='
-                        . (int) $issue['issue_id'] . '&image_id=' . (int) $image['image_id'];
-                }
-                unset($image);
-            }
+            $issue['images'] = $this->withImageUrls(
+                $images[(int) $issue['issue_id']] ?? [],
+                $imageStorageReady,
+                'issue',
+                (int) $issue['issue_id']
+            );
         }
         unset($issue);
 
@@ -412,12 +413,107 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             'issues' => $issues,
             'locationCatalog' => $this->documents->issueLocationCatalog((int) $project['project_id']),
             'spaceSelectionReady' => $this->spaceCatalog() !== null,
-            'moduleAssetVersions' => $this->locationAssetVersions(),
+            'moduleAssetVersions' => $this->moduleAssetVersions(),
             'canCreate' => Support::hasPermission($this->context->db, 'create_issues'),
             'canEdit' => $this->canEdit(),
             'canManage' => $canManage,
             'imageStorageReady' => $imageStorageReady,
         ]);
+    }
+
+    /**
+     * Visual browser: one scrollable issue list plus the selected issue's full
+     * text and images. Read-only apart from image management; ordinary editing
+     * and status work stay on the issue ledger, which this page links back to.
+     */
+    private function issueBrowserIndex(array $input = []): PluginResponse
+    {
+        $this->requireDocumentAccess();
+        $project = $this->context->requireCurrentProject();
+        $projectId = (int) $project['project_id'];
+        $issues = $this->documents->listIssues($projectId);
+        $linkedRfis = $this->documents->issueLinkedRfis($projectId);
+        $imageStorageReady = $this->imageStorage->isConfigured();
+        $images = $this->images->issueImagesForProject($projectId);
+
+        $pendingCount = 0;
+        $withImageCount = 0;
+        foreach ($issues as &$issue) {
+            $issue['linked_rfis'] = $linkedRfis[(int) $issue['issue_id']] ?? [];
+            $issue['images'] = $this->withImageUrls(
+                $images[(int) $issue['issue_id']] ?? [],
+                $imageStorageReady,
+                'issue',
+                (int) $issue['issue_id']
+            );
+            if ($issue['status'] !== 'closed') {
+                $pendingCount++;
+            }
+            if ($issue['images'] !== []) {
+                $withImageCount++;
+            }
+        }
+        unset($issue);
+
+        $selectedIssueId = 0;
+        $requested = $input['issue'] ?? null;
+        if (is_int($requested) || is_string($requested)) {
+            $parsed = filter_var($requested, FILTER_VALIDATE_INT);
+            if ($parsed !== false && $parsed > 0) {
+                $selectedIssueId = (int) $parsed;
+            }
+        }
+        $selectedFound = false;
+        foreach ($issues as $issue) {
+            if ((int) $issue['issue_id'] === $selectedIssueId) {
+                $selectedFound = true;
+                break;
+            }
+        }
+        if (!$selectedFound) {
+            $selectedIssueId = $issues === [] ? 0 : (int) $issues[0]['issue_id'];
+        }
+
+        return $this->context->view('issues-browser.php', [
+            'title' => '问题浏览',
+            'currentProject' => $project,
+            'canManageSettings' => $this->canManageSettings(),
+            'issues' => $issues,
+            'selectedIssueId' => $selectedIssueId,
+            'totalCount' => count($issues),
+            'pendingCount' => $pendingCount,
+            'withImageCount' => $withImageCount,
+            'canEdit' => $this->canEdit(),
+            'imageStorageReady' => $imageStorageReady,
+            'moduleAssetVersions' => $this->moduleAssetVersions(),
+        ]);
+    }
+
+    /**
+     * Adds display URLs to raw image rows. External links are used as-is and are
+     * available even when object storage is not configured; stored images keep
+     * the application proxy route so private buckets are never exposed.
+     *
+     * @param list<array<string, mixed>> $images
+     * @return list<array<string, mixed>>
+     */
+    private function withImageUrls(array $images, bool $storageReady, string $type, int $ownerId): array
+    {
+        $ownerKey = $type === 'issue' ? 'issue_id' : 'rfi_id';
+        foreach ($images as &$image) {
+            $image['external'] = DocumentImageService::isExternal($image);
+            if ($image['external']) {
+                $image['url'] = (string) $image['external_url'];
+            } elseif ($storageReady) {
+                $image['url'] = '?page=document-image&type=' . $type . '&' . $ownerKey . '=' . $ownerId
+                    . '&image_id=' . (int) $image['image_id'];
+            } else {
+                unset($image['url']);
+            }
+        }
+        unset($image);
+
+        return $images;
     }
 
     private function rfisIndex(): PluginResponse
@@ -437,14 +533,12 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         $imageStorageReady = $this->imageStorage->isConfigured();
         $images = $this->images->rfiImagesForProject($projectId);
         foreach ($rfis as &$rfi) {
-            $rfi['images'] = $images[(int) $rfi['rfi_id']] ?? [];
-            if ($imageStorageReady) {
-                foreach ($rfi['images'] as &$image) {
-                    $image['url'] = '?page=document-image&type=rfi&rfi_id='
-                        . (int) $rfi['rfi_id'] . '&image_id=' . (int) $image['image_id'];
-                }
-                unset($image);
-            }
+            $rfi['images'] = $this->withImageUrls(
+                $images[(int) $rfi['rfi_id']] ?? [],
+                $imageStorageReady,
+                'rfi',
+                (int) $rfi['rfi_id']
+            );
         }
         unset($rfi);
 
@@ -909,7 +1003,42 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         );
         Support::flash('问题图片已上传至私有对象存储。');
 
-        return PluginResponse::redirect('?page=issues');
+        return PluginResponse::redirect($this->imageReturnTarget($input, $issueId, 'issue'));
+    }
+
+    /**
+     * Adds an https image link to an issue without touching object storage, so
+     * it also works when the bucket is not configured.
+     */
+    private function linkIssueImage(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $issueId = $this->requiredId($input, 'issue_id', '问题');
+        $url = is_string($input['image_url'] ?? null) ? (string) $input['image_url'] : '';
+        $name = is_string($input['image_name'] ?? null) ? (string) $input['image_name'] : '';
+        try {
+            $this->images->addIssueImageLink(
+                (int) $project['project_id'],
+                $issueId,
+                $this->userId(),
+                $url,
+                $name
+            );
+            Support::audit(
+                $this->context->db,
+                'document.issue.image.link',
+                'Added an external image link to issue ' . $issueId . '.'
+            );
+            Support::flash('外链图片已添加。');
+        } catch (HttpException $exception) {
+            if ($exception->statusCode >= 500) {
+                throw $exception;
+            }
+            Support::flash($exception->getMessage(), 'error');
+        }
+
+        return PluginResponse::redirect($this->imageReturnTarget($input, $issueId, 'issue'));
     }
 
     private function deleteIssueImage(array $input): PluginResponse
@@ -920,7 +1049,6 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         $issueId = $this->requiredId($input, 'issue_id', '问题');
         $imageId = $this->requiredId($input, 'image_id', '图片');
         $this->images->requireIssue($projectId, $issueId);
-        $this->requireImageStorage();
         $this->images->deleteIssueImage($projectId, $issueId, $imageId, $this->imageStorage);
         Support::audit(
             $this->context->db,
@@ -929,7 +1057,7 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         );
         Support::flash('问题图片已删除。');
 
-        return PluginResponse::redirect('?page=issues');
+        return PluginResponse::redirect($this->imageReturnTarget($input, $issueId, 'issue'));
     }
 
     private function uploadRfiImage(array $input): PluginResponse
@@ -956,7 +1084,38 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         );
         Support::flash('RFI 图片已上传至私有对象存储。');
 
-        return PluginResponse::redirect('?page=rfis');
+        return PluginResponse::redirect('?page=rfis#rfi-' . $rfiId);
+    }
+
+    private function linkRfiImage(array $input): PluginResponse
+    {
+        $this->requireEdit();
+        $project = $this->context->requireCurrentProject();
+        $rfiId = $this->requiredId($input, 'rfi_id', 'RFI');
+        $url = is_string($input['image_url'] ?? null) ? (string) $input['image_url'] : '';
+        $name = is_string($input['image_name'] ?? null) ? (string) $input['image_name'] : '';
+        try {
+            $this->images->addRfiImageLink(
+                (int) $project['project_id'],
+                $rfiId,
+                $this->userId(),
+                $url,
+                $name
+            );
+            Support::audit(
+                $this->context->db,
+                'document.rfi.image.link',
+                'Added an external image link to RFI ' . $rfiId . '.'
+            );
+            Support::flash('RFI 外链图片已添加。');
+        } catch (HttpException $exception) {
+            if ($exception->statusCode >= 500) {
+                throw $exception;
+            }
+            Support::flash($exception->getMessage(), 'error');
+        }
+
+        return PluginResponse::redirect('?page=rfis#rfi-' . $rfiId);
     }
 
     private function deleteRfiImage(array $input): PluginResponse
@@ -967,7 +1126,6 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         $rfiId = $this->requiredId($input, 'rfi_id', 'RFI');
         $imageId = $this->requiredId($input, 'image_id', '图片');
         $this->images->requireRfi($projectId, $rfiId);
-        $this->requireImageStorage();
         $this->images->deleteRfiImage($projectId, $rfiId, $imageId, $this->imageStorage);
         Support::audit(
             $this->context->db,
@@ -976,7 +1134,17 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         );
         Support::flash('RFI 图片已删除。');
 
-        return PluginResponse::redirect('?page=rfis');
+        return PluginResponse::redirect('?page=rfis#rfi-' . $rfiId);
+    }
+
+    private function imageReturnTarget(array $input, int $issueId, string $type): string
+    {
+        $returnToBrowser = is_string($input['return'] ?? null) && $input['return'] === 'browser';
+        if ($type === 'issue' && $returnToBrowser) {
+            return '?page=issue-browser&issue=' . $issueId . '#issue-detail-' . $issueId;
+        }
+
+        return $type === 'issue' ? '?page=issues#issue-' . $issueId : '?page=rfis#rfi-' . $issueId;
     }
 
     private function requireImageStorage(): void
@@ -1030,8 +1198,11 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
             $this->images->requireRfi($projectId, $ownerId);
             $label = 'RFI图片';
         }
-        $this->requireImageStorage();
         $image = $this->images->requireImage($type, $projectId, $ownerId, $imageId);
+        if (DocumentImageService::isExternal($image)) {
+            throw new HttpException('外链图片由原站直接提供，不经过本系统读取。', 422);
+        }
+        $this->requireImageStorage();
         $contentType = (string) $image['content_type'];
         $extension = ImageUpload::EXTENSIONS[$contentType] ?? 'img';
         // Same contract as the sample images: the key embeds 16 random bytes and
@@ -1099,15 +1270,18 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         $imagesByIssue = $this->images->issueImagesForProject($projectId);
         foreach ($issues as &$issue) {
             $issue['images'] = $imagesByIssue[(int) $issue['issue_id']] ?? [];
-            if ($imageStorageReady) {
-                foreach ($issue['images'] as &$image) {
+            foreach ($issue['images'] as &$image) {
+                if (!empty($image['external_url'])) {
+                    $image['external'] = true;
+                    $image['url'] = (string) $image['external_url'];
+                } elseif ($imageStorageReady) {
                     $image['url'] = $this->imageStorage->signedReadUrl(
                         (string) $image['object_key'],
                         (string) $image['content_type']
                     );
                 }
-                unset($image);
             }
+            unset($image);
         }
         unset($issue);
 
@@ -1187,9 +1361,6 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
         int $rowNumber,
         int $imageColumn
     ): string {
-        if (!$this->imageStorage->isConfigured()) {
-            return '-';
-        }
         foreach ($issue['images'] ?? [] as $image) {
             if (!is_array($image) || !isset($image['url']) || !is_string($image['url']) || $image['url'] === '') {
                 continue;
@@ -1203,10 +1374,12 @@ final class DocumentManagementPlugin implements PluginInterface, SidebarNavigati
                 'column' => $imageColumn,
                 'bytes' => $payload['bytes'],
                 'extension' => $payload['extension'],
-                'hyperlink' => $this->issueImageProxyUrl(
-                    (int) $issue['issue_id'],
-                    (int) $image['image_id']
-                ),
+                'hyperlink' => !empty($image['external_url'])
+                    ? (string) $image['external_url']
+                    : $this->issueImageProxyUrl(
+                        (int) $issue['issue_id'],
+                        (int) $image['image_id']
+                    ),
             ];
 
             return '';

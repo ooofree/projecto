@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace ProjectO;
 
 use PDO;
+use Throwable;
 
 /**
  * Personal account settings for a signed-in user.
@@ -11,6 +12,7 @@ use PDO;
 final class ProfileService
 {
     private const MINIMUM_PASSWORD_LENGTH = 12;
+    private const MAX_DISPLAY_NAME_LENGTH = 100;
 
     public function __construct(private readonly PDO $db)
     {
@@ -29,6 +31,60 @@ final class ProfileService
             'timezone' => $timezone === '' ? null : $timezone,
             'user_id' => $userId,
         ]);
+    }
+
+    /**
+     * Saves the personal profile (display name + timezone) atomically, so an
+     * invalid timezone cannot leave a half-applied name change behind.
+     *
+     * @return string the trimmed display name that was saved
+     */
+    public function saveProfile(int $userId, string $displayName, string $timezone): string
+    {
+        $this->db->beginTransaction();
+        try {
+            $savedName = $this->saveDisplayName($userId, $displayName);
+            $this->saveTimezone($userId, $timezone);
+            $this->db->commit();
+
+            return $savedName;
+        } catch (Throwable $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $exception;
+        }
+    }
+
+    /**
+     * Saves the Chinese name shown across the platform. The login username
+     * stays unchanged; an empty name falls back to that username in the UI.
+     *
+     * @return string the trimmed name that was saved (may be empty)
+     */
+    public function saveDisplayName(int $userId, string $displayName): string
+    {
+        $displayName = trim($displayName);
+        if (mb_strlen($displayName, 'UTF-8') > self::MAX_DISPLAY_NAME_LENGTH) {
+            throw new HttpException('姓名最多为 ' . self::MAX_DISPLAY_NAME_LENGTH . ' 个字符。', 422);
+        }
+        if (preg_match('/[\x00-\x1F\x7F]/u', $displayName) === 1) {
+            throw new HttpException('姓名不能包含控制字符。', 422);
+        }
+        if ($userId < 1) {
+            throw new HttpException('登录状态无效，请重新登录。', 401);
+        }
+
+        $statement = $this->db->prepare(
+            'UPDATE Users SET display_name = :display_name WHERE user_id = :user_id'
+        );
+        $statement->execute([
+            'display_name' => $displayName === '' ? null : $displayName,
+            'user_id' => $userId,
+        ]);
+        Support::audit($this->db, 'profile.display_name.update', 'Changed own display name.');
+
+        return $displayName;
     }
 
     /**

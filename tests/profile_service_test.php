@@ -33,6 +33,7 @@ $db->exec(
     'CREATE TABLE Users (
         user_id INTEGER PRIMARY KEY,
         username TEXT NOT NULL,
+        display_name TEXT,
         password_hash TEXT NOT NULL,
         timezone TEXT,
         is_active INTEGER NOT NULL
@@ -120,6 +121,54 @@ profileServiceCheck(
     !str_contains((string) $auditRows[0]['details'], $newPassword)
         && !str_contains((string) $auditRows[0]['details'], $originalPassword),
     'The password change audit must not contain either password.'
+);
+
+$savedName = $service->saveDisplayName(1, '  张三  ');
+profileServiceCheck($savedName === '张三', 'The display name should be trimmed before saving.');
+profileServiceCheck(
+    (string) $db->query('SELECT display_name FROM Users WHERE user_id = 1')->fetchColumn() === '张三',
+    'The Chinese display name should be stored separately from the login username.'
+);
+profileServiceCheck(
+    (string) $db->query('SELECT username FROM Users WHERE user_id = 1')->fetchColumn() === 'alice',
+    'Changing the display name must not touch the login username.'
+);
+profileServiceExpectStatus(
+    fn () => $service->saveDisplayName(1, str_repeat('名', 101)),
+    422,
+    'Display names longer than 100 characters must be rejected.'
+);
+profileServiceExpectStatus(
+    fn () => $service->saveDisplayName(1, "张\n三"),
+    422,
+    'Display names containing control characters must be rejected.'
+);
+profileServiceExpectStatus(
+    fn () => $service->saveDisplayName(0, '张三'),
+    401,
+    'An invalid session user must not save a display name.'
+);
+$service->saveDisplayName(1, '   ');
+profileServiceCheck(
+    $db->query('SELECT display_name FROM Users WHERE user_id = 1')->fetchColumn() === null,
+    'An empty display name should be stored as NULL so the UI falls back to the username.'
+);
+
+$saved = $service->saveProfile(1, '  王五  ', 'Asia/Tokyo');
+profileServiceCheck($saved === '王五', 'The combined profile save should return the trimmed display name.');
+profileServiceCheck(
+    (string) $db->query('SELECT display_name FROM Users WHERE user_id = 1')->fetchColumn() === '王五'
+        && (string) $db->query('SELECT timezone FROM Users WHERE user_id = 1')->fetchColumn() === 'Asia/Tokyo',
+    'The combined profile save should persist both the name and the timezone.'
+);
+profileServiceExpectStatus(
+    fn () => $service->saveProfile(1, '赵六', 'Not/AZone'),
+    422,
+    'An invalid timezone must be rejected.'
+);
+profileServiceCheck(
+    (string) $db->query('SELECT display_name FROM Users WHERE user_id = 1')->fetchColumn() === '王五',
+    'An invalid timezone must not leave a half-applied display-name change behind.'
 );
 
 echo "Profile service tests passed.\n";

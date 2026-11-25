@@ -32,7 +32,12 @@ final class ExportImage
         if (isset(self::EXTENSIONS[$contentType])) {
             return ['bytes' => $bytes, 'extension' => self::EXTENSIONS[$contentType]];
         }
-        if ($contentType === 'image/webp' && function_exists('imagecreatefromwebp')) {
+        // External image links carry no MIME metadata, so sniff the bytes.
+        $sniffed = self::sniffExtension($bytes);
+        if ($sniffed !== null && $sniffed !== 'webp') {
+            return ['bytes' => $bytes, 'extension' => $sniffed];
+        }
+        if (($contentType === 'image/webp' || $sniffed === 'webp') && function_exists('imagecreatefromwebp')) {
             $image = @imagecreatefromwebp('data://image/webp;base64,' . base64_encode($bytes));
             if ($image === false) {
                 return null;
@@ -58,6 +63,27 @@ final class ExportImage
         return null;
     }
 
+    private static function sniffExtension(string $bytes): ?string
+    {
+        if (str_starts_with($bytes, "\x89PNG\r\n\x1A\n")) {
+            return 'png';
+        }
+        if (str_starts_with($bytes, "\xFF\xD8\xFF")) {
+            return 'jpg';
+        }
+        if (str_starts_with($bytes, 'GIF8')) {
+            return 'gif';
+        }
+        if (str_starts_with($bytes, 'BM')) {
+            return 'bmp';
+        }
+        if (strlen($bytes) > 12 && substr($bytes, 0, 4) === 'RIFF' && substr($bytes, 8, 4) === 'WEBP') {
+            return 'webp';
+        }
+
+        return null;
+    }
+
     private static function download(string $url): ?string
     {
         try {
@@ -69,6 +95,8 @@ final class ExportImage
                 curl_setopt_array($handle, [
                     CURLOPT_RETURNTRANSFER => true,
                     CURLOPT_FOLLOWLOCATION => true,
+                    // Redirects must never downgrade to a non-web scheme.
+                    CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
                     CURLOPT_CONNECTTIMEOUT => 5,
                     CURLOPT_TIMEOUT => 20,
                 ]);

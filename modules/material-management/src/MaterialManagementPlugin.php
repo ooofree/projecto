@@ -346,6 +346,14 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
     {
         $projectId = $this->requireMaterialEdit();
         $id = $this->catalog->saveComposition($projectId, $input);
+        // The material edit dialog adds children one after another: answer
+        // asynchronously so the dialog can stay open, append the new row and
+        // clear the picker instead of reloading and bouncing to the list page.
+        // Same permissions, project scope, validation and audit as a normal post.
+        if (($input['async'] ?? '') === '1') {
+            Support::audit($this->context->db, 'material.composition.save', 'Record ' . $id . '.');
+            return $this->compositionJson($projectId, $this->requiredId($input, 'parent_material_id'), $id);
+        }
         return $this->complete('material.composition.save', '材料组成已保存。', $id, '?page=materials');
     }
 
@@ -353,8 +361,71 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
     {
         $projectId = $this->requireMaterialEdit();
         $id = $this->requiredId($input, 'composition_id');
-        $this->catalog->deleteComposition($projectId, $id);
+        $edge = $this->catalog->deleteComposition($projectId, $id);
+        if (($input['async'] ?? '') === '1') {
+            Support::audit($this->context->db, 'material.composition.delete', 'Record ' . $id . '.');
+            return $this->compositionJson($projectId, (int) $edge['parent_material_id'], null, [
+                'removed' => [
+                    'composition_id' => $id,
+                    'child_material_id' => (int) $edge['child_material_id'],
+                ],
+            ]);
+        }
         return $this->complete('material.composition.delete', '材料组成已删除。', $id, '?page=materials');
+    }
+
+    /**
+     * JSON answer for in-dialog composition edits: the saved edge plus the
+     * parent's fresh sample/exemption state and counts, so the dialog row and
+     * the catalogue row can be updated in place without a second page load.
+     */
+    private function compositionJson(int $projectId, int $parentId, ?int $compositionId, array $extra = []): PluginResponse
+    {
+        $parent = null;
+        foreach ($this->catalog->materialData($projectId)['materials'] as $row) {
+            if ((int) $row['material_id'] === $parentId) {
+                $parent = $row;
+                break;
+            }
+        }
+        if ($parent === null) {
+            throw new HttpException('材料不存在或不属于当前项目。', 404);
+        }
+        $composition = null;
+        if ($compositionId !== null) {
+            foreach ($this->catalog->compositionsForParent($projectId, $parentId) as $row) {
+                if ((int) $row['composition_id'] === $compositionId) {
+                    $composition = $row;
+                    break;
+                }
+            }
+            if ($composition === null) {
+                throw new HttpException('组成关系已保存，但暂时无法读取记录，请刷新页面重试。', 500);
+            }
+        }
+        $payload = [
+            'ok' => true,
+            'id' => $compositionId,
+            'composition' => $composition === null ? null : [
+                'composition_id' => (int) $composition['composition_id'],
+                'child_material_id' => (int) $composition['child_material_id'],
+                'material_code' => (string) ($composition['material_code'] ?? ''),
+                'material_name' => (string) $composition['material_name'],
+                'unit' => (string) $composition['unit'],
+                'quantity' => (string) $composition['quantity'],
+            ],
+            'parent' => [
+                'material_id' => (int) $parent['material_id'],
+                'sample_required' => (string) ($parent['sample_required'] ?? 'required'),
+                'child_count' => (int) ($parent['child_count'] ?? 0),
+                'parent_count' => (int) ($parent['parent_count'] ?? 0),
+            ],
+        ];
+        return PluginResponse::raw(
+            (string) json_encode($payload + $extra, JSON_UNESCAPED_UNICODE),
+            'application/json; charset=utf-8',
+            ['Cache-Control' => 'private, no-store']
+        );
     }
 
     private function saveBrand(array $input): PluginResponse

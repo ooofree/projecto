@@ -29,6 +29,7 @@ $navItems = [
     ['page' => 'projects', 'label' => '项目首页'],
     ['page' => 'documents', 'label' => '文档管理首页'],
     ['page' => 'issues', 'label' => '问题管理'],
+    ['page' => 'issue-browser', 'label' => '问题浏览'],
     ['page' => 'rfis', 'label' => 'RFI 管理'],
 ];
 if (!empty($canManageSettings)) {
@@ -39,7 +40,7 @@ $navLabel = '文档管理';
 require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
 ?>
 <?php if (!$imageStorageReady): ?>
-    <div class="notice notice-info">图片存储尚未配置；问题与 RFI 图片暂不可上传或查看。</div>
+    <div class="notice notice-info">图片存储尚未配置：暂时只能添加 https 外链图片，上传本地图片需先在“系统设置”完成存储配置。</div>
 <?php endif; ?>
 
 <?php if ($canCreate): ?>
@@ -76,7 +77,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                     <select name="assigned_to" required>
                         <option value="">请选择</option>
                         <?php foreach ($users as $user): ?>
-                            <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['username']) ?></option>
+                            <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['name']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </label>
@@ -183,7 +184,23 @@ foreach ($rfis as $rfi) {
                             <td><span class="badge badge-neutral"><?= $escape($priorityLabels[$rfi['priority']] ?? $rfi['priority']) ?></span></td>
                             <td><span class="badge"><?= $escape($statusLabels[$rfi['status']] ?? $rfi['status']) ?></span></td>
                             <td><?= $escape(\ProjectO\Support::formatDateTime($rfi['due_date'])) ?></td>
-                            <td><?= count($rfi['images']) ?></td>
+                            <td>
+                                <?php if ($rfi['images'] === []): ?>
+                                    —
+                                <?php else: ?>
+                                    <?php $firstImage = $rfi['images'][0]; ?>
+                                    <button class="issue-thumb" type="button" data-dialog-open="rfi-dialog-<?= (int) $rfi['rfi_id'] ?>" title="查看 RFI 详情与全部 <?= count($rfi['images']) ?> 张图片">
+                                        <?php if (isset($firstImage['url'])): ?>
+                                            <img src="<?= $escape($firstImage['url']) ?>" alt="RFI <?= $escape($rfi['rfi_number']) ?> 首图" loading="lazy" referrerpolicy="no-referrer">
+                                        <?php else: ?>
+                                            <span class="issue-thumb-fallback">图 <?= count($rfi['images']) ?></span>
+                                        <?php endif; ?>
+                                        <?php if (count($rfi['images']) > 1): ?>
+                                            <span class="issue-thumb-count">+<?= count($rfi['images']) - 1 ?></span>
+                                        <?php endif; ?>
+                                    </button>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <div class="row-actions">
                                     <button class="button button-secondary" type="button" data-dialog-open="rfi-dialog-<?= (int) $rfi['rfi_id'] ?>">查看 / 编辑</button>
@@ -289,7 +306,7 @@ foreach ($rfis as $rfi) {
                             负责人
                             <select name="assigned_to" required>
                                 <?php foreach ($users as $user): ?>
-                                    <option value="<?= (int) $user['user_id'] ?>" <?= (int) $rfi['assigned_to'] === (int) $user['user_id'] ? 'selected' : '' ?>><?= $escape($user['username']) ?></option>
+                                    <option value="<?= (int) $user['user_id'] ?>" <?= (int) $rfi['assigned_to'] === (int) $user['user_id'] ? 'selected' : '' ?>><?= $escape($user['name']) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </label>
@@ -394,13 +411,20 @@ foreach ($rfis as $rfi) {
                             <?php foreach ($rfi['images'] as $image): ?>
                                 <li>
                                     <?php if (isset($image['url'])): ?>
+                                        <a class="dialog-image-thumb" href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer">
+                                            <img src="<?= $escape($image['url']) ?>" alt="<?= $escape($image['original_name']) ?>" loading="lazy" referrerpolicy="no-referrer">
+                                        </a>
                                         <a href="<?= $escape($image['url']) ?>" target="_blank" rel="noopener noreferrer"><?= $escape($image['original_name']) ?></a>
                                     <?php else: ?>
                                         <span><?= $escape($image['original_name']) ?></span>
                                     <?php endif; ?>
-                                    <span class="muted"><?= number_format((int) $image['file_size'] / 1024, 1) ?> KB</span>
-                                    <?php if ($canEdit && $imageStorageReady): ?>
-                                        <form method="post" class="inline-form" data-confirm="删除后图片将从记录和对象存储中移除。">
+                                    <?php if (!empty($image['external'])): ?>
+                                        <span class="muted">外链 · 原站提供</span>
+                                    <?php else: ?>
+                                        <span class="muted"><?= number_format((int) $image['file_size'] / 1024, 1) ?> KB</span>
+                                    <?php endif; ?>
+                                    <?php if ($canEdit): ?>
+                                        <form method="post" class="inline-form" data-confirm="<?= !empty($image['external']) ? '删除后仅移除外链记录，原站图片不受影响。' : '删除后图片将从记录和对象存储中移除。' ?>">
                                             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                                             <input type="hidden" name="action" value="rfi.image.delete">
                                             <input type="hidden" name="rfi_id" value="<?= (int) $rfi['rfi_id'] ?>">
@@ -412,7 +436,7 @@ foreach ($rfis as $rfi) {
                             <?php endforeach; ?>
                         </ul>
                     <?php else: ?>
-                        <p class="muted">尚未上传图片。</p>
+                        <p class="muted">尚未添加图片。</p>
                     <?php endif; ?>
                     <?php if ($canEdit): ?>
                         <?php if ($imageStorageReady): ?>
@@ -425,8 +449,17 @@ foreach ($rfis as $rfi) {
                                 <span class="muted">PNG/JPEG/GIF/BMP/WebP，最大 5 MB</span>
                             </form>
                         <?php else: ?>
-                            <p class="muted">图片存储未配置，暂不可上传或查看；可在文件模块“系统设置”中配置。</p>
+                            <p class="muted">图片存储未配置，暂不可上传本地图片；可直接添加 https 外链。</p>
                         <?php endif; ?>
+                        <form method="post" class="inline-form image-link-form">
+                            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                            <input type="hidden" name="action" value="rfi.image.link">
+                            <input type="hidden" name="rfi_id" value="<?= (int) $rfi['rfi_id'] ?>">
+                            <label>外链图片地址（仅 https）<input type="url" name="image_url" maxlength="1024" placeholder="https://…" required></label>
+                            <label>显示名称（可选）<input name="image_name" maxlength="255" placeholder="默认取文件名"></label>
+                            <button class="button button-secondary" type="submit">添加外链</button>
+                            <span class="muted">只保存地址，不占用对象存储；仅支持公网 https 图片。</span>
+                        </form>
                     <?php endif; ?>
                 </details>
 

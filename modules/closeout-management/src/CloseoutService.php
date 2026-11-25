@@ -38,9 +38,9 @@ SELECT i.item_id, i.project_id, i.plan_id, i.item_no, i.material_id, i.coverage_
        m.material_code, m.material_name, m.unit, m.specifications,
        c.category_name,
        s.supplier_name,
-       u.username AS responsible_user_name,
-       cu.username AS created_by_name,
-       xu.username AS cancelled_by_name
+       COALESCE(NULLIF(u.display_name, ''), u.username) AS responsible_user_name,
+       COALESCE(NULLIF(cu.display_name, ''), cu.username) AS created_by_name,
+       COALESCE(NULLIF(xu.display_name, ''), xu.username) AS cancelled_by_name
 FROM project_closeout_items i
 JOIN project_closeout_plans p ON p.plan_id = i.plan_id AND p.project_id = i.project_id
 LEFT JOIN Materials m ON m.material_id = i.material_id AND m.project_id = i.project_id
@@ -65,7 +65,8 @@ SQL;
         $statement = $this->db->prepare(
             'SELECT p.plan_id, p.project_id, p.plan_no, p.plan_name, p.description, p.status,
                     p.planned_start_date, p.planned_end_date, p.closed_at, p.reopened_at,
-                    p.created_at, p.updated_at, u.username AS created_by_name
+                    p.created_at, p.updated_at,
+                    COALESCE(NULLIF(u.display_name, \'\'), u.username) AS created_by_name
              FROM project_closeout_plans p
              LEFT JOIN Users u ON u.user_id = p.created_by
              WHERE p.project_id = :project_id
@@ -786,7 +787,8 @@ SQL;
     public function listProgress(int $projectId, int $itemId): array
     {
         $statement = $this->db->prepare(
-            'SELECT g.progress_id, g.progress_type, g.progress_note, g.recorded_at, u.username AS recorded_by_name
+            'SELECT g.progress_id, g.progress_type, g.progress_note, g.recorded_at,
+                    COALESCE(NULLIF(u.display_name, \'\'), u.username) AS recorded_by_name
              FROM project_closeout_progress_logs g
              LEFT JOIN Users u ON u.user_id = g.recorded_by
              WHERE g.project_id = :project_id AND g.item_id = :item_id
@@ -804,7 +806,7 @@ SQL;
     {
         $statement = $this->db->prepare(
             'SELECT a.acceptance_id, a.result, a.remark, a.evidence_reference, a.accepted_at,
-                    u.username AS accepted_by_name
+                    COALESCE(NULLIF(u.display_name, \'\'), u.username) AS accepted_by_name
              FROM project_closeout_acceptances a
              LEFT JOIN Users u ON u.user_id = a.accepted_by
              WHERE a.project_id = :project_id AND a.item_id = :item_id
@@ -1085,18 +1087,28 @@ SQL;
         ];
     }
 
-    /** @return list<array{user_id: int, username: string}> */
+    /** @return list<array{user_id: int, username: string, display_name: string, name: string}> */
     public function activeUsers(): array
     {
         $statement = $this->db->query(
-            'SELECT user_id, username FROM Users WHERE is_active = 1 ORDER BY username'
+            'SELECT user_id, username, display_name
+             FROM Users
+             WHERE is_active = 1
+             ORDER BY COALESCE(NULLIF(display_name, \'\'), username), username'
         );
 
         return array_map(
-            static fn (array $row): array => [
-                'user_id' => (int) $row['user_id'],
-                'username' => (string) $row['username'],
-            ],
+            static function (array $row): array {
+                $username = (string) $row['username'];
+                $displayName = trim((string) ($row['display_name'] ?? ''));
+
+                return [
+                    'user_id' => (int) $row['user_id'],
+                    'username' => $username,
+                    'display_name' => $displayName,
+                    'name' => $displayName !== '' ? $displayName : $username,
+                ];
+            },
             $statement->fetchAll()
         );
     }

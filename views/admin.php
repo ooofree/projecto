@@ -104,8 +104,12 @@ $isSection = static fn (string $key): bool => $activeSection === $key;
                         <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                         <input type="hidden" name="action" value="admin.user.create">
                         <label>
-                            用户名
+                            用户名（英文登录名）
                             <input name="username" maxlength="255" required>
+                        </label>
+                        <label>
+                            姓名 / 昵称（中文，可选）
+                            <input name="display_name" maxlength="100" placeholder="留空则显示登录用户名">
                         </label>
                         <label>
                             初始密码（至少 12 位）
@@ -141,8 +145,12 @@ $isSection = static fn (string $key): bool => $activeSection === $key;
                                 <input type="hidden" name="user_id" value="<?= (int) $user['user_id'] ?>">
                                 <div class="form-grid">
                                     <label>
-                                        用户名
+                                        用户名（英文登录名）
                                         <input name="username" value="<?= $escape($user['username']) ?>" maxlength="255" required>
+                                    </label>
+                                    <label>
+                                        姓名 / 昵称（中文）
+                                        <input name="display_name" value="<?= $escape($user['display_name'] ?? '') ?>" maxlength="100" placeholder="留空则显示登录用户名">
                                     </label>
                                     <label>
                                         国家代码

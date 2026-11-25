@@ -135,7 +135,7 @@ final class DocumentService
                     i.reported_by, i.reported_at, i.resolution_result,
                     i.verification_status, i.verification_note, i.evidence_reference,
                     i.closed_at, i.closed_by, i.created_at, i.updated_at,
-                    u.username AS reported_by_name
+                    COALESCE(NULLIF(u.display_name, \'\'), u.username) AS reported_by_name
              FROM document_issues i
              LEFT JOIN Users u ON u.user_id = i.reported_by
              WHERE i.project_id = :project_id
@@ -263,7 +263,8 @@ final class DocumentService
                     r.assigned_to, r.priority, r.due_date, r.description, r.status,
                     r.submitted_by, r.submitted_at, r.response_text, r.response_complete,
                     r.evidence_required, r.evidence_reference, r.closed_at, r.closed_by,
-                    r.created_at, r.updated_at, u.username AS assignee_name,
+                    r.created_at, r.updated_at,
+                    COALESCE(NULLIF(u.display_name, \'\'), u.username) AS assignee_name,
                     i.issue_number AS primary_issue_number,
                     i.description AS primary_issue_description,
                     i.status AS primary_issue_status
@@ -344,9 +345,27 @@ final class DocumentService
 
     public function activeUsers(): array
     {
-        return $this->db->query(
-            'SELECT user_id, username FROM Users WHERE is_active = 1 ORDER BY username, user_id'
+        $rows = $this->db->query(
+            'SELECT user_id, username, display_name
+             FROM Users
+             WHERE is_active = 1
+             ORDER BY COALESCE(NULLIF(display_name, \'\'), username), username, user_id'
         )->fetchAll();
+
+        return array_map(
+            static function (array $row): array {
+                $username = (string) $row['username'];
+                $displayName = trim((string) ($row['display_name'] ?? ''));
+
+                return [
+                    'user_id' => (int) $row['user_id'],
+                    'username' => $username,
+                    'display_name' => $displayName,
+                    'name' => $displayName !== '' ? $displayName : $username,
+                ];
+            },
+            $rows
+        );
     }
 
     public function createIssue(int $projectId, int $userId, array $data): int

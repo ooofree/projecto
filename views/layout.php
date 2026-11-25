@@ -121,7 +121,8 @@ if ($layoutCrumb === '') {
         default => (string) ($title ?? $platformName),
     };
 }
-$avatarMark = mb_strtoupper(mb_substr(trim($username) !== '' ? $username : $platformName, 0, 1, 'UTF-8'), 'UTF-8');
+$accountName = trim((string) ($displayName ?? '')) !== '' ? trim((string) $displayName) : $username;
+$avatarMark = mb_strtoupper(mb_substr($accountName !== '' ? $accountName : $platformName, 0, 1, 'UTF-8'), 'UTF-8');
 ?>
 <!doctype html>
 <html lang="zh-CN">
@@ -192,7 +193,7 @@ $avatarMark = mb_strtoupper(mb_substr(trim($username) !== '' ? $username : $plat
         <?php endif; ?>
         <div class="account">
             <span class="account-avatar" aria-hidden="true"><?= $escape($avatarMark) ?></span>
-            <span class="account-name"><?= $escape($username) ?></span>
+            <span class="account-name"><?= $escape($accountName) ?></span>
             <form method="post" action="">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="logout">

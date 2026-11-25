@@ -198,7 +198,7 @@ $show = static function ($value, string $fallback = '—') use ($escape): string
                         <select name="responsible_user_id">
                             <option value="">未指定</option>
                             <?php foreach ($users as $user): ?>
-                                <option value="<?= (int) $user['user_id'] ?>" <?= (int) $item['responsible_user_id'] === (int) $user['user_id'] ? 'selected' : '' ?>><?= $escape($user['username']) ?></option>
+                                <option value="<?= (int) $user['user_id'] ?>" <?= (int) $item['responsible_user_id'] === (int) $user['user_id'] ? 'selected' : '' ?>><?= $escape($user['name']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </label>

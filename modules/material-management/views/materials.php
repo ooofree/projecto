@@ -352,6 +352,34 @@ foreach ($materials as $material) {
 <?php endif; ?>
 
 <?php if ($canEdit): ?>
+    <?php /* 行模板：连续添加子材料时由 JS 克隆插行，字段与既有行完全一致。 */ ?>
+    <template data-composition-row-template>
+        <?php /* table/tbody wrapper keeps the row parseable inside a template; only the tr is cloned. */ ?>
+        <table><tbody>
+        <tr data-composition-row>
+            <td><span data-composition-name></span> <span class="muted" data-composition-unit></span></td>
+            <td>
+                <form method="post" action="" class="inline-form" data-composition-quantity>
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="material.composition.save">
+                    <input type="hidden" name="composition_id" value="">
+                    <input type="hidden" name="parent_material_id" value="">
+                    <input type="hidden" name="child_material_id" value="">
+                    <input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required aria-label="数量系数" inputmode="decimal">
+                    <button class="button button-secondary" type="submit">保存系数</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="" data-confirm="确定移除该组成子材料？子材料本身的样品记录不受影响。" data-composition-delete>
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="material.composition.delete">
+                    <input type="hidden" name="composition_id" value="">
+                    <button class="button button-quiet" type="submit">移除</button>
+                </form>
+            </td>
+        </tr>
+        </tbody></table>
+    </template>
     <div data-material-dialogs>
     <?php foreach ($materials as $material): ?>
         <dialog class="edit-dialog material-edit-dialog" id="material-edit-<?= (int) $material['material_id'] ?>" aria-labelledby="material-edit-title-<?= (int) $material['material_id'] ?>">
@@ -388,71 +416,72 @@ foreach ($materials as $material) {
                 <p class="entry-status field-wide" data-edit-status role="status" aria-live="polite" hidden></p>
                 <div class="field-wide dialog-actions"><button class="button button-primary" type="submit">保存更改<span class="entry-submit-key" aria-hidden="true">Ctrl+Enter</span></button></div>
             </form>
-            <div class="dialog-section">
+            <div class="dialog-section composition-section"
+                 data-composition-section
+                 data-parent-id="<?= (int) $material['material_id'] ?>"
+                 data-parent-unit="<?= $escape($material['unit']) ?>">
                 <h3>组成关系（定制项 · 父—子单层）</h3>
                 <?php $materialCompositions = $compositionsByParent[(int) $material['material_id']] ?? []; ?>
                 <p class="muted">定制整合产品（如玻璃门）由子材料组成，本身默认无需送样，子材料各自独立送样。数量系数 = 每 1 <?= $escape($material['unit']) ?> 父项所需子材料数量（单位取子材料自身单位）；仅支持单层，不能嵌套。组成关系不改变子材料的送样要求。</p>
-                <?php if ($materialCompositions !== []): ?>
-                    <div class="table-wrap">
-                        <table class="report-table">
-                            <thead>
-                            <tr><th scope="col">子材料</th><th scope="col">数量系数</th><th scope="col" class="actions">操作</th></tr>
-                            </thead>
-                            <tbody>
-                            <?php foreach ($materialCompositions as $composition): ?>
-                                <tr>
-                                    <td><?= $escape(($composition['material_code'] ? $composition['material_code'] . ' · ' : '') . $composition['material_name']) ?> <span class="muted"><?= $escape($composition['unit']) ?></span></td>
-                                    <td>
-                                        <form method="post" action="" class="inline-form">
-                                            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                                            <input type="hidden" name="action" value="material.composition.save">
-                                            <input type="hidden" name="composition_id" value="<?= (int) $composition['composition_id'] ?>">
-                                            <input type="hidden" name="parent_material_id" value="<?= (int) $material['material_id'] ?>">
-                                            <input type="hidden" name="child_material_id" value="<?= (int) $composition['child_material_id'] ?>">
-                                            <input type="number" name="quantity" min="0.01" step="0.01" value="<?= $escape((string) $composition['quantity']) ?>" required aria-label="数量系数" inputmode="decimal">
-                                            <button class="button button-secondary" type="submit">保存系数</button>
-                                        </form>
-                                    </td>
-                                    <td>
-                                        <form method="post" action="" data-confirm="确定移除该组成子材料？子材料本身的样品记录不受影响。">
-                                            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                                            <input type="hidden" name="action" value="material.composition.delete">
-                                            <input type="hidden" name="composition_id" value="<?= (int) $composition['composition_id'] ?>">
-                                            <button class="button button-quiet" type="submit">移除</button>
-                                        </form>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                <?php else: ?>
-                    <p class="muted">尚未添加组成子材料。</p>
-                <?php endif; ?>
+                <p class="entry-status composition-status" data-composition-status role="status" aria-live="polite" hidden></p>
+                <?php /* 子材料清单常驻页面：异步添加时直接插行、清空选择器，弹窗保持打开连续录入。 */ ?>
+                <div class="table-wrap" data-composition-table<?= $materialCompositions === [] ? ' hidden' : '' ?>>
+                    <table class="report-table">
+                        <thead>
+                        <tr><th scope="col">子材料</th><th scope="col">数量系数</th><th scope="col" class="actions">操作</th></tr>
+                        </thead>
+                        <tbody data-composition-body>
+                        <?php foreach ($materialCompositions as $composition): ?>
+                            <tr data-composition-row
+                                data-composition-id="<?= (int) $composition['composition_id'] ?>"
+                                data-child-id="<?= (int) $composition['child_material_id'] ?>">
+                                <td><span data-composition-name><?= $escape(($composition['material_code'] ? $composition['material_code'] . ' · ' : '') . $composition['material_name']) ?></span> <span class="muted" data-composition-unit><?= $escape($composition['unit']) ?></span></td>
+                                <td>
+                                    <form method="post" action="" class="inline-form" data-composition-quantity>
+                                        <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                        <input type="hidden" name="action" value="material.composition.save">
+                                        <input type="hidden" name="composition_id" value="<?= (int) $composition['composition_id'] ?>">
+                                        <input type="hidden" name="parent_material_id" value="<?= (int) $material['material_id'] ?>">
+                                        <input type="hidden" name="child_material_id" value="<?= (int) $composition['child_material_id'] ?>">
+                                        <input type="number" name="quantity" min="0.01" step="0.01" value="<?= $escape((string) $composition['quantity']) ?>" required aria-label="数量系数" inputmode="decimal">
+                                        <button class="button button-secondary" type="submit">保存系数</button>
+                                    </form>
+                                </td>
+                                <td>
+                                    <form method="post" action="" data-confirm="确定移除该组成子材料？子材料本身的样品记录不受影响。" data-composition-delete>
+                                        <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                        <input type="hidden" name="action" value="material.composition.delete">
+                                        <input type="hidden" name="composition_id" value="<?= (int) $composition['composition_id'] ?>">
+                                        <button class="button button-quiet" type="submit">移除</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="muted" data-composition-empty<?= $materialCompositions === [] ? '' : ' hidden' ?>>尚未添加组成子材料。</p>
                 <?php if ((int) ($material['parent_count'] ?? 0) > 0): ?>
                     <p class="muted">该材料已是其他定制项的组成子件；按单层规则，不能再为它添加组成。</p>
                 <?php else: ?>
                     <?php $childCandidates = $compositionChildOptions[(int) $material['material_id']] ?? []; ?>
-                    <?php if ($childCandidates !== []): ?>
-                        <form method="post" action="" class="inline-editor">
-                            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
-                            <input type="hidden" name="action" value="material.composition.save">
-                            <input type="hidden" name="parent_material_id" value="<?= (int) $material['material_id'] ?>">
-                            <label>子材料
-                                <select name="child_material_id" required>
-                                    <option value="">请选择子材料</option>
-                                    <?php foreach ($childCandidates as $candidate): ?>
-                                        <option value="<?= (int) $candidate['material_id'] ?>"><?= $escape(($candidate['material_code'] ? $candidate['material_code'] . ' · ' : '') . $candidate['material_name']) ?>（<?= $escape($candidate['unit']) ?>）</option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </label>
-                            <label>数量系数<input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required inputmode="decimal"></label>
-                            <button class="button button-primary" type="submit">添加组成</button>
-                        </form>
-                        <p class="muted">添加首条组成后，本材料默认转为“无需送样”，可在上方送样要求中改回。</p>
-                    <?php else: ?>
-                        <p class="muted">暂无可添加的子材料（子材料不能是已有组成的定制项）。</p>
-                    <?php endif; ?>
+                    <form method="post" action="" class="inline-editor" data-composition-add<?= $childCandidates === [] ? ' hidden' : '' ?>>
+                        <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                        <input type="hidden" name="action" value="material.composition.save">
+                        <input type="hidden" name="parent_material_id" value="<?= (int) $material['material_id'] ?>">
+                        <label>子材料
+                            <select name="child_material_id" required>
+                                <option value="">请选择子材料</option>
+                                <?php foreach ($childCandidates as $candidate): ?>
+                                    <option value="<?= (int) $candidate['material_id'] ?>"><?= $escape(($candidate['material_code'] ? $candidate['material_code'] . ' · ' : '') . $candidate['material_name']) ?>（<?= $escape($candidate['unit']) ?>）</option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <label>数量系数<input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required inputmode="decimal"></label>
+                        <button class="button button-primary" type="submit">添加组成</button>
+                    </form>
+                    <p class="muted" data-composition-note<?= ($materialCompositions === [] && $childCandidates !== []) ? '' : ' hidden' ?>>添加首条组成后，本材料默认转为“无需送样”，可在上方送样要求中改回。保存后弹窗保持打开，选下一条即可继续添加。</p>
+                    <p class="muted" data-composition-exhausted<?= $childCandidates === [] ? '' : ' hidden' ?>>暂无可添加的子材料（子材料不能是已有组成的定制项）。</p>
                 <?php endif; ?>
             </div>
         </dialog>

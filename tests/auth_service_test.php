@@ -17,6 +17,7 @@ $db->exec(
     'CREATE TABLE Users (
         user_id INTEGER PRIMARY KEY,
         username TEXT NOT NULL,
+        display_name TEXT,
         password_hash TEXT NOT NULL,
         timezone TEXT,
         is_active INTEGER NOT NULL
@@ -33,10 +34,10 @@ $db->exec(
     )'
 );
 $insert = $db->prepare(
-    'INSERT INTO Users (user_id, username, password_hash, is_active) VALUES (?, ?, ?, ?)'
+    'INSERT INTO Users (user_id, username, display_name, password_hash, is_active) VALUES (?, ?, ?, ?, ?)'
 );
-$insert->execute([1, 'admin', password_hash('correct-horse-battery', PASSWORD_DEFAULT), 1]);
-$insert->execute([2, 'disabled', password_hash('correct-horse-battery', PASSWORD_DEFAULT), 0]);
+$insert->execute([1, 'admin', '管理员', password_hash('correct-horse-battery', PASSWORD_DEFAULT), 1]);
+$insert->execute([2, 'disabled', null, password_hash('correct-horse-battery', PASSWORD_DEFAULT), 0]);
 $_SESSION = [];
 $_SERVER = [];
 
@@ -52,6 +53,9 @@ if (!$auth->login('admin', 'correct-horse-battery')) {
 }
 if (($_SESSION['username'] ?? null) !== 'admin') {
     throw new RuntimeException('Successful authentication should establish the user session.');
+}
+if (($_SESSION['display_name'] ?? null) !== '管理员') {
+    throw new RuntimeException('Successful authentication should load the Chinese display name into the session.');
 }
 
 $auth->logout();

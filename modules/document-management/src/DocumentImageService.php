@@ -12,12 +12,15 @@ use Throwable;
 /**
  * Private image attachments for document issues and RFIs.
  *
- * Images are stored through the platform ObjectStorageInterface (R2 by
- * default) and referenced here only by object key; the callers generate the
- * short-lived signed read URLs for authorized viewers.
+ * Two sources share one table: files in the platform object storage (referenced
+ * by object_key) and https external links (referenced by external_url only, no
+ * download and no storage usage). Callers resolve a display URL through
+ * imageDisplayUrl() so a page never has to know which source produced the row.
  */
 final class DocumentImageService
 {
+    public const EXTERNAL_CONTENT_TYPE = 'image/external';
+
     public function __construct(private readonly PDO $db)
     {
     }
@@ -84,6 +87,98 @@ final class DocumentImageService
         );
     }
 
+    /**
+     * Records an https image link without fetching or storing the file.
+     */
+    public function addIssueImageLink(
+        int $projectId,
+        int $issueId,
+        int $userId,
+        string $url,
+        string $name = ''
+    ): int {
+        $this->requireIssue($projectId, $issueId);
+
+        return $this->addImageLink('document_issue_images', 'issue_id', $projectId, $issueId, $userId, $url, $name);
+    }
+
+    public function addRfiImageLink(
+        int $projectId,
+        int $rfiId,
+        int $userId,
+        string $url,
+        string $name = ''
+    ): int {
+        $this->requireRfi($projectId, $rfiId);
+
+        return $this->addImageLink('document_rfi_images', 'rfi_id', $projectId, $rfiId, $userId, $url, $name);
+    }
+
+    /**
+     * Display URL for an already-authorized image row: the stored external link
+     * wins, otherwise the caller builds the app's private image proxy URL.
+     */
+    public static function imageDisplayUrl(array $image, ?string $proxyUrl = null): ?string
+    {
+        $external = $image['external_url'] ?? null;
+        if (is_string($external) && $external !== '') {
+            return $external;
+        }
+
+        return $proxyUrl;
+    }
+
+    public static function isExternal(array $image): bool
+    {
+        $external = $image['external_url'] ?? null;
+
+        return is_string($external) && $external !== '';
+    }
+
+    /**
+     * Accepts only public https image addresses.
+     *
+     * http is refused on purpose: the application is deployed over https and a
+     * browser blocks mixed-content images, so accepting one would store a link
+     * that can never render. Loopback, private and reserved hosts are refused
+     * to avoid turning the field into an SSRF pivot for the export routine.
+     */
+    public static function normalizeExternalUrl(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            throw new HttpException('请填写图片地址。', 422);
+        }
+        if (mb_strlen($value) > 1024) {
+            throw new HttpException('图片地址过长（最多 1024 个字符）。', 422);
+        }
+        if (preg_match('/[\x00-\x1F\x7F"\'<>]/u', $value) === 1) {
+            throw new HttpException('图片地址包含无效字符。', 422);
+        }
+
+        $parts = parse_url($value);
+        if ($parts === false || !isset($parts['scheme'], $parts['host'], $parts['path'])) {
+            throw new HttpException('图片地址格式无效，请填写完整的 https 地址。', 422);
+        }
+        if (strtolower((string) $parts['scheme']) !== 'https') {
+            throw new HttpException('只支持 https 图片地址；http 地址在 https 页面中会被浏览器拦截。', 422);
+        }
+        $host = strtolower((string) $parts['host']);
+        if ($host === '' || !empty($parts['user']) || !empty($parts['pass'])) {
+            throw new HttpException('图片地址不允许携带账号信息。', 422);
+        }
+        if ($host === 'localhost' || str_ends_with($host, '.localhost') || str_ends_with($host, '.local')) {
+            throw new HttpException('图片地址必须是公网地址，不能使用本机或内网域名。', 422);
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false
+            && filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
+        ) {
+            throw new HttpException('图片地址必须是公网地址，不能指向内网或保留网段。', 422);
+        }
+
+        return $value;
+    }
+
     public function deleteIssueImage(
         int $projectId,
         int $issueId,
@@ -91,7 +186,10 @@ final class DocumentImageService
         ObjectStorageInterface $storage
     ): void {
         $image = $this->imageRow('document_issue_images', 'issue_id', $projectId, $issueId, $imageId);
-        $storage->delete((string) $image['object_key']);
+        $objectKey = $image['object_key'] ?? null;
+        if (is_string($objectKey) && $objectKey !== '' && $storage->isConfigured()) {
+            $storage->delete($objectKey);
+        }
         $delete = $this->db->prepare(
             'DELETE FROM document_issue_images WHERE image_id = :image_id AND project_id = :project_id'
         );
@@ -105,7 +203,10 @@ final class DocumentImageService
         ObjectStorageInterface $storage
     ): void {
         $image = $this->imageRow('document_rfi_images', 'rfi_id', $projectId, $rfiId, $imageId);
-        $storage->delete((string) $image['object_key']);
+        $objectKey = $image['object_key'] ?? null;
+        if (is_string($objectKey) && $objectKey !== '' && $storage->isConfigured()) {
+            $storage->delete($objectKey);
+        }
         $delete = $this->db->prepare(
             'DELETE FROM document_rfi_images WHERE image_id = :image_id AND project_id = :project_id'
         );
@@ -134,7 +235,7 @@ final class DocumentImageService
             ? ['document_issue_images', 'issue_id']
             : ['document_rfi_images', 'rfi_id'];
         $statement = $this->db->prepare(
-            'SELECT image_id, object_key, original_name, content_type FROM ' . $table . '
+            'SELECT image_id, object_key, external_url, original_name, content_type FROM ' . $table . '
              WHERE image_id = :image_id AND project_id = :project_id AND ' . $ownerColumn . ' = :owner_id'
         );
         $statement->execute([
@@ -204,13 +305,50 @@ final class DocumentImageService
         }
     }
 
+    private function addImageLink(
+        string $table,
+        string $ownerColumn,
+        int $projectId,
+        int $ownerId,
+        int $userId,
+        string $url,
+        string $name
+    ): int {
+        $url = self::normalizeExternalUrl($url);
+        $name = trim($name);
+        if ($name === '') {
+            $path = (string) parse_url($url, PHP_URL_PATH);
+            $name = rawurldecode(basename($path));
+        }
+        if (mb_strlen($name) > 255) {
+            $name = mb_substr($name, 0, 255);
+        }
+        if ($name === '') {
+            $name = '外链图片';
+        }
+
+        $insert = $this->db->prepare(
+            'INSERT INTO ' . $table . ' (' . $ownerColumn . ', project_id, object_key, external_url, original_name, content_type, file_size, uploaded_by)
+             VALUES (:owner_id, :project_id, NULL, :external_url, :original_name, :content_type, 0, :uploaded_by)'
+        );
+        $insert->execute([
+            'owner_id' => $ownerId,
+            'project_id' => $projectId,
+            'external_url' => $url,
+            'original_name' => $name,
+            'content_type' => self::EXTERNAL_CONTENT_TYPE,
+            'uploaded_by' => $userId,
+        ]);
+
+        return (int) $this->db->lastInsertId();
+    }
+
     /**
      * @return array<int, list<array<string, mixed>>>
      */
-    private function imagesForProject(string $table, string $ownerColumn, int $projectId): array
-    {
+    private function imagesForProject(string $table, string $ownerColumn, int $projectId): array    {
         $statement = $this->db->prepare(
-            'SELECT image_id, ' . $ownerColumn . ' AS owner_id, object_key, original_name, content_type, file_size, created_at
+            'SELECT image_id, ' . $ownerColumn . ' AS owner_id, object_key, external_url, original_name, content_type, file_size, created_at
              FROM ' . $table . ' WHERE project_id = :project_id ORDER BY image_id'
         );
         $statement->execute(['project_id' => $projectId]);

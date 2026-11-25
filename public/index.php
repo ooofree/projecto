@@ -26,7 +26,10 @@ session_start();
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: same-origin');
-header("Content-Security-Policy: default-src 'self'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+// img-src allows https so issue/RFI images stored as external links can load
+// directly from their origin; private bucket images still come through the
+// same-origin proxy route under 'self'.
+header("Content-Security-Policy: default-src 'self'; img-src 'self' https: data:; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
 
 try {
     (new Application(Database::connect()))->run();
