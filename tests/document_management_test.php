@@ -940,6 +940,8 @@ documentTestCheck(
         && str_contains($renderedBrowserPage, 'id="issue-browser-list"')
         && str_contains($renderedBrowserPage, 'id="issue-detail-' . $issueId . '"')
         && str_contains($renderedBrowserPage, 'data-ib-stage')
+        && str_contains($renderedBrowserPage, 'data-ib-zoom')
+        && str_contains($renderedBrowserPage, 'data-ib-zoom-close')
         && str_contains($renderedBrowserPage, '只看有图')
         && str_contains($renderedBrowserPage, '图片管理')
         && str_contains($renderedBrowserPage, '编辑此问题')

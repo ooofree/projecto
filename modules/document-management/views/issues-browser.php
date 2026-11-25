@@ -431,7 +431,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
         <?php endforeach; ?>
     </div>
 
-    <div class="ib-zoom" data-ib-zoom hidden role="dialog" aria-modal="true" aria-label="图片放大预览">
+    <div class="ib-zoom" data-ib-zoom hidden role="dialog" aria-modal="true" aria-label="图片放大预览" tabindex="-1">
         <button class="ib-zoom-close" type="button" data-ib-zoom-close aria-label="关闭放大预览">×</button>
         <button class="ib-zoom-nav is-prev" type="button" data-ib-zoom-prev aria-label="上一张图片"><span aria-hidden="true">‹</span></button>
         <img data-ib-zoom-image alt="">
