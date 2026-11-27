@@ -280,9 +280,9 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                                     —
                                 <?php else: ?>
                                     <?php $firstImage = $issue['images'][0]; ?>
-                                    <a class="issue-thumb" href="?page=issue-browser&amp;issue=<?= (int) $issue['issue_id'] ?>#issue-detail-<?= (int) $issue['issue_id'] ?>" title="查看问题详情与全部 <?= count($issue['images']) ?> 张图片">
+                                    <a class="issue-thumb is-compact" href="?page=issue-browser&amp;issue=<?= (int) $issue['issue_id'] ?>#issue-detail-<?= (int) $issue['issue_id'] ?>" title="查看问题详情与全部 <?= count($issue['images']) ?> 张图片">
                                         <?php if (isset($firstImage['url'])): ?>
-                                            <img src="<?= $escape($firstImage['url']) ?>" alt="问题 <?= $escape($issue['issue_number'] ?: '#' . $issue['issue_id']) ?> 首图" loading="lazy" referrerpolicy="no-referrer">
+                                            <img src="<?= $escape($firstImage['url']) ?>" width="36" height="27" alt="问题 <?= $escape($issue['issue_number'] ?: '#' . $issue['issue_id']) ?> 首图" loading="lazy" referrerpolicy="no-referrer">
                                         <?php else: ?>
                                             <span class="issue-thumb-fallback">图 <?= count($issue['images']) ?></span>
                                         <?php endif; ?>

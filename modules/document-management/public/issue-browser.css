@@ -44,8 +44,8 @@
 
 .ib-list-panel {
     position: sticky;
-    top: calc(var(--topbar-h) + var(--space-4));
-    max-height: calc(100vh - var(--topbar-h) - var(--space-6));
+    top: calc(var(--topbar-h) + 64px);
+    max-height: calc(100vh - var(--topbar-h) - 88px);
     display: flex;
     flex-direction: column;
     padding: 0;
@@ -250,6 +250,25 @@
     font-size: 12px;
 }
 
+.ib-detail-body {
+    display: grid;
+    grid-template-columns: minmax(380px, 55%) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-5);
+    margin-top: var(--space-4);
+}
+
+.ib-detail-copy {
+    min-width: 0;
+}
+
+.ib-detail-body .ib-stage {
+    position: sticky;
+    top: calc(var(--topbar-h) + 64px);
+    z-index: 2;
+    margin: 0;
+}
+
 .ib-stage {
     position: relative;
     display: flex;
@@ -265,8 +284,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 320px;
-    padding: var(--space-4);
+    min-height: 240px;
+    padding: var(--space-3);
 }
 
 .ib-slide {
@@ -277,7 +296,7 @@
 .ib-stage-image {
     display: block;
     max-width: 100%;
-    max-height: min(62vh, 560px);
+    max-height: min(60vh, 540px);
     margin: 0 auto;
     object-fit: contain;
     cursor: zoom-in;
@@ -319,7 +338,7 @@
 
 .ib-slide figcaption {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     justify-content: space-between;
     gap: 6px;
     margin-top: 10px;
@@ -327,8 +346,18 @@
     font-size: 12px;
 }
 
+.ib-slide figcaption > span:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .ib-slide-tag {
+    flex: 0 0 auto;
     color: #9fb0d8;
+    white-space: nowrap;
 }
 
 .ib-slide-missing {
@@ -358,12 +387,19 @@
 
 .ib-stage-bar {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
+    gap: 4px;
+    padding: 6px 8px;
     background: #171a21;
     border-top: 1px solid #262b36;
+}
+
+.ib-stage-bar .button {
+    flex: 0 0 auto;
+    padding: 5px 7px;
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .ib-stage-spacer {
@@ -617,6 +653,23 @@ body.is-zoom-open {
     text-decoration: none;
 }
 
+.issue-thumb.is-compact {
+    width: 36px;
+    height: 27px;
+    border-radius: 4px;
+    vertical-align: middle;
+}
+
+.issue-thumb.is-compact .issue-thumb-fallback {
+    font-size: 9px;
+}
+
+.issue-thumb.is-compact .issue-thumb-count {
+    padding: 0 2px;
+    font-size: 8px;
+    line-height: 1.4;
+}
+
 .issue-thumb img {
     display: block;
     width: 100%;
@@ -653,6 +706,16 @@ body.is-zoom-open {
         grid-template-columns: minmax(0, 1fr);
     }
 
+    .ib-detail-body {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--space-4);
+    }
+
+    .ib-detail-body .ib-stage {
+        position: static;
+        z-index: auto;
+    }
+
     .ib-list-panel {
         position: static;
         max-height: none;
@@ -682,12 +745,12 @@ body.is-zoom-open {
     }
 
     .ib-slides {
-        min-height: 200px;
+        min-height: 180px;
         padding: var(--space-2);
     }
 
     .ib-stage-image {
-        max-height: 46vh;
+        max-height: min(46vh, 340px);
     }
 
     .ib-zone {

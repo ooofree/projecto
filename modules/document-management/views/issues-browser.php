@@ -226,6 +226,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                     · 最近更新 <?= $escape(\ProjectO\Support::formatDateTime($issue['updated_at'])) ?>
                 </p>
 
+                <div class="ib-detail-body">
                 <div class="ib-stage" data-ib-stage>
                     <?php if ($images === []): ?>
                         <div class="ib-stage-empty">
@@ -262,7 +263,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                             <button class="button button-quiet ib-stage-nav" type="button" data-ib-next aria-label="下一张">→</button>
                             <span class="ib-stage-spacer"></span>
                             <button class="button button-quiet" type="button" data-ib-zoom-open>放大查看</button>
-                            <a class="button button-quiet" href="<?= $escape($images[0]['url'] ?? '?page=issues') ?>" target="_blank" rel="noopener noreferrer" data-ib-original-link>新窗口打开</a>
+                            <a class="button button-quiet" href="<?= $escape($images[0]['url'] ?? '?page=issues') ?>" target="_blank" rel="noopener noreferrer" title="在新窗口打开原图" data-ib-original-link>新窗口</a>
                         </div>
                         <?php if (count($images) > 1): ?>
                             <div class="ib-thumbs" aria-label="图片缩略图">
@@ -280,6 +281,7 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                     <?php endif; ?>
                 </div>
 
+                <div class="ib-detail-copy">
                 <div class="ib-info">
                     <div><span class="ib-info-label">状态</span><span><?= $escape($statusLabels[$issue['status']] ?? $issue['status']) ?></span></div>
                     <div><span class="ib-info-label">严重程度</span><span><?= $escape($severityLabels[$issue['severity']] ?? $issue['severity']) ?></span></div>
@@ -427,6 +429,8 @@ require dirname(__DIR__, 3) . '/views/partials/module_nav.php';
                         <a class="button button-primary" href="?page=issues#edit-issue-<?= $issueId ?>">编辑问题 / 处理状态</a>
                     <?php endif; ?>
                 </footer>
+                </div>
+                </div>
             </section>
         <?php endforeach; ?>
     </div>
