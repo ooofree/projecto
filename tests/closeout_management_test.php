@@ -59,11 +59,13 @@ $db->exec('CREATE TABLE project_closeout_plans (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(project_id, plan_no), UNIQUE(plan_id, project_id)
 )');
+$db->exec('CREATE TABLE Labor_Crew_Types (crew_type_id INTEGER PRIMARY KEY AUTOINCREMENT, type_name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0)');
+$db->exec('CREATE TABLE Labor_Crews (crew_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, crew_type_id INTEGER, crew_name TEXT NOT NULL, leader_name TEXT NOT NULL DEFAULT "", is_active INTEGER NOT NULL DEFAULT 1)');
 $db->exec('CREATE TABLE project_closeout_items (
     item_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, plan_id INTEGER NOT NULL,
     item_no TEXT NOT NULL, material_id INTEGER NOT NULL, coverage_mode TEXT NOT NULL DEFAULT "whole",
     coverage_root_id INTEGER, title TEXT NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT "pending",
-    responsible_supplier_id INTEGER, responsible_user_id INTEGER,
+    responsible_supplier_id INTEGER, responsible_user_id INTEGER, responsible_crew_id INTEGER,
     planned_start_date TEXT, planned_end_date TEXT, submitted_at TEXT, actual_complete_date TEXT,
     risk_level TEXT NOT NULL DEFAULT "medium", cancel_reason TEXT, cancelled_by INTEGER, cancelled_at TEXT,
     created_by INTEGER NOT NULL,
@@ -73,18 +75,39 @@ $db->exec('CREATE TABLE project_closeout_items (
 $db->exec('CREATE UNIQUE INDEX uq_closeout_item_active ON project_closeout_items(project_id, material_id) WHERE status <> "cancelled"');
 $db->exec('CREATE TABLE project_closeout_progress_logs (
     progress_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, plan_id INTEGER NOT NULL,
-    item_id INTEGER NOT NULL, progress_type TEXT NOT NULL DEFAULT "note", progress_note TEXT NOT NULL,
+    item_id INTEGER NOT NULL, location_id INTEGER, progress_type TEXT NOT NULL DEFAULT "note", progress_note TEXT NOT NULL,
     recorded_by INTEGER NOT NULL, recorded_at TEXT DEFAULT CURRENT_TIMESTAMP
 )');
 $db->exec('CREATE TABLE project_closeout_acceptances (
     acceptance_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, plan_id INTEGER NOT NULL,
-    item_id INTEGER NOT NULL, result TEXT NOT NULL, remark TEXT, evidence_reference TEXT,
+    item_id INTEGER NOT NULL, location_id INTEGER, result TEXT NOT NULL, remark TEXT, evidence_reference TEXT,
     accepted_by INTEGER NOT NULL, accepted_at TEXT NOT NULL
 )');
 $db->exec('CREATE TABLE audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER, entity_type TEXT,
     entity_id INTEGER, action TEXT, details TEXT, ip_address TEXT, user_agent TEXT, created_at TEXT
 )');
+
+// V2.0 space sub-items: project space tables, material estimate detail and the
+// location table itself. Empty here — this file keeps the V1 legacy coverage.
+$db->exec('CREATE TABLE Buildings (building_id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, building_number TEXT, building_name TEXT)');
+$db->exec('CREATE TABLE Building_Floors (floor_id INTEGER PRIMARY KEY, building_id INTEGER NOT NULL, floor_number TEXT, floor_name TEXT, usage_type TEXT)');
+$db->exec('CREATE TABLE Rooms (room_id INTEGER PRIMARY KEY, building_id INTEGER NOT NULL, floor_id INTEGER NOT NULL, room_number TEXT, room_type TEXT, room_area REAL)');
+$db->exec('CREATE TABLE Initial_Cost_Estimate_Detail (
+    estimate_detail_id INTEGER PRIMARY KEY AUTOINCREMENT, building_id INTEGER NOT NULL,
+    floor_id INTEGER, room_id INTEGER, material_id INTEGER NOT NULL,
+    estimated_quantity NUMERIC NOT NULL DEFAULT 0, remarks TEXT
+)');
+$db->exec('CREATE TABLE project_closeout_locations (
+    location_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, plan_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL, estimate_detail_id INTEGER, building_id INTEGER NOT NULL,
+    floor_id INTEGER, room_id INTEGER, baseline_qty NUMERIC NOT NULL DEFAULT 0, baseline_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT "pending", submitted_at TEXT, accepted_at TEXT, accepted_by INTEGER,
+    planned_start_date TEXT, planned_end_date TEXT, responsible_supplier_id INTEGER, responsible_user_id INTEGER, responsible_crew_id INTEGER,
+    cancel_reason TEXT, cancelled_by INTEGER, cancelled_at TEXT, created_by INTEGER NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+)');
+$db->exec('CREATE UNIQUE INDEX uq_closeout_location_active ON project_closeout_locations(project_id, item_id, building_id, COALESCE(floor_id, 0), COALESCE(room_id, 0)) WHERE status <> "cancelled"');
 
 $db->exec("INSERT INTO Projects (project_id, project_name, status) VALUES (1, '测试项目', 'ongoing'), (2, '另一项目', 'ongoing'), (3, '无组成项目', 'ongoing')");
 $db->exec("INSERT INTO Users (user_id, username, is_active) VALUES (1, 'admin', 1), (2, 'pm', 1), (3, 'alice', 1), (4, 'disabled', 0)");

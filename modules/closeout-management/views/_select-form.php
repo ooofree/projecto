@@ -46,11 +46,11 @@ foreach ($selectCandidates as $candidate) {
                     <?php endforeach; ?>
                 </select>
             </label>
-            <label>责任人
-                <select name="responsible_user_id">
+            <label>责任班组
+                <select name="responsible_crew_id">
                     <option value="">未指定</option>
-                    <?php foreach ($selectUsers as $user): ?>
-                        <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['name']) ?></option>
+                    <?php foreach ($crews as $crew): ?>
+                        <option value="<?= (int) $crew['crew_id'] ?>"><?= $escape($crew['name']) ?></option>
                     <?php endforeach; ?>
                 </select>
             </label>

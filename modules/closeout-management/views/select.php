@@ -18,7 +18,7 @@ $selectPlan = $plan;
 $selectCandidates = $candidates;
 $selectHiddenMaterialCount = $hiddenMaterialCount;
 $selectHasParentMaterials = $hasParentMaterials;
-$selectUsers = $users;
+$selectCrews = $crews;
 $selectSuppliers = $suppliers;
 require __DIR__ . '/_select-form.php';
 ?>

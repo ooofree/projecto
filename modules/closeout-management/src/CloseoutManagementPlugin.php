@@ -49,6 +49,11 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             'closeout.plan.save' => $this->savePlan($input),
             'closeout.plan.status' => $this->changePlanStatus($input),
             'closeout.items.create' => $this->createItems($input),
+            'closeout.items.sync' => $this->syncItems($input),
+            'closeout.locations.backfill' => $this->backfillLocations($input),
+            'closeout.location.submit' => $this->submitLocation($input),
+            'closeout.location.accept' => $this->acceptLocation($input),
+            'closeout.location.cancel' => $this->cancelLocation($input),
             'closeout.item.update' => $this->updateItem($input),
             'closeout.batch.update' => $this->batchUpdate($input),
             'closeout.item.start' => $this->startItem($input),
@@ -181,6 +186,8 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
                 'hiddenMaterialCount' => $this->closeouts->bomMaterialCount($projectId) - count($candidates),
                 'hasParentMaterials' => $this->closeouts->hasParentMaterials($projectId),
                 'users' => $this->closeouts->activeUsers(),
+                'crews' => $this->closeouts->activeCrews($projectId),
+            'crews' => $this->closeouts->activeCrews($projectId),
                 'suppliers' => $this->closeouts->suppliers(),
             ];
         }
@@ -197,12 +204,14 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             'filters' => $filters,
             'stats' => $stats,
             'users' => $this->closeouts->activeUsers(),
+            'crews' => $this->closeouts->activeCrews($projectId),
             'suppliers' => $this->closeouts->suppliers(),
             'canCreate' => $canCreate,
             'canEdit' => $this->can('edit_closeouts'),
             'canAccept' => $this->can('accept_closeouts'),
             'canManage' => $this->can('manage_closeouts'),
             'canManageSettings' => $this->can('manage_document_settings') || $this->can('manage_platform'),
+            'legacyBackfillCount' => $this->closeouts->backfillCandidateCount($projectId),
             'selectData' => $selectData,
             'today' => $stats['today'],
         ]);
@@ -228,6 +237,7 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
         return [
             'progress' => $this->closeouts->listProgress($projectId, (int) $item['item_id']),
             'acceptances' => $this->closeouts->listAcceptances($projectId, (int) $item['item_id']),
+            'locations' => $this->closeouts->listLocations($projectId, (int) $item['item_id']),
             'images' => $images,
             'imageUrls' => $imageUrls,
             'relations' => $this->closeouts->materialRelations($projectId, (int) $item['material_id']),
@@ -257,6 +267,7 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             'hiddenMaterialCount' => $this->closeouts->bomMaterialCount($projectId) - count($candidates),
             'hasParentMaterials' => $this->closeouts->hasParentMaterials($projectId),
             'users' => $this->closeouts->activeUsers(),
+            'crews' => $this->closeouts->activeCrews($projectId),
             'suppliers' => $this->closeouts->suppliers(),
             'canCreate' => true,
             'today' => Support::nowLocal('Y-m-d'),
@@ -285,6 +296,7 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             'storageStatus' => $detail['storageStatus'],
             'canManageSettings' => $this->can('manage_document_settings') || $this->can('manage_platform'),
             'users' => $this->closeouts->activeUsers(),
+            'crews' => $this->closeouts->activeCrews($projectId),
             'suppliers' => $this->closeouts->suppliers(),
             'canEdit' => $this->can('edit_closeouts'),
             'canAccept' => $this->can('accept_closeouts'),
@@ -383,6 +395,145 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
         return PluginResponse::redirect($this->workspaceRedirect($planId));
     }
 
+    /**
+     * Give the V1 items their space sub-items back, from the same parent
+     * material estimate rows the new flow uses. Structure only: no quantity is
+     * invented and item status is left to the normal bucket recalc.
+     */
+    private function backfillLocations(array $input): PluginResponse
+    {
+        unset($input);
+        $project = $this->requireAccess('edit_closeouts');
+        $projectId = (int) $project['project_id'];
+        $result = $this->closeouts->backfillLocations($projectId, $this->userId());
+
+        foreach ($result['filled'] as $row) {
+            $this->audit($projectId, 'closeout_item', (int) $row['item_id'], 'closeout.locations.backfill', [
+                'item_no' => $row['item_no'],
+                'spaces' => (int) $row['spaces'],
+                'source' => 'estimate-detail',
+            ]);
+        }
+
+        $message = '已为 ' . count($result['filled']) . ' 条存量事项补建 ' . $result['locations_created'] . ' 个空间';
+        if ($result['existing'] > 0) {
+            $message .= '，' . $result['existing'] . ' 条已有空间';
+        }
+        if ($result['missing_estimates'] !== []) {
+            $message .= '；缺测算（需先录父材料数量）：' . implode('、', $result['missing_estimates']);
+        }
+        if ($result['not_parent'] !== []) {
+            $message .= '；非父材料（需按父材料重录）：' . implode('、', $result['not_parent']);
+        }
+        if ($result['plan_inactive'] !== []) {
+            $message .= '；计划非进行中未补：' . implode('、', $result['plan_inactive']);
+        }
+        if ($result['closed_skipped'] !== []) {
+            $message .= '；已消项未补：' . implode('、', $result['closed_skipped']);
+        }
+        Support::flash($message . '。');
+
+        return PluginResponse::redirect($this->workspaceRedirect(0));
+    }
+
+    /**
+     * Fill in items for parent materials that gained estimate rows after the
+     * plan was provisioned. Idempotent: existing items are counted, not
+     * duplicated.
+     */
+    private function syncItems(array $input): PluginResponse
+    {
+        $project = $this->requireAccess('create_closeouts');
+        $projectId = (int) $project['project_id'];
+        $planId = $this->requiredId($input, 'plan_id', '消项计划');
+        $result = $this->closeouts->autoProvision($projectId, $planId, $this->userId());
+        $plan = $this->closeouts->requirePlan($projectId, $planId);
+        foreach ($result['created'] as $row) {
+            $this->audit($projectId, 'closeout_item', (int) $row['item_id'], 'closeout.item.create', [
+                'item_no' => $row['item_no'],
+                'plan_no' => $plan['plan_no'],
+                'material_id' => $row['material_id'],
+                'source' => 'auto-provision-sync',
+            ]);
+        }
+        $message = '已补入 ' . count($result['created']) . ' 条新事项';
+        if ($result['existing'] > 0) {
+            $message .= '，' . $result['existing'] . ' 条父材料已有事项';
+        }
+        if ($result['ignored'] !== []) {
+            $message .= '；以下材料有测算但不是父材料，已跳过：' . implode('、', $result['ignored']);
+        }
+        Support::flash($message . '。');
+
+        return PluginResponse::redirect($this->workspaceRedirect($planId));
+    }
+
+    /**
+     * Checkbox in the expanded space list = "this space is done": submits the
+     * space for acceptance. Acceptance stays a separate, permission-guarded
+     * action — ticking a box never closes anything by itself.
+     */
+    private function submitLocation(array $input): PluginResponse
+    {
+        $project = $this->requireAccess('edit_closeouts');
+        $projectId = (int) $project['project_id'];
+        $locationId = $this->requiredId($input, 'location_id', '空间子项');
+        $note = trim((string) ($input['remark'] ?? ''));
+        if ($note === '') {
+            $note = '空间完成，提交验收';
+        }
+        $location = $this->closeouts->submitLocation($projectId, $locationId, $note, $this->userId());
+        $this->audit($projectId, 'closeout_location', $locationId, 'closeout.location.submit', [
+            'item_id' => (int) $location['item_id'],
+            'space' => (string) $location['space_label'],
+        ]);
+        Support::flash('空间「' . (string) $location['space_label'] . '」已提交验收。');
+
+        return PluginResponse::redirect($this->workspaceRedirect((int) $location['plan_id'], (int) $location['item_id'], $input));
+    }
+
+    private function acceptLocation(array $input): PluginResponse
+    {
+        $project = $this->requireAccess('accept_closeouts');
+        $projectId = (int) $project['project_id'];
+        $locationId = $this->requiredId($input, 'location_id', '空间子项');
+        $location = $this->closeouts->requireLocation($projectId, $locationId);
+        $passed = (string) ($input['result'] ?? 'passed') === 'passed';
+        $this->closeouts->acceptLocation($projectId, $locationId, $input, $this->userId());
+        $after = $this->closeouts->requireLocation($projectId, $locationId);
+        $this->audit($projectId, 'closeout_location', $locationId, 'closeout.location.accept', [
+            'item_id' => (int) $location['item_id'],
+            'space' => (string) $location['space_label'],
+            'result' => (string) ($input['result'] ?? 'passed'),
+        ]);
+        Support::flash($passed
+            ? '空间「' . (string) $after['space_label'] . '」验收通过。'
+            : '空间「' . (string) $after['space_label'] . '」已驳回，等待整改。');
+
+        return PluginResponse::redirect($this->workspaceRedirect((int) $after['plan_id'], (int) $after['item_id'], $input));
+    }
+
+    private function cancelLocation(array $input): PluginResponse
+    {
+        $project = $this->requireAccess('manage_closeouts');
+        $projectId = (int) $project['project_id'];
+        $locationId = $this->requiredId($input, 'location_id', '空间子项');
+        $reason = trim((string) ($input['cancel_reason'] ?? ''));
+        if ($reason === '') {
+            throw new HttpException('请填写取消空间的原因。', 422);
+        }
+        $location = $this->closeouts->cancelLocation($projectId, $locationId, $reason, $this->userId());
+        $after = $this->closeouts->requireLocation($projectId, $locationId);
+        $this->audit($projectId, 'closeout_location', $locationId, 'closeout.location.cancel', [
+            'item_id' => (int) $after['item_id'],
+            'space' => (string) $after['space_label'],
+            'reason' => $reason,
+        ]);
+        Support::flash('空间「' . (string) $after['space_label'] . '」已退出消项范围。');
+
+        return PluginResponse::redirect($this->workspaceRedirect((int) $after['plan_id'], (int) $after['item_id'], $input));
+    }
+
     private function updateItem(array $input): PluginResponse
     {
         $project = $this->requireAccess('edit_closeouts');
@@ -432,13 +583,17 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
         $project = $this->requireAccess('edit_closeouts');
         $projectId = (int) $project['project_id'];
         $itemId = $this->requiredId($input, 'item_id', '消项事项');
-        $item = $this->closeouts->startItem($projectId, $itemId, $this->userId());
+        $result = $this->closeouts->startItem($projectId, $itemId, $this->userId());
+        $item = $result['item'];
         $this->audit($projectId, 'closeout_item', $itemId, 'closeout.item.start', [
             'item_no' => $item['item_no'],
             'from' => 'pending',
             'to' => 'ongoing',
+            'spaces_started' => (int) $result['spaces_started'],
         ]);
-        Support::flash('事项已进入执行。');
+        Support::flash($result['spaces_started'] > 0
+            ? '已开始 ' . (int) $result['spaces_started'] . ' 个空间，事项进入执行。'
+            : '事项已进入执行。');
 
         return PluginResponse::redirect($this->workspaceRedirect((int) $item['plan_id'], $itemId, $input));
     }
@@ -611,6 +766,7 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             'status' => (string) ($input['status'] ?? ''),
             'risk_level' => (string) ($input['risk_level'] ?? ''),
             'responsible_user_id' => (int) ($input['responsible_user_id'] ?? 0),
+            'responsible_crew_id' => (int) ($input['responsible_crew_id'] ?? 0),
             'overdue' => (int) ($input['overdue'] ?? 0),
             'keyword' => trim((string) ($input['keyword'] ?? '')),
         ];
@@ -634,6 +790,9 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             $url .= '&status=' . $status;
         }
 
+        // No "#fragment" here on purpose: the browser would scroll to it on load,
+        // after the script has already restored the exact position, causing a
+        // visible second jump. The row id stays available for the script.
         return $url;
     }
 

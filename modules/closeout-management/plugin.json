@@ -18,6 +18,11 @@
         "POST closeout.plan.save": "closeout.plan.save",
         "POST closeout.plan.status": "closeout.plan.status",
         "POST closeout.items.create": "closeout.items.create",
+        "POST closeout.items.sync": "closeout.items.sync",
+        "POST closeout.locations.backfill": "closeout.locations.backfill",
+        "POST closeout.location.submit": "closeout.location.submit",
+        "POST closeout.location.accept": "closeout.location.accept",
+        "POST closeout.location.cancel": "closeout.location.cancel",
         "POST closeout.item.update": "closeout.item.update",
         "POST closeout.batch.update": "closeout.batch.update",
         "POST closeout.item.start": "closeout.item.start",
@@ -46,7 +51,7 @@
         {
             "name": "create_closeouts",
             "display_name": "创建消项计划与纳入事项",
-            "description": "新建消项计划并从 BOM 批量纳入事项",
+            "description": "新建消项计划并自动纳入已测算的父材料",
             "module": "工程消项"
         },
         {

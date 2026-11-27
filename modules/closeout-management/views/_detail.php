@@ -47,20 +47,66 @@ $show = static function ($value, string $fallback = '—') use ($escape): string
         <span class="status-badge <?= $escape(CloseoutLabels::riskTone((string) $item['risk_level'])) ?>">风险 <?= $escape($item['risk_label']) ?></span>
         <?php if (!empty($item['is_overdue'])): ?><span class="status-badge is-red">已逾期</span><?php endif; ?>
         <span class="status-badge is-neutral"><?= $escape(CloseoutLabels::COVERAGE_MODE[$item['coverage_mode']] ?? (string) $item['coverage_mode']) ?></span>
-        <?php if ((int) $item['responsible_user_id'] === 0): ?><span class="status-badge is-amber">未指派责任人</span><?php endif; ?>
+        <?php if (empty($item['responsible_crew_id'])): ?><span class="status-badge is-amber">未指派班组</span><?php endif; ?>
     </div>
+
+    <?php $locationRows = $detail['locations'] ?? []; ?>
+    <?php if ($locationRows !== []): ?>
+    <div class="closeout-detail-section">
+        <?php
+        $locTotal = count($locationRows);
+        $locClosed = 0;
+        foreach ($locationRows as $locRow) {
+            if ((string) $locRow['status'] === 'closed') {
+                $locClosed++;
+            }
+        }
+        $itemVerified = $item['progress_verified'] === null ? 0.0 : (float) $item['progress_verified'];
+        $itemSubmitted = $item['progress_submitted'] === null ? 0.0 : (float) $item['progress_submitted'];
+        ?>
+        <h3 class="closeout-section-title">
+            空间子项
+            <span class="muted"><?= $locClosed ?>/<?= $locTotal ?> 已验收 · 量加权 <?= number_format($itemVerified, 1, '.', '') ?>%</span>
+        </h3>
+        <div class="closeout-row-progress" title="实色=已验收，浅色=已申报待验收">
+            <span class="closeout-progress-track">
+                <span class="closeout-progress-submitted" style="width: <?= number_format(min(100, max(0, $itemSubmitted)), 1, '.', '') ?>%"></span>
+                <span class="closeout-progress-fill" style="width: <?= number_format(min(100, max(0, $itemVerified)), 1, '.', '') ?>%"></span>
+            </span>
+        </div>
+        <?php
+        $locationItem = $item;
+        include __DIR__ . '/_locations.php';
+        ?>
+    </div>
+    <?php elseif ((string) $status !== 'cancelled'): ?>
+    <div class="closeout-detail-section">
+        <h3 class="closeout-section-title">空间子项</h3>
+        <p class="muted">
+            这条事项建于 V1，那时还没有空间表，所以没有空间子项、也没有进度条。
+            空间只来自父材料的测算行：先到材料测算把这条父材料的楼栋 / 楼层 / 房间与数量补上，再回工作台点「补齐存量空间」，系统会按测算行生成空间；缺测算的事项不会被凭空填量。
+        </p>
+    </div>
+    <?php endif; ?>
 
     <div class="closeout-detail-section">
         <h3 class="closeout-section-title">下一步</h3>
+        <?php $hasSpaces = $locationRows !== []; ?>
+        <?php if ($hasSpaces): ?>
+            <p class="muted">这条事项已按空间跟踪：点「开始执行」把全部待处理空间置为进行中；之后的申报与验收在空间清单逐项操作，整条验收会自动汇总。</p>
+            <?php if ($status === 'pending_accept'): ?>
+                <p class="muted">仍有空间待验收，请在空间清单逐项通过或驳回。</p>
+            <?php endif; ?>
+        <?php endif; ?>
         <?php if ($status === 'pending' && $canEdit): ?>
             <form method="post" class="closeout-quick">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="closeout.item.start">
                 <input type="hidden" name="item_id" value="<?= (int) $item['item_id'] ?>">
                 <input type="hidden" name="status" value="<?= $escape((string) ($filters['status'] ?? '')) ?>">
-                <button class="button button-primary closeout-wide" type="submit">开始执行</button>
+                <button class="button button-primary closeout-wide" type="submit"><?= $hasSpaces ? '开始执行（全部空间）' : '开始执行' ?></button>
             </form>
-        <?php elseif ($status === 'ongoing' && $canEdit): ?>
+        <?php elseif ($status === 'ongoing' && $canEdit && !$hasSpaces): ?>
             <form method="post" class="closeout-quick-form">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="closeout.item.submit">
@@ -70,9 +116,10 @@ $show = static function ($value, string $fallback = '—') use ($escape): string
                 <button class="button button-primary closeout-wide" type="submit">提交验收</button>
             </form>
         <?php elseif ($status === 'pending_accept'): ?>
-            <?php if ($canAccept): ?>
+            <?php if ($hasSpaces): ?>
+            <?php elseif ($canAccept): ?>
                 <div class="closeout-quick-row">
-                    <form method="post" class="inline-form" data-confirm="确认验收通过？实际完成日期记为今天。">
+                    <form method="post" class="inline-form">
                         <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                         <input type="hidden" name="action" value="closeout.item.accept">
                         <input type="hidden" name="item_id" value="<?= (int) $item['item_id'] ?>">
@@ -166,7 +213,7 @@ $show = static function ($value, string $fallback = '—') use ($escape): string
             <div><dt>材料编号</dt><dd><?= $show($item['material_code']) ?></dd></div>
             <div><dt>分类</dt><dd><?= $show($item['category_name']) ?></dd></div>
             <div><dt>计划周期</dt><dd><?= $show($item['planned_start_date']) ?> 至 <?= $show($item['planned_end_date']) ?></dd></div>
-            <div><dt>责任单位 / 人</dt><dd><?= $show($item['supplier_name'], '未指定') ?> / <?= $show($item['responsible_user_name'], '未指定') ?></dd></div>
+            <div><dt>责任单位 / 班组</dt><dd><?= $show($item['supplier_name'], '未指定') ?> / <?= $show($item['responsible_label'] ?? null, '未指定') ?></dd></div>
             <div><dt>提交验收</dt><dd><?= $escape(Support::formatDateTime($item['submitted_at'] ?? null) ?: '—') ?></dd></div>
             <div><dt>实际完成</dt><dd><?= $show($item['actual_complete_date']) ?></dd></div>
         </dl>
@@ -194,11 +241,11 @@ $show = static function ($value, string $fallback = '—') use ($escape): string
                             <?php endforeach; ?>
                         </select>
                     </label>
-                    <label>责任人
-                        <select name="responsible_user_id">
+                    <label>责任班组
+                        <select name="responsible_crew_id">
                             <option value="">未指定</option>
-                            <?php foreach ($users as $user): ?>
-                                <option value="<?= (int) $user['user_id'] ?>" <?= (int) $item['responsible_user_id'] === (int) $user['user_id'] ? 'selected' : '' ?>><?= $escape($user['name']) ?></option>
+                            <?php foreach ($crews as $crew): ?>
+                                <option value="<?= (int) $crew['crew_id'] ?>" <?= (int) ($item['responsible_crew_id'] ?? 0) === (int) $crew['crew_id'] ? 'selected' : '' ?>><?= $escape($crew['name']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </label>

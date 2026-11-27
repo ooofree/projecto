@@ -13,6 +13,7 @@ $planId = (int) $filters['plan_id'];
 $status = (string) $filters['status'];
 $risk = (string) $filters['risk_level'];
 $responsible = (int) $filters['responsible_user_id'];
+$responsibleCrew = (int) ($filters['responsible_crew_id'] ?? 0);
 $overdue = (int) $filters['overdue'];
 $selectedItemId = $selectedItem !== null ? (int) $selectedItem['item_id'] : 0;
 $statusKeys = array_keys(CloseoutLabels::ITEM_STATUS);
@@ -28,17 +29,26 @@ $effectiveAll = max(0, $totalAll - $cancelledAll);
 $rateAll = $effectiveAll > 0 ? $closedAll / $effectiveAll * 100 : null;
 
 /**
+ * Legacy (V1) items carry no space rows: they were created before the space
+ * table existed. The service counts only those that can actually be filled
+ * (parent material with estimate rows, plan active, item still open), so the
+ * button disappears instead of nagging about items that need estimates first.
+ */
+$legacyLocationCount = (int) ($legacyBackfillCount ?? 0);
+
+/**
  * Same-page URL builder: every filter change, plan switch and item selection
  * stays on ?page=closeouts. plan_id=0 is explicit ("all plans") and therefore
  * survives the empty-value cleanup.
  */
-$buildUrl = static function (array $changes = []) use ($planId, $status, $risk, $responsible, $overdue): string {
+$buildUrl = static function (array $changes = []) use ($planId, $status, $risk, $responsible, $responsibleCrew, $overdue): string {
     $params = array_merge([
         'page' => 'closeouts',
         'plan_id' => $planId,
         'status' => $status,
         'risk_level' => $risk,
         'responsible_user_id' => $responsible,
+        'responsible_crew_id' => $responsibleCrew,
         'overdue' => $overdue,
     ], $changes);
     foreach ($params as $key => $value) {
@@ -191,12 +201,24 @@ ob_start();
         <p class="eyebrow">施工管理 · <?= $mode === 'items' ? '工程消项 · 消项清单' : '工程消项总览' ?></p>
         <h1>工程消项工作台</h1>
         <p class="muted">
-            项目：<?= $escape($project['project_name']) ?>。选计划、看图表、勾事项、改状态都在这一页完成；消项只记录收口与验收证据，不核销 BOM 数量。
+            项目：<?= $escape($project['project_name']) ?>。选计划、看图表、勾空间、改状态都在这一页完成；计划启动时已按测算自动纳入全部父材料，消项只记录收口与验收证据，不核销 BOM 数量。
         </p>
     </div>
     <div class="project-list-actions">
         <?php if ($canCreate && $selectedPlan !== null && $selectedPlan['status'] === 'active'): ?>
-            <a class="button button-primary" href="<?= $escape($buildUrl(['panel' => 'select', 'item_id' => null])) ?>">从 BOM 纳入</a>
+            <form method="post" class="inline-form">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                <input type="hidden" name="action" value="closeout.items.sync">
+                <input type="hidden" name="plan_id" value="<?= (int) $selectedPlan['plan_id'] ?>">
+                <button class="button button-primary" type="submit" title="把新增了测算的父材料补进来，已存在的不会重复">同步新增父材料</button>
+            </form>
+        <?php endif; ?>
+        <?php if ($canEdit && $legacyLocationCount > 0): ?>
+            <form method="post" class="inline-form">
+                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                <input type="hidden" name="action" value="closeout.locations.backfill">
+                <button class="button button-secondary" type="submit" title="按父材料的测算行给旧事项补建空间子项；已有空间的不会重复">补齐存量空间（<?= (int) $legacyLocationCount ?>）</button>
+            </form>
         <?php endif; ?>
         <?php if ($canCreate): ?>
             <button class="button button-secondary" type="button" data-dialog-open="closeout-plan-create">新建消项计划</button>
@@ -208,7 +230,7 @@ ob_start();
     <section class="panel closeout-empty">
         <div class="panel-body">
             <h2>还没有消项计划</h2>
-            <p class="muted">先建一个计划，再从 BOM 把需要收口的父材料一次性纳入；一个计划就是一条工作主线，不产生额外层级。</p>
+            <p class="muted">建一个进行中的计划即可：系统会按材料测算把这批父材料一次性全部纳入，不需要逐项勾选；一个计划就是一条工作主线。</p>
             <?php if ($canCreate): ?>
                 <button class="button button-primary" type="button" data-dialog-open="closeout-plan-create">新建消项计划</button>
             <?php endif; ?>
@@ -370,7 +392,7 @@ ob_start();
 
         <div class="closeout-filterbar" role="group" aria-label="按状态筛选">
             <?php $allFiltersClear = $status === '' && $overdue !== 1 && $risk === '' && $responsible === 0; ?>
-            <a class="closeout-chip<?= $allFiltersClear ? ' is-active' : '' ?>" href="<?= $escape($buildUrl(['status' => null, 'overdue' => null, 'risk_level' => null, 'responsible_user_id' => null, 'item_id' => null])) ?>">全部<span class="closeout-chip-count"><?= $total ?></span></a>
+            <a class="closeout-chip<?= $allFiltersClear ? ' is-active' : '' ?>" href="<?= $escape($buildUrl(['status' => null, 'overdue' => null, 'risk_level' => null, 'responsible_user_id' => null, 'responsible_crew_id' => null, 'item_id' => null])) ?>">全部<span class="closeout-chip-count"><?= $total ?></span></a>
             <?php foreach ($statusKeys as $key): ?>
                 <?php if ($key === 'cancelled' && (int) $statusCounts['cancelled'] === 0) { continue; } ?>
                 <a class="closeout-chip<?= $status === $key ? ' is-active' : '' ?>" href="<?= $escape($buildUrl(['status' => $key, 'overdue' => null, 'item_id' => null])) ?>">
@@ -393,17 +415,17 @@ ob_start();
                             <?php endforeach; ?>
                         </select>
                     </label>
-                    <label>责任人
-                        <select name="responsible_user_id">
-                            <option value="">全部责任人</option>
-                            <?php foreach ($users as $user): ?>
-                                <option value="<?= (int) $user['user_id'] ?>" <?= $responsible === (int) $user['user_id'] ? 'selected' : '' ?>><?= $escape($user['name']) ?></option>
+                    <label>责任班组
+                        <select name="responsible_crew_id">
+                            <option value="">全部班组</option>
+                            <?php foreach ($crews as $crew): ?>
+                                <option value="<?= (int) $crew['crew_id'] ?>" <?= $responsibleCrew === (int) $crew['crew_id'] ? 'selected' : '' ?>><?= $escape($crew['name']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </label>
                     <div class="closeout-filter-actions">
                         <button class="button button-secondary button-small" type="submit">应用</button>
-                        <a class="button button-quiet button-small" href="<?= $escape($buildUrl(['risk_level' => null, 'responsible_user_id' => null, 'item_id' => null])) ?>">清除</a>
+                        <a class="button button-quiet button-small" href="<?= $escape($buildUrl(['risk_level' => null, 'responsible_user_id' => null, 'responsible_crew_id' => null, 'item_id' => null])) ?>">清除</a>
                     </div>
                 </form>
             </details>
@@ -417,11 +439,11 @@ ob_start();
             <input type="hidden" name="status" value="<?= $escape($status) ?>">
             <span class="closeout-selected" data-closeout-selected>已选 0 项</span>
             <label>批量计划完成<input type="date" name="planned_end_date"></label>
-            <label>批量责任人
-                <select name="responsible_user_id">
+            <label>批量责任班组
+                <select name="responsible_crew_id">
                     <option value="">保持不变</option>
-                    <?php foreach ($users as $user): ?>
-                        <option value="<?= (int) $user['user_id'] ?>"><?= $escape($user['name']) ?></option>
+                    <?php foreach ($crews as $crew): ?>
+                        <option value="<?= (int) $crew['crew_id'] ?>"><?= $escape($crew['name']) ?></option>
                     <?php endforeach; ?>
                 </select>
             </label>
@@ -444,9 +466,9 @@ ob_start();
                     <?php if ($plans === []): ?>
                         还没有消项计划。
                     <?php elseif ($selectedPlan !== null && (int) $selectedPlan['item_count'] === 0): ?>
-                        这个计划还没有事项。<?php if ($canCreate && $selectedPlan['status'] === 'active'): ?><a href="<?= $escape($buildUrl(['panel' => 'select', 'item_id' => null])) ?>">从 BOM 纳入第一批 →</a><?php endif; ?>
+                        这个计划还没有事项。<?php if ($canCreate && $selectedPlan['status'] === 'active'): ?>原因是项目还没有父材料的测算行；到材料测算里录完父材料数量后，点上方「同步新增父材料」即可自动生成。<?php endif; ?>
                     <?php else: ?>
-                        没有符合当前筛选的事项。<a href="<?= $escape($buildUrl(['status' => null, 'risk_level' => null, 'responsible_user_id' => null, 'overdue' => null, 'item_id' => null])) ?>">清除筛选</a>
+                        没有符合当前筛选的事项。<a href="<?= $escape($buildUrl(['status' => null, 'risk_level' => null, 'responsible_user_id' => null, 'responsible_crew_id' => null, 'overdue' => null, 'item_id' => null])) ?>">清除筛选</a>
                     <?php endif; ?>
                 </p>
             </div>
@@ -478,14 +500,16 @@ ob_start();
                         (string) ($item['material_code'] ?? ''),
                         (string) ($item['category_name'] ?? ''),
                         (string) ($item['supplier_name'] ?? ''),
-                        (string) ($item['responsible_user_name'] ?? ''),
+                        (string) ($item['responsible_label'] ?? ''),
                         (string) $item['status_label'],
                         (string) $item['risk_label'],
                         (string) ($item['planned_end_date'] ?? ''),
                     ]), 'UTF-8');
                     ?>
-                    <tr class="closeout-row<?= $isSelected ? ' is-selected' : '' ?><?= !empty($item['is_overdue']) ? ' is-overdue' : '' ?>"
+                    <tr id="closeout-item-<?= (int) $item['item_id'] ?>"
+                        class="closeout-row<?= $isSelected ? ' is-selected' : '' ?><?= !empty($item['is_overdue']) ? ' is-overdue' : '' ?>"
                         data-closeout-row
+                        data-item-id="<?= (int) $item['item_id'] ?>"
                         data-href="<?= $escape($buildUrl(['item_id' => (int) $item['item_id']])) ?>"
                         data-list-item
                         data-search="<?= $escape($searchText) ?>">
@@ -502,10 +526,29 @@ ob_start();
                                 <?php if (!empty($item['material_code'])): ?> · <?= $escape((string) $item['material_code']) ?><?php endif; ?>
                                 <?php if (!empty($item['category_name'])): ?> · <?= $escape((string) $item['category_name']) ?><?php endif; ?>
                             </span>
+                            <?php if (!empty($item['has_locations'])): ?>
+                                <?php
+                                $verified = $item['progress_verified'] === null ? 0.0 : (float) $item['progress_verified'];
+                                $submitted = $item['progress_submitted'] === null ? 0.0 : (float) $item['progress_submitted'];
+                                ?>
+                                <div class="closeout-row-progress" title="量加权进度：实色=已验收，浅色=已申报待验收">
+                                    <span class="closeout-progress-track">
+                                        <span class="closeout-progress-submitted" style="width: <?= number_format(min(100, max(0, $submitted)), 1, '.', '') ?>%"></span>
+                                        <span class="closeout-progress-fill" style="width: <?= number_format(min(100, max(0, $verified)), 1, '.', '') ?>%"></span>
+                                    </span>
+                                    <span class="closeout-item-meta">
+                                        空间 <?= (int) $item['location_closed'] ?>/<?= (int) $item['location_total'] ?>
+                                        · 验收 <?= number_format($verified, 1, '.', '') ?>%
+                                        <?php if ($submitted > $verified): ?> · 申报 <?= number_format($submitted, 1, '.', '') ?>%<?php endif; ?>
+                                        <?php if ((int) $item['location_overdue'] > 0): ?> · <span class="is-danger">逾期空间 <?= (int) $item['location_overdue'] ?></span><?php endif; ?>
+                                    </span>
+                                </div>
+                                <button type="button" class="button button-quiet button-small" data-closeout-loc-toggle aria-expanded="false">展开空间</button>
+                            <?php endif; ?>
                         </td>
                         <td>
-                            <?php if (!empty($item['responsible_user_name']) || !empty($item['supplier_name'])): ?>
-                                <span class="closeout-owner"><?= $escape($item['responsible_user_name'] ?? '—') ?></span>
+                            <?php if (!empty($item['responsible_label']) || !empty($item['supplier_name'])): ?>
+                                <span class="closeout-owner"><?= $escape($item['responsible_label'] ?? '—') ?></span>
                                 <span class="closeout-item-meta"><?= $escape($item['supplier_name'] ?? '未指定单位') ?></span>
                             <?php else: ?>
                                 <span class="status-badge is-amber">未指派</span>
@@ -526,9 +569,9 @@ ob_start();
                                             <input type="hidden" name="action" value="closeout.item.start">
                                             <input type="hidden" name="item_id" value="<?= (int) $item['item_id'] ?>">
                                             <input type="hidden" name="status" value="<?= $escape($status) ?>">
-                                            <button class="button button-primary button-small" type="submit">开始</button>
+                                            <button class="button button-primary button-small" type="submit" title="<?= empty($item['has_locations']) ? '事项进入执行' : '把全部待处理空间置为进行中' ?>">开始</button>
                                         </form>
-                                    <?php elseif ($itemStatus === 'ongoing' && $canEdit): ?>
+                                    <?php elseif ($itemStatus === 'ongoing' && $canEdit && empty($item['has_locations'])): ?>
                                         <form method="post" class="inline-form">
                                             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                                             <input type="hidden" name="action" value="closeout.item.submit">
@@ -536,8 +579,8 @@ ob_start();
                                             <input type="hidden" name="status" value="<?= $escape($status) ?>">
                                             <button class="button button-primary button-small" type="submit">提交验收</button>
                                         </form>
-                                    <?php elseif ($itemStatus === 'pending_accept' && $canAccept): ?>
-                                        <form method="post" class="inline-form" data-confirm="确认验收通过？实际完成日期记为今天。">
+                                    <?php elseif ($itemStatus === 'pending_accept' && $canAccept && empty($item['has_locations'])): ?>
+                                        <form method="post" class="inline-form">
                                             <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                                             <input type="hidden" name="action" value="closeout.item.accept">
                                             <input type="hidden" name="item_id" value="<?= (int) $item['item_id'] ?>">
@@ -553,6 +596,17 @@ ob_start();
                             </div>
                         </td>
                     </tr>
+                    <?php if (!empty($item['has_locations'])): ?>
+                    <tr class="closeout-loc-row" hidden data-closeout-loc-panel data-item-id="<?= (int) $item['item_id'] ?>">
+                        <td colspan="<?= $canEdit ? 6 : 5 ?>">
+                            <?php
+                            $locationItem = $item;
+                            $locationRows = $item['locations'] ?? [];
+                            include __DIR__ . '/_locations.php';
+                            ?>
+                        </td>
+                    </tr>
+                    <?php endif; ?>
                 <?php endforeach; ?>
                 </tbody>
             </table>
@@ -643,11 +697,11 @@ ob_start();
 <?php endif; ?>
 
 <?php if ($selectData !== null): ?>
-<dialog class="edit-dialog wide closeout-select-dialog" open data-auto-open aria-label="从 BOM 纳入事项">
+<dialog class="edit-dialog wide closeout-select-dialog" open data-auto-open aria-label="手工补录消项事项（旧流程）">
     <div class="dialog-heading">
         <div>
-            <h2>从 BOM 纳入事项</h2>
-            <p class="muted">计划：<?= $escape($selectData['plan']['plan_no'] . ' · ' . $selectData['plan']['plan_name']) ?>。只读 BOM，不核销数量、不回写状态。</p>
+            <h2>手工补录消项事项（旧流程）</h2>
+            <p class="muted">日常不再需要这一步：计划启动时已按测算自动纳入全部父材料。此弹层仅保留给历史数据补录。</p>
         </div>
         <a class="button button-quiet" href="<?= $escape($buildUrl(['panel' => null])) ?>">关闭</a>
     </div>
@@ -656,12 +710,39 @@ ob_start();
     $selectCandidates = $selectData['candidates'];
     $selectHiddenMaterialCount = $selectData['hiddenMaterialCount'];
     $selectHasParentMaterials = $selectData['hasParentMaterials'];
-    $selectUsers = $selectData['users'];
+    $selectCrews = $selectData['crews'];
     $selectSuppliers = $selectData['suppliers'];
     require __DIR__ . '/_select-form.php';
     ?>
 </dialog>
 <?php endif; ?>
+
+<script>
+// Run before first paint and before the deferred module script: restore the
+// viewport synchronously so the page never flashes at the top after an action.
+(function () {
+    try {
+        var raw = sessionStorage.getItem('closeout:scroll');
+        if (!raw) return;
+        var saved = JSON.parse(raw);
+        if (!saved || typeof saved.y !== 'number' || Date.now() - Number(saved.at || 0) > 30000) return;
+        var page = new URLSearchParams(window.location.search).get('page') || '';
+        var flow = ['closeouts', 'closeout-items', 'closeout-item'];
+        var sameFlow = flow.indexOf(saved.page) !== -1 && flow.indexOf(page) !== -1;
+        if (!sameFlow) return;
+        var target = saved.y;
+        if (saved.itemId && typeof saved.rowTop === 'number') {
+            var row = document.getElementById('closeout-item-' + saved.itemId);
+            if (row) {
+                target = row.getBoundingClientRect().top + window.scrollY - (saved.y - saved.rowTop);
+            }
+        }
+        window.scrollTo(0, Math.max(0, target));
+    } catch (error) {
+        // Storage unavailable: the deferred script still tries once more.
+    }
+})();
+</script>
 
 <?php $pageScripts = [['module' => 'closeout.management', 'file' => 'closeout.js', 'version' => (string) filemtime(dirname(__DIR__) . '/public/closeout.js')]]; ?>
 <?php $content = ob_get_clean(); require dirname(__DIR__, 3) . '/views/layout.php'; ?>

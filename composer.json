@@ -27,6 +27,7 @@
             "php tests/bom_costing_sql_placeholder_test.php",
             "php tests/bom_costing_web_smoke_test.php",
             "php tests/closeout_management_test.php",
+            "php tests/closeout_locations_test.php",
             "php tests/closeout_management_web_smoke_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php",

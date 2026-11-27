@@ -25,6 +25,13 @@ $db->exec('CREATE TABLE Plugin_States (plugin_id TEXT PRIMARY KEY, is_enabled IN
 $db->exec('CREATE TABLE System_Settings (setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL, updated_by INTEGER, updated_at TEXT)');
 $db->exec('CREATE TABLE audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER, entity_type TEXT, entity_id INTEGER, action TEXT, details TEXT, ip_address TEXT, user_agent TEXT, created_at TEXT)');
 $db->exec('CREATE TABLE Buildings (building_id INTEGER PRIMARY KEY, project_id INTEGER, building_number TEXT, building_name TEXT)');
+$db->exec('CREATE TABLE Building_Floors (floor_id INTEGER PRIMARY KEY, building_id INTEGER NOT NULL, floor_number TEXT, floor_name TEXT, usage_type TEXT)');
+$db->exec('CREATE TABLE Rooms (room_id INTEGER PRIMARY KEY, building_id INTEGER NOT NULL, floor_id INTEGER NOT NULL, room_number TEXT, room_type TEXT, room_area REAL)');
+$db->exec('CREATE TABLE Initial_Cost_Estimate_Detail (
+    estimate_detail_id INTEGER PRIMARY KEY AUTOINCREMENT, building_id INTEGER NOT NULL,
+    floor_id INTEGER, room_id INTEGER, material_id INTEGER NOT NULL,
+    estimated_quantity NUMERIC NOT NULL DEFAULT 0, remarks TEXT
+)');
 $db->exec('CREATE TABLE Material_Categories (category_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, category_name TEXT NOT NULL, parent_category_id INTEGER, sort_order INTEGER NOT NULL DEFAULT 0)');
 $db->exec('CREATE TABLE Materials (material_id INTEGER PRIMARY KEY, project_id INTEGER, material_code TEXT, material_name TEXT NOT NULL, unit TEXT NOT NULL, specifications TEXT, material_description_detailed TEXT, category_id INTEGER, default_quotation_id INTEGER, sample_required TEXT, UNIQUE(project_id, material_code))');
 $db->exec('CREATE TABLE Material_Compositions (composition_id INTEGER PRIMARY KEY, project_id INTEGER, parent_material_id INTEGER, child_material_id INTEGER, quantity NUMERIC NOT NULL, UNIQUE(project_id, parent_material_id, child_material_id), UNIQUE(project_id, composition_id))');
@@ -46,18 +53,29 @@ $db->exec('CREATE TABLE project_closeout_plans (
     closed_at TEXT, closed_by INTEGER, reopened_at TEXT, reopened_by INTEGER, created_by INTEGER NOT NULL,
     created_at TEXT, updated_at TEXT
 )');
+$db->exec('CREATE TABLE Labor_Crew_Types (crew_type_id INTEGER PRIMARY KEY AUTOINCREMENT, type_name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0)');
+$db->exec('CREATE TABLE Labor_Crews (crew_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, crew_type_id INTEGER, crew_name TEXT NOT NULL, leader_name TEXT NOT NULL DEFAULT "", is_active INTEGER NOT NULL DEFAULT 1)');
 $db->exec('CREATE TABLE project_closeout_items (
     item_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, plan_id INTEGER NOT NULL, item_no TEXT NOT NULL,
     material_id INTEGER NOT NULL, coverage_mode TEXT NOT NULL DEFAULT "whole", coverage_root_id INTEGER,
     title TEXT NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT "pending",
-    responsible_supplier_id INTEGER, responsible_user_id INTEGER, planned_start_date TEXT, planned_end_date TEXT,
+    responsible_supplier_id INTEGER, responsible_user_id INTEGER, responsible_crew_id INTEGER, planned_start_date TEXT, planned_end_date TEXT,
     submitted_at TEXT, actual_complete_date TEXT, risk_level TEXT NOT NULL DEFAULT "medium",
     cancel_reason TEXT, cancelled_by INTEGER, cancelled_at TEXT,
     created_by INTEGER NOT NULL, created_at TEXT, updated_at TEXT
 )');
-$db->exec('CREATE TABLE project_closeout_progress_logs (progress_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, plan_id INTEGER, item_id INTEGER, progress_type TEXT, progress_note TEXT, recorded_by INTEGER, recorded_at TEXT)');
-$db->exec('CREATE TABLE project_closeout_acceptances (acceptance_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, plan_id INTEGER, item_id INTEGER, result TEXT, remark TEXT, evidence_reference TEXT, accepted_by INTEGER, accepted_at TEXT)');
-$db->exec('CREATE TABLE project_closeout_images (image_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, item_id INTEGER, object_key TEXT, original_name TEXT, content_type TEXT, file_size INTEGER, uploaded_by INTEGER, created_at TEXT)');
+$db->exec('CREATE TABLE project_closeout_locations (
+    location_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, plan_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL, estimate_detail_id INTEGER, building_id INTEGER NOT NULL,
+    floor_id INTEGER, room_id INTEGER, baseline_qty NUMERIC NOT NULL DEFAULT 0, baseline_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT "pending", submitted_at TEXT, accepted_at TEXT, accepted_by INTEGER,
+    planned_start_date TEXT, planned_end_date TEXT, responsible_supplier_id INTEGER, responsible_user_id INTEGER, responsible_crew_id INTEGER,
+    cancel_reason TEXT, cancelled_by INTEGER, cancelled_at TEXT, created_by INTEGER NOT NULL,
+    created_at TEXT, updated_at TEXT
+)');
+$db->exec('CREATE TABLE project_closeout_progress_logs (progress_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, plan_id INTEGER, item_id INTEGER, location_id INTEGER, progress_type TEXT, progress_note TEXT, recorded_by INTEGER, recorded_at TEXT)');
+$db->exec('CREATE TABLE project_closeout_acceptances (acceptance_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, plan_id INTEGER, item_id INTEGER, location_id INTEGER, result TEXT, remark TEXT, evidence_reference TEXT, accepted_by INTEGER, accepted_at TEXT)');
+$db->exec('CREATE TABLE project_closeout_images (image_id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER, item_id INTEGER, location_id INTEGER, object_key TEXT, original_name TEXT, content_type TEXT, file_size INTEGER, uploaded_by INTEGER, created_at TEXT)');
 
 $db->exec("INSERT INTO Projects (project_id, project_name, start_date, end_date, status) VALUES (1, '测试项目', '2026-03-01', '2026-12-31', 'ongoing')");
 $db->exec("INSERT INTO Users (user_id, username, password_hash, country_code, is_active, timezone) VALUES (1, 'admin', 'hash', 'CN', 1, 'Asia/Shanghai')");
@@ -92,6 +110,16 @@ $db->exec("INSERT INTO project_closeout_items (item_id, project_id, plan_id, ite
 $db->exec("INSERT INTO project_closeout_progress_logs (project_id, plan_id, item_id, progress_type, progress_note, recorded_by, recorded_at)
     VALUES (1, 1, 1, 'note', '门框已到场', 1, '2026-11-22 09:20:00')");
 
+// V2.0 space tracking: one measured space under the existing item, so the
+// workspace has to render the量加权 progress bar and the expandable list.
+$db->exec("INSERT INTO Buildings (building_id, project_id, building_number, building_name) VALUES (1, 1, 'A', 'A栋')");
+$db->exec("INSERT INTO Building_Floors (floor_id, building_id, floor_number, floor_name) VALUES (1, 1, '1', '一层')");
+$db->exec("INSERT INTO Rooms (room_id, building_id, floor_id, room_number) VALUES (1, 1, 1, '101')");
+$db->exec("INSERT INTO Initial_Cost_Estimate_Detail (estimate_detail_id, building_id, floor_id, room_id, material_id, estimated_quantity)
+    VALUES (1, 1, 1, 1, 101, 12.5)");
+$db->exec("INSERT INTO project_closeout_locations (location_id, project_id, plan_id, item_id, estimate_detail_id, building_id, floor_id, room_id, baseline_qty, baseline_at, status, created_by)
+    VALUES (1, 1, 1, 1, 1, 1, 1, 1, 12.5, '2026-11-22 09:00:00', 'pending', 1)");
+
 $_SESSION = ['user_id' => 1, 'username' => 'admin', 'active_project_id' => 1, 'csrf_token' => 'web-smoke-token'];
 
 function renderCloseoutPage(PDO $db, string $page, array $params = []): string
@@ -105,10 +133,10 @@ function renderCloseoutPage(PDO $db, string $page, array $params = []): string
 }
 
 $pages = [
-    'closeouts' => ['工程消项总览', ['工程消项']],
+    'closeouts' => ['工程消项总览', ['工程消项', '展开空间', '空间 0/1', 'closeout-progress-fill', 'id="closeout-item-1"', 'data-item-id="1"', 'closeout:scroll']],
     'closeout-items' => ['消项清单', ['P1-CLO-001', '成品门收口']],
     'closeout-select' => ['从 BOM 纳入消项事项', ['成品门', '竣工验收消项计划', '已隐藏 1 项非父材料']],
-    'closeout-item' => ['验收记录', ['P1-CLO-001', '附件照片', '成品门收口', '门框已到场', 'BOM 组成', '门框']],
+    'closeout-item' => ['验收记录', ['P1-CLO-001', '附件照片', '成品门收口', '门框已到场', 'BOM 组成', '门框', '空间子项', '完成申报']],
 ];
 foreach ($pages as $page => [$heading, $needles]) {
     $params = $page === 'closeout-select' ? ['plan_id' => 1] : ($page === 'closeout-item' ? ['item_id' => 1] : []);
@@ -146,6 +174,32 @@ foreach ([
     }
 }
 echo "PASS  新建消项计划默认带出项目开始/结束日期\n";
+
+// 复选框=申报：路由直达服务层，空间进入待验收，事项汇总为待验收（不会直接 closed）。
+$submitResponse = $registry->dispatch('POST', 'closeout.location.submit', [
+    'csrf_token' => 'web-smoke-token',
+    'plan_id' => 1,
+    'location_id' => 1,
+    'remark' => '冒烟测试申报',
+]);
+if ($submitResponse === null || $submitResponse->type !== 'redirect') {
+    throw new RuntimeException('空间申报路由未返回跳转响应。');
+}
+if ($submitResponse->location === null || !str_contains($submitResponse->location, 'item_id=1')) {
+    throw new RuntimeException('跳转应带回事项 id，供前端恢复视口位置。');
+}
+if (str_contains($submitResponse->location, '#')) {
+    throw new RuntimeException('跳转不应带 # 锚点，避免与视口恢复二次滚动冲突。');
+}
+$locationStatus = (string) $db->query('SELECT status FROM project_closeout_locations WHERE location_id = 1')->fetchColumn();
+if ($locationStatus !== 'pending_accept') {
+    throw new RuntimeException('空间申报后状态应为 pending_accept，实际为「' . $locationStatus . '」。');
+}
+$itemStatus = (string) $db->query('SELECT status FROM project_closeout_items WHERE item_id = 1')->fetchColumn();
+if ($itemStatus !== 'pending_accept') {
+    throw new RuntimeException('唯一空间申报后事项应汇总为待验收，实际为「' . $itemStatus . '」。');
+}
+echo "PASS  POST closeout.location.submit 只把空间送入待验收（未直接验收通过）\n";
 
 // 存储复用：未设置 APP_OBJECT_STORAGE_ADAPTER 时，消项必须自动读取文件模块
 // 「系统设置」里的 cloud_storage.* 配置（与问题管理、样品管理同源）。
@@ -203,5 +257,27 @@ if (str_contains($html, '<p class="eyebrow">事项 P1-CLO-002</p>')) {
     throw new RuntimeException('工作台侧栏错误地渲染了列表最后一行 P1-CLO-002。');
 }
 echo "PASS  侧栏详情跟随 item_id，不受列表循环残留影响\n";
+
+// 存量（V1）事项补齐：item 2 建于 V1，没有空间行；按钮出现，路由补建空间后可展开。
+$html = renderCloseoutPage($db, 'closeouts', ['plan_id' => 1]);
+if (!str_contains($html, '补齐存量空间')) {
+    throw new RuntimeException('存在无空间的存量事项时，工作台应显示「补齐存量空间」按钮。');
+}
+$backfillResponse = $registry->dispatch('POST', 'closeout.locations.backfill', [
+    'csrf_token' => 'web-smoke-token',
+    'plan_id' => 1,
+]);
+if ($backfillResponse === null || $backfillResponse->type !== 'redirect') {
+    throw new RuntimeException('存量空间补齐路由未返回跳转响应。');
+}
+$filled = (int) $db->query('SELECT COUNT(*) FROM project_closeout_locations WHERE item_id = 2')->fetchColumn();
+if ($filled !== 1) {
+    throw new RuntimeException('存量补齐应为 item 2 生成 1 个空间，实际 ' . $filled . '。');
+}
+$html = renderCloseoutPage($db, 'closeouts', ['plan_id' => 1]);
+if (!str_contains($html, '空间 0/1') || str_contains($html, '补齐存量空间')) {
+    throw new RuntimeException('补齐后旧事项应带空间，且按钮应按无存量事项而隐藏。');
+}
+echo "PASS  POST closeout.locations.backfill 为存量事项补建空间\n";
 
 echo "Closeout web smoke passed.\n";
