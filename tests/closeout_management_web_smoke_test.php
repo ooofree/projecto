@@ -260,8 +260,8 @@ echo "PASS  侧栏详情跟随 item_id，不受列表循环残留影响\n";
 
 // 存量（V1）事项补齐：item 2 建于 V1，没有空间行；按钮出现，路由补建空间后可展开。
 $html = renderCloseoutPage($db, 'closeouts', ['plan_id' => 1]);
-if (!str_contains($html, '补齐存量空间')) {
-    throw new RuntimeException('存在无空间的存量事项时，工作台应显示「补齐存量空间」按钮。');
+if (!str_contains($html, '补齐测算空间')) {
+    throw new RuntimeException('存在无空间的存量事项时，工作台应显示「补齐测算空间」按钮。');
 }
 $backfillResponse = $registry->dispatch('POST', 'closeout.locations.backfill', [
     'csrf_token' => 'web-smoke-token',
@@ -275,7 +275,7 @@ if ($filled !== 1) {
     throw new RuntimeException('存量补齐应为 item 2 生成 1 个空间，实际 ' . $filled . '。');
 }
 $html = renderCloseoutPage($db, 'closeouts', ['plan_id' => 1]);
-if (!str_contains($html, '空间 0/1') || str_contains($html, '补齐存量空间')) {
+if (!str_contains($html, '空间 0/1') || str_contains($html, '补齐测算空间')) {
     throw new RuntimeException('补齐后旧事项应带空间，且按钮应按无存量事项而隐藏。');
 }
 echo "PASS  POST closeout.locations.backfill 为存量事项补建空间\n";

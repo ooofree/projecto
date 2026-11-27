@@ -1376,11 +1376,12 @@ UNIQUE KEY `uq_closeout_location_active` (`eff_space_key`)
 
 1. **数据来源同一条口径**：按 `items.material_id` 取 `Initial_Cost_Estimate_Detail` 中该项目（经 `Buildings.project_id` 隔离）的行，一个 `building_id + floor_id + room_id` 一条空间，`baseline_qty` 为该空间 `estimated_quantity` 之和，`estimate_detail_id` 仅在单行空间可回指、多行合计置 NULL。
 2. **继承而非新造**：`plan_id`、`planned_start_date` / `planned_end_date`、`responsible_supplier_id` / `responsible_user_id` 全部从所属事项继承；`baseline_at` 取执行时刻。
-3. **幂等**：已有非 `cancelled` 空间的事项整条跳过；`uq_closeout_location_active`（`(item_id, eff_space_key)`）兜底防重。取消过的空间视为缺失，允许重新生成。
+3. **幂等，且不复活已取消**：已跟踪（非 `cancelled`）的空间整条跳过；**取消过的空间视为业务决定（该区域不做），不再自动补回**——要恢复只能走显式"追加空间"。`uq_closeout_location_active`（`(item_id, eff_space_key)`）兜底防重。
 4. **五类不可补的情况分别回报**，不静默：`missing_estimates`（该材料在项目内 0 行测算，需先补测算）、`not_parent`（`Material_Compositions` 中该材料存在上级，旧数据可能按子材料建了事项，需按父材料重录）、`plan_inactive`（所属计划非进行中，与 `addLocations` 口径一致）、`closed_skipped`（已消项事项不补，否则会被木桶回算重新打开或凭空造验收证据）。
 5. **不重算事项状态，空间初态镜像事项状态**：`ongoing` / `pending_accept` 的旧事项补出的空间为 `ongoing`（表示已开始，但不写 `submitted_at`，因为"申报"必须有真实提交时间）；`pending` 的补为 `pending`。进度仍只按已验收量算，历史进度不追认。
 6. **可追溯**：一次补齐写一条汇总审计（`closeout.locations.backfill`，含条数与空间数）。
-7. **入口**：工作台顶部「补齐存量空间」，仅在存在"无空间且未取消"的事项时出现；页面加载不写库。
+7. **入口**：工作台顶部「补齐测算空间」，仅在存在可补事项时出现；页面加载不写库。
+8. **追加新增区域（2026-11-27 增补）**：事项纳入之后才录入的测算行（另一个房间、另一层）不会被自动感知，表现为"区域数不更新"。补齐动作按"已有空间键 ∪ 已取消键"求差集，只追加真正缺失的空间：新空间按当前测算量建基线、初态 `pending`（录了个数不等于该区域已开工）；**已跟踪空间不改基线**（改量是"重定基线"的显式决定）。补齐候选计数同样按"是否还缺区域"判，不再只看"有没有空间"。
 
 ### 20.19 责任班组（V2.1 增补，2026-11-27 业务确认，已实现）
 

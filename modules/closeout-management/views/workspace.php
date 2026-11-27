@@ -210,14 +210,14 @@ ob_start();
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="closeout.items.sync">
                 <input type="hidden" name="plan_id" value="<?= (int) $selectedPlan['plan_id'] ?>">
-                <button class="button button-primary" type="submit" title="把新增了测算的父材料补进来，已存在的不会重复">同步新增父材料</button>
+                <button class="button button-primary" type="submit" title="把新增了测算的父材料补进来，并按测算补上已纳入事项的新区域；已存在的不会重复">同步新增材料</button>
             </form>
         <?php endif; ?>
         <?php if ($canEdit && $legacyLocationCount > 0): ?>
             <form method="post" class="inline-form">
                 <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                 <input type="hidden" name="action" value="closeout.locations.backfill">
-                <button class="button button-secondary" type="submit" title="按父材料的测算行给旧事项补建空间子项；已有空间的不会重复">补齐存量空间（<?= (int) $legacyLocationCount ?>）</button>
+                <button class="button button-secondary" type="submit" title="按父材料的测算行补齐空间：旧事项建首批空间，已纳入事项补后来录入的新区域；已跟踪的空间不会重复，基线量不变">补齐测算空间（<?= (int) $legacyLocationCount ?>）</button>
             </form>
         <?php endif; ?>
         <?php if ($canCreate): ?>

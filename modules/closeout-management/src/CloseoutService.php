@@ -2030,11 +2030,28 @@ SQL;
         $created = 0;
         $now = $this->nowUtc();
 
-        foreach ($statement->fetchAll() as $item) {
-            if ((int) $item['loc_count'] > 0) {
-                $existing++;
-                continue;
+        // Which spaces the item already tracks. An item with some spaces is not
+        // "done": a later estimate entry (another room, another floor) still
+        // leaves a hole, and that is exactly the case users hit after typing
+        // quantities into an already-included material.
+        $existingKeys = [];
+        $cancelledKeys = [];
+        $keyStatement = $this->db->prepare(
+            'SELECT item_id, building_id, floor_id, room_id, status
+             FROM project_closeout_locations
+             WHERE project_id = :project_id'
+        );
+        $keyStatement->execute(['project_id' => $projectId]);
+        foreach ($keyStatement->fetchAll() as $row) {
+            $key = $this->spaceKey($row);
+            if ((string) $row['status'] === 'cancelled') {
+                $cancelledKeys[(int) $row['item_id']][$key] = true;
+            } else {
+                $existingKeys[(int) $row['item_id']][$key] = true;
             }
+        }
+
+        foreach ($statement->fetchAll() as $item) {
             $itemNo = (string) $item['item_no'];
             // A closed item is already done: adding spaces would either reopen
             // it through the bucket recalc or invent acceptance evidence. Leave
@@ -2054,9 +2071,20 @@ SQL;
                 continue;
             }
 
+            $itemId = (int) $item['item_id'];
+            $known = $existingKeys[$itemId] ?? [];
+            // A cancelled space is a decision ("this area is out of scope"),
+            // not a gap: never resurrect it behind the user's back.
+            $suppressed = $cancelledKeys[$itemId] ?? [];
             $rows = $this->estimateRowsForMaterial($projectId, $materialId);
             if ($rows === []) {
-                $missing[] = $itemNo . ' ' . ($names[$materialId] ?? ('#' . $materialId));
+                // Only a spotless item is reported as missing estimates; one
+                // that already tracks spaces simply cannot gain more.
+                if ($known === []) {
+                    $missing[] = $itemNo . ' ' . ($names[$materialId] ?? ('#' . $materialId));
+                } else {
+                    $existing++;
+                }
                 continue;
             }
 
@@ -2067,21 +2095,41 @@ SQL;
                 'responsible_user_id' => $item['responsible_user_id'],
                 'responsible_crew_id' => $item['responsible_crew_id'] ?? null,
             ];
-            // Mirror the legacy item status instead of resetting it: "ongoing"
-            // means work started, so the spaces start as ongoing too. Nothing
-            // is claimed as submitted — a submission needs a real timestamp
-            // that only the submit action can write.
+            // No spaces at all = legacy item: mirror its status, because the
+            // work had already been started before the space table existed.
+            // Extra spaces on a live item start as pending: a quantity typed in
+            // today is not evidence that the area was worked on.
             $itemStatus = (string) $item['status'];
-            $spaceStatus = in_array($itemStatus, ['ongoing', 'pending_accept'], true) ? 'ongoing' : 'pending';
-            $itemId = (int) $item['item_id'];
+            $spaceStatus = $known === []
+                ? (in_array($itemStatus, ['ongoing', 'pending_accept'], true) ? 'ongoing' : 'pending')
+                : 'pending';
+
             $spaces = 0;
             foreach ($rows as $row) {
+                $key = $this->spaceKey($row);
+                if (isset($known[$key]) || isset($suppressed[$key])) {
+                    continue;
+                }
                 $this->insertLocation($projectId, (int) $item['plan_id'], $itemId, $row, $defaults, $userId, $now, $spaceStatus);
+                $known[$key] = true;
                 $spaces++;
             }
 
+            if ($spaces === 0) {
+                $existing++;
+                continue;
+            }
+
             $created += $spaces;
-            $filled[] = ['item_id' => $itemId, 'item_no' => $itemNo, 'spaces' => $spaces, 'status' => $itemStatus];
+            $filled[] = [
+                'item_id' => $itemId,
+                'item_no' => $itemNo,
+                'spaces' => $spaces,
+                'status' => $itemStatus,
+                // "created" = legacy item got its first spaces; "appended" =
+                // an included item gained the areas that were measured later.
+                'kind' => count($existingKeys[$itemId] ?? []) === 0 ? 'created' : 'appended',
+            ];
         }
 
         return [
@@ -2096,30 +2144,179 @@ SQL;
     }
 
     /**
-     * How many legacy items the backfill could actually fill right now: no
-     * space rows, plan active, and the parent material does have estimate rows
-     * in this project. Unfillable items are excluded so the workspace button
-     * disappears once the real work is done.
+     * A new estimate row can appear after an item was already included (someone
+     * fills in quantities for another room or floor). The item keeps its spaces
+     * but the new footprint is missing, so the workspace shows a stale area
+     * count. This appends the spaces that appeared since, and only those:
+     * existing spaces keep their baseline (quantities are locked at inclusion;
+     * changing them is a re-baseline decision, not a side effect of an edit).
+     *
+     * @return array{
+     *     created: int,
+     *     items: list<array{item_id: int, item_no: string, spaces: int}>,
+     *     untouched: int,
+     *     closed_skipped: list<string>,
+     *     plan_inactive: list<string>,
+     *     missing_estimates: list<string>
+     * }
+     */
+    public function syncSpaces(int $projectId, int $userId, ?int $planId = null): array
+    {
+        $where = "i.project_id = :project_id AND i.status <> 'cancelled'";
+        $params = ['project_id' => $projectId];
+        if ($planId !== null && $planId > 0) {
+            $where .= ' AND i.plan_id = :plan_id';
+            $params['plan_id'] = $planId;
+        }
+
+        $statement = $this->db->prepare(
+            'SELECT i.item_id, i.item_no, i.material_id, i.plan_id, i.status,
+                    i.planned_start_date, i.planned_end_date,
+                    i.responsible_supplier_id, i.responsible_user_id, i.responsible_crew_id,
+                    p.status AS plan_status
+             FROM project_closeout_items i
+             JOIN project_closeout_plans p ON p.plan_id = i.plan_id AND p.project_id = i.project_id
+             WHERE ' . $where . '
+             ORDER BY i.item_id'
+        );
+        $statement->execute($params);
+        $items = $statement->fetchAll();
+
+        $existing = [];
+        $cancelled = [];
+        if ($items !== []) {
+            $locationStatement = $this->db->prepare(
+                'SELECT item_id, building_id, floor_id, room_id, status
+                 FROM project_closeout_locations
+                 WHERE project_id = :project_id'
+            );
+            $locationStatement->execute(['project_id' => $projectId]);
+            foreach ($locationStatement->fetchAll() as $row) {
+                $key = $this->spaceKey($row);
+                if ((string) $row['status'] === 'cancelled') {
+                    $cancelled[(int) $row['item_id']][$key] = true;
+                } else {
+                    $existing[(int) $row['item_id']][$key] = true;
+                }
+            }
+        }
+
+        $created = 0;
+        $touched = [];
+        $untouched = 0;
+        $closedSkipped = [];
+        $planInactive = [];
+        $missingEstimates = [];
+        $now = $this->nowUtc();
+
+        foreach ($items as $item) {
+            $itemId = (int) $item['item_id'];
+            $itemNo = (string) $item['item_no'];
+            if ((string) $item['status'] === 'closed') {
+                $closedSkipped[] = $itemNo;
+                continue;
+            }
+            if ((string) $item['plan_status'] !== 'active') {
+                $planInactive[] = $itemNo;
+                continue;
+            }
+
+            $rows = $this->estimateRowsForMaterial($projectId, (int) $item['material_id']);
+            if ($rows === []) {
+                $missingEstimates[] = $itemNo;
+                continue;
+            }
+
+            $defaults = [
+                'planned_start_date' => $item['planned_start_date'],
+                'planned_end_date' => $item['planned_end_date'],
+                'responsible_supplier_id' => $item['responsible_supplier_id'],
+                'responsible_user_id' => $item['responsible_user_id'],
+                'responsible_crew_id' => $item['responsible_crew_id'] ?? null,
+            ];
+
+            $added = 0;
+            foreach ($rows as $row) {
+                $key = $this->spaceKey($row);
+                if (isset($existing[$itemId][$key]) || isset($cancelled[$itemId][$key])) {
+                    continue;
+                }
+                // New area starts as pending work: it was not started just
+                // because its quantity was typed in later.
+                $this->insertLocation($projectId, (int) $item['plan_id'], $itemId, $row, $defaults, $userId, $now, 'pending');
+                $existing[$itemId][$key] = true;
+                $added++;
+            }
+
+            if ($added === 0) {
+                $untouched++;
+                continue;
+            }
+            $created += $added;
+            $touched[] = ['item_id' => $itemId, 'item_no' => $itemNo, 'spaces' => $added];
+        }
+
+        return [
+            'created' => $created,
+            'items' => $touched,
+            'untouched' => $untouched,
+            'closed_skipped' => $closedSkipped,
+            'plan_inactive' => $planInactive,
+            'missing_estimates' => $missingEstimates,
+        ];
+    }
+
+    /**
+     * How many items the fill action could actually change right now: active
+     * plan, still open, the parent material has estimate rows in this project,
+     * and at least one measured space is not tracked yet. Legacy items with no
+     * spaces and included items that gained areas later both count, so the
+     * button does not disappear while holes remain.
      */
     public function backfillCandidateCount(int $projectId): int
     {
         $statement = $this->db->prepare(
-            "SELECT COUNT(*)
+            "SELECT i.item_id, i.material_id
              FROM project_closeout_items i
-             JOIN project_closeout_plans p ON p.plan_id = i.plan_id
+             JOIN project_closeout_plans p ON p.plan_id = i.plan_id AND p.project_id = i.project_id
              WHERE i.project_id = :project_id
                AND i.status NOT IN ('cancelled', 'closed')
-               AND p.status = 'active'
-               AND NOT EXISTS (SELECT 1 FROM project_closeout_locations l
-                    WHERE l.project_id = i.project_id AND l.item_id = i.item_id
-                      AND l.status <> 'cancelled')
-               AND EXISTS (SELECT 1 FROM Initial_Cost_Estimate_Detail e
-                    JOIN Buildings b ON b.building_id = e.building_id
-                    WHERE e.material_id = i.material_id AND b.project_id = i.project_id)"
+               AND p.status = 'active'"
         );
         $statement->execute(['project_id' => $projectId]);
 
-        return (int) $statement->fetchColumn();
+        $existingKeys = [];
+        $cancelledKeys = [];
+        $keyStatement = $this->db->prepare(
+            'SELECT item_id, building_id, floor_id, room_id, status
+             FROM project_closeout_locations
+             WHERE project_id = :project_id'
+        );
+        $keyStatement->execute(['project_id' => $projectId]);
+        foreach ($keyStatement->fetchAll() as $row) {
+            $key = $this->spaceKey($row);
+            if ((string) $row['status'] === 'cancelled') {
+                $cancelledKeys[(int) $row['item_id']][$key] = true;
+            } else {
+                $existingKeys[(int) $row['item_id']][$key] = true;
+            }
+        }
+
+        $candidates = 0;
+        foreach ($statement->fetchAll() as $row) {
+            $itemId = (int) $row['item_id'];
+            $known = $existingKeys[$itemId] ?? [];
+            $suppressed = $cancelledKeys[$itemId] ?? [];
+            foreach ($this->estimateRowsForMaterial($projectId, (int) $row['material_id']) as $space) {
+                $key = $this->spaceKey($space);
+                if (!isset($known[$key]) && !isset($suppressed[$key])) {
+                    $candidates++;
+                    continue 2;
+                }
+            }
+        }
+
+        return $candidates;
     }
 
     /**

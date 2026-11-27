@@ -407,17 +407,28 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
         $projectId = (int) $project['project_id'];
         $result = $this->closeouts->backfillLocations($projectId, $this->userId());
 
+        $legacy = 0;
+        $appended = 0;
         foreach ($result['filled'] as $row) {
+            if (($row['kind'] ?? 'created') === 'created') {
+                $legacy++;
+            } else {
+                $appended++;
+            }
             $this->audit($projectId, 'closeout_item', (int) $row['item_id'], 'closeout.locations.backfill', [
                 'item_no' => $row['item_no'],
                 'spaces' => (int) $row['spaces'],
+                'kind' => $row['kind'] ?? 'created',
                 'source' => 'estimate-detail',
             ]);
         }
 
-        $message = '已为 ' . count($result['filled']) . ' 条存量事项补建 ' . $result['locations_created'] . ' 个空间';
+        $message = '已补建 ' . $result['locations_created'] . ' 个空间';
+        if ($legacy > 0 || $appended > 0) {
+            $message .= '（旧事项 ' . $legacy . ' 条、新增区域 ' . $appended . ' 条）';
+        }
         if ($result['existing'] > 0) {
-            $message .= '，' . $result['existing'] . ' 条已有空间';
+            $message .= '；' . $result['existing'] . ' 条空间已齐';
         }
         if ($result['missing_estimates'] !== []) {
             $message .= '；缺测算（需先录父材料数量）：' . implode('、', $result['missing_estimates']);
@@ -447,6 +458,7 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
         $projectId = (int) $project['project_id'];
         $planId = $this->requiredId($input, 'plan_id', '消项计划');
         $result = $this->closeouts->autoProvision($projectId, $planId, $this->userId());
+        $spaces = $this->closeouts->syncSpaces($projectId, $this->userId(), $planId);
         $plan = $this->closeouts->requirePlan($projectId, $planId);
         foreach ($result['created'] as $row) {
             $this->audit($projectId, 'closeout_item', (int) $row['item_id'], 'closeout.item.create', [
@@ -456,7 +468,17 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
                 'source' => 'auto-provision-sync',
             ]);
         }
+        foreach ($spaces['items'] as $row) {
+            $this->audit($projectId, 'closeout_item', (int) $row['item_id'], 'closeout.locations.append', [
+                'item_no' => $row['item_no'],
+                'spaces' => (int) $row['spaces'],
+                'source' => 'estimate-detail',
+            ]);
+        }
         $message = '已补入 ' . count($result['created']) . ' 条新事项';
+        if ($spaces['created'] > 0) {
+            $message .= '、' . $spaces['created'] . ' 个新增区域';
+        }
         if ($result['existing'] > 0) {
             $message .= '，' . $result['existing'] . ' 条父材料已有事项';
         }

@@ -370,4 +370,43 @@ locExpectStatus(
     '已归档的班组不应能指派'
 );
 
+// ------------------------------------ 追加测算后补出新区域（2026-11-27）
+// A quantity typed into an already-included material must not leave the area
+// count stale: the spaces that appeared later get appended, and the spaces
+// that were already tracked keep their baseline.
+$db->exec("INSERT INTO Rooms (room_id, building_id, floor_id, room_number, room_area) VALUES (123, 1, 11, '103', 15)");
+$db->exec("INSERT INTO Initial_Cost_Estimate_Detail (building_id, floor_id, room_id, material_id, estimated_quantity)
+    VALUES (1, 11, 123, 106, 7)");
+locCheck($service->backfillCandidateCount(10) >= 1, '后来录入的测算区域应计入补齐候选');
+
+$append = $service->backfillLocations(10, 1);
+locCheck($append['locations_created'] >= 1, '补齐应为已纳入事项追加新区域');
+$appendRow = null;
+foreach ($append['filled'] as $row) {
+    if ((int) $row['item_id'] === $startItemId) {
+        $appendRow = $row;
+    }
+}
+locCheck($appendRow !== null && ($appendRow['kind'] ?? '') === 'appended', '已纳入事项的追加应标记为 appended');
+
+$flat = $service->listLocations(10, $startItemId);
+locCheck(count($flat) === 2, '追加测算区域后该事项应有 2 个空间');
+$newSpace = null;
+$oldSpace = null;
+foreach ($flat as $row) {
+    if ((int) $row['room_id'] === 123) {
+        $newSpace = $row;
+    }
+    if ((int) $row['room_id'] === 111) {
+        $oldSpace = $row;
+    }
+}
+locCheck($newSpace !== null && $newSpace['status'] === 'pending', '后来补出的区域应为待处理，不追认已开始');
+locCheck(abs((float) $newSpace['baseline_qty'] - 7.0) < 0.0001, '新区域按当前测算量建基线');
+locCheck(abs((float) $oldSpace['baseline_qty'] - 5.0) < 0.0001, '已有空间的基线不应被改写');
+
+$appendAgain = $service->backfillLocations(10, 1);
+locCheck($appendAgain['locations_created'] === 0, '再次补齐不应重复追加同一区域');
+locCheck(count($service->listLocations(10, $startItemId)) === 2, '再次补齐后空间数不变');
+
 echo "closeout location tests passed\n";
