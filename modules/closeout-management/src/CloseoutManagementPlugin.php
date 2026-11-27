@@ -7,6 +7,7 @@ use ProjectO\HttpException;
 use ProjectO\Plugin\PluginContext;
 use ProjectO\Plugin\PluginInterface;
 use ProjectO\Plugin\PluginResponse;
+use ProjectO\Plugin\ProjectProgressProvider;
 use ProjectO\Plugin\SidebarNavigationProvider;
 use ProjectO\Storage\ObjectStorageInterface;
 use ProjectO\Storage\R2ObjectStorage;
@@ -22,7 +23,7 @@ use Throwable;
  * CloseoutService. The BOM is a read-only source: this module never writes
  * Materials / Material_Compositions.
  */
-final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigationProvider
+final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigationProvider, ProjectProgressProvider
 {
     private CloseoutService $closeouts;
     private CloseoutImageService $images;
@@ -85,6 +86,20 @@ final class CloseoutManagementPlugin implements PluginInterface, SidebarNavigati
             'icon' => '✓',
             'order' => 10,
         ]];
+    }
+
+    /**
+     * Project-home cards: quantity-weighted verified/submitted baselines and
+     * item counts for every project, gated by view_closeouts. A viewer without
+     * the permission gets no entry, so no progress bar is rendered at all.
+     */
+    public function projectProgress(): array
+    {
+        if (!$this->can('view_closeouts')) {
+            return [];
+        }
+
+        return $this->closeouts->projectProgress();
     }
 
     // ------------------------------------------------------------------ GET

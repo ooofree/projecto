@@ -312,29 +312,16 @@ final class MaterialCatalogService
         $sampleRequired = $this->optionalSampleRequirement($data['sample_required'] ?? null);
 
         if ($id === null) {
-            $stmt = $this->db->prepare(
-                'INSERT INTO Materials
-                    (project_id, material_code, material_name, unit, specifications, material_description_detailed, category_id, sample_required, sample_requirement_explicit)
-                 VALUES (:project_id, :code, :name, :unit, :specifications, :description, :category_id, :sample_required, :explicit)'
-            );
-            try {
-                $stmt->execute([
-                    'project_id' => $projectId,
-                    'code' => $code,
-                    'name' => $name,
-                    'unit' => $unit,
-                    'specifications' => $specifications,
-                    'description' => $description,
-                    'category_id' => $categoryId,
-                    'sample_required' => $sampleRequired ?? 'required',
-                    // 新建即显式选择送样要求视为人工决定，组成不再覆盖。
-                    'explicit' => $sampleRequired !== null ? 1 : 0,
-                ]);
-            } catch (\PDOException $exception) {
-                $this->throwIfDuplicateMaterialCode($exception, $projectId, $code, $id);
-                throw $exception;
-            }
-            return (int) $this->db->lastInsertId();
+            return $this->insertMaterialRow($projectId, [
+                'material_code' => $code,
+                'material_name' => $name,
+                'unit' => $unit,
+                'specifications' => $specifications,
+                'material_description_detailed' => $description,
+                'category_id' => $categoryId,
+                // 新建即显式选择送样要求视为人工决定，组成不再覆盖。
+                'sample_required' => $sampleRequired,
+            ]);
         }
 
         $this->requireProjectMaterial($projectId, $id, '材料');
@@ -366,6 +353,46 @@ final class MaterialCatalogService
             throw $exception;
         }
         return $id;
+    }
+
+    /**
+     * Insert one material row. Runs inside the caller's transaction when used by
+     * createParentWithChild(), so a failure leaves no orphan parent behind.
+     *
+     * @param array{material_code:?string, material_name:string, unit:string,
+     *              specifications:?string, material_description_detailed:?string,
+     *              category_id:?int, sample_required:?string} $fields
+     */
+    private function insertMaterialRow(int $projectId, array $fields): int
+    {
+        $stmt = $this->db->prepare(
+            'INSERT INTO Materials
+                (project_id, material_code, material_name, unit, specifications, material_description_detailed, category_id, sample_required, sample_requirement_explicit)
+             VALUES (:project_id, :code, :name, :unit, :specifications, :description, :category_id, :sample_required, :explicit)'
+        );
+        try {
+            $stmt->execute([
+                'project_id' => $projectId,
+                'code' => $fields['material_code'],
+                'name' => $fields['material_name'],
+                'unit' => $fields['unit'],
+                'specifications' => $fields['specifications'],
+                'description' => $fields['material_description_detailed'],
+                'category_id' => $fields['category_id'],
+                'sample_required' => $fields['sample_required'] ?? 'required',
+                'explicit' => $fields['sample_required'] !== null ? 1 : 0,
+            ]);
+        } catch (\PDOException $exception) {
+            $this->throwIfDuplicateMaterialCode(
+                $exception,
+                $projectId,
+                $fields['material_code'],
+                null
+            );
+            throw $exception;
+        }
+
+        return (int) $this->db->lastInsertId();
     }
 
     public function deleteMaterial(int $projectId, int $materialId): void
@@ -536,30 +563,7 @@ final class MaterialCatalogService
             }
 
             if ($id === null) {
-                $stmt = $this->db->prepare(
-                    'INSERT INTO Material_Compositions (project_id, parent_material_id, child_material_id, quantity)
-                     VALUES (:project_id, :parent_id, :child_id, :quantity)'
-                );
-                try {
-                    $stmt->execute([
-                        'project_id' => $projectId,
-                        'parent_id' => $parentId,
-                        'child_id' => $childId,
-                        'quantity' => $quantity,
-                    ]);
-                } catch (\PDOException $exception) {
-                    $this->throwIfDuplicateComposition($exception);
-                    throw $exception;
-                }
-                $id = (int) $this->db->lastInsertId();
-                // 首次组成默认翻转：以持久化标记为准，而非当前边数。
-                // 人工改回需送样会置 explicit=1，此后任何组成增删都不再覆盖。
-                $flip = $this->db->prepare(
-                    "UPDATE Materials SET sample_required = 'exempt'
-                     WHERE project_id = :project_id AND material_id = :id
-                       AND sample_required = 'required' AND sample_requirement_explicit = 0"
-                );
-                $flip->execute(['project_id' => $projectId, 'id' => $parentId]);
+                $id = $this->insertCompositionRow($projectId, $parentId, $childId, (string) $quantity);
             } else {
                 $stmt = $this->db->prepare(
                     'UPDATE Material_Compositions
@@ -586,6 +590,181 @@ final class MaterialCatalogService
             }
             throw $exception;
         }
+    }
+
+    /**
+     * Insert one parent→child edge inside the caller's transaction, including
+     * the duplicate pre-check and the first-edge sample flip.
+     */
+    private function insertCompositionRow(int $projectId, int $parentId, int $childId, string $quantity): int
+    {
+        $duplicate = $this->db->prepare(
+            'SELECT composition_id FROM Material_Compositions
+             WHERE project_id = :project_id AND parent_material_id = :parent_id AND child_material_id = :child_id'
+        );
+        $duplicate->execute([
+            'project_id' => $projectId,
+            'parent_id' => $parentId,
+            'child_id' => $childId,
+        ]);
+        if ($duplicate->fetchColumn() !== false) {
+            throw new HttpException('该子材料已在组成清单中，请直接修改其数量系数。', 409);
+        }
+        $stmt = $this->db->prepare(
+            'INSERT INTO Material_Compositions (project_id, parent_material_id, child_material_id, quantity)
+             VALUES (:project_id, :parent_id, :child_id, :quantity)'
+        );
+        try {
+            $stmt->execute([
+                'project_id' => $projectId,
+                'parent_id' => $parentId,
+                'child_id' => $childId,
+                'quantity' => $quantity,
+            ]);
+        } catch (\PDOException $exception) {
+            $this->throwIfDuplicateComposition($exception);
+            throw $exception;
+        }
+        $id = (int) $this->db->lastInsertId();
+        // 首次组成默认翻转：以持久化标记为准，而非当前边数。
+        // 人工改回需送样会置 explicit=1，此后任何组成增删都不再覆盖。
+        $flip = $this->db->prepare(
+            "UPDATE Materials SET sample_required = 'exempt'
+             WHERE project_id = :project_id AND material_id = :id
+               AND sample_required = 'required' AND sample_requirement_explicit = 0"
+        );
+        $flip->execute(['project_id' => $projectId, 'id' => $parentId]);
+
+        return $id;
+    }
+
+    /**
+     * Bottom-up entry (2026-11-27): create an assembly parent from a child and
+     * attach that child as its first component in one transaction. Either both
+     * rows exist afterwards or none do.
+     *
+     * @return array{parent_material_id: int, composition_id: int}
+     */
+    public function createParentWithChild(int $projectId, array $data): array
+    {
+        $childId = $this->requiredId($data['child_material_id'] ?? null, '子材料');
+        $name = $this->requiredText($data, 'material_name', 255, '材料名称');
+        $unit = $this->requiredText($data, 'unit', 50, '计量单位');
+        $code = $this->optionalText($data, 'material_code', 50, '材料编码');
+        $specifications = $this->optionalText($data, 'specifications', 20000, '规格');
+        $description = $this->optionalText($data, 'material_description_detailed', 20000, '材料说明');
+        $categoryId = $this->optionalId($data['category_id'] ?? null);
+        if ($categoryId !== null) {
+            $this->requireProjectCategory($projectId, $categoryId, '材料分类');
+        }
+        $quantity = $this->requiredDecimal($data['quantity'] ?? null, 8, 2, '数量系数');
+        if ((float) $quantity <= 0) {
+            throw new HttpException('数量系数必须大于 0。', 422);
+        }
+        $this->requireProjectMaterial($projectId, $childId, '子材料');
+        // 不静默制造第二个同名父项：目录里两个「玻璃门」会让选择器无法区分。
+        $sameName = $this->db->prepare(
+            'SELECT material_id FROM Materials
+             WHERE project_id = :project_id AND material_name = :name
+             ORDER BY material_id LIMIT 1'
+        );
+        $sameName->execute(['project_id' => $projectId, 'name' => $name]);
+        if ($sameName->fetchColumn() !== false) {
+            throw new HttpException(
+                '已存在同名材料「' . $name . '」；请改用「加入已有父项」，或换个名称再建。',
+                409
+            );
+        }
+
+        $this->db->beginTransaction();
+        try {
+            // 锁住子件行后再复检单层规则：并发下不允许同一子件同时成为父与子。
+            $this->lockCompositionMaterials($projectId, $childId);
+            $parentId = $this->insertMaterialRow($projectId, [
+                'material_code' => $code,
+                'material_name' => $name,
+                'unit' => $unit,
+                'specifications' => $specifications,
+                'material_description_detailed' => $description,
+                'category_id' => $categoryId,
+                'sample_required' => null,
+            ]);
+            // 新父项没有组成边，这里的单层检查落在「子件不能已有子项」上。
+            $this->requireSingleLevelComposition($projectId, $parentId, $childId);
+            $compositionId = $this->insertCompositionRow($projectId, $parentId, $childId, (string) $quantity);
+            $this->db->commit();
+
+            return [
+                'parent_material_id' => $parentId,
+                'composition_id' => $compositionId,
+            ];
+        } catch (Throwable $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $exception;
+        }
+    }
+
+    /**
+     * Suggested assembly codes: "CP-" + the originating child's own code
+     * (2026-11-27 用户口径「CP-子项编码」). A child without a code falls back to
+     * the project's next CP sequence number. Collisions append -2, -3 … and the
+     * suggestion stays within Materials.material_code varchar(50).
+     *
+     * Semantics: the code records which child the parent was built from, not a
+     * hierarchy. A parent with further children keeps this code unchanged.
+     *
+     * @param array<int, array<string, mixed>> $materials rows from materialData()
+     * @return array<int, string> material_id => suggested code
+     */
+    public function assemblyCodeSuggestions(int $projectId, array $materials): array
+    {
+        $codes = $this->projectQuery(
+            'SELECT material_code FROM Materials WHERE project_id = :project_id',
+            $projectId
+        );
+        $taken = [];
+        $maxSequential = 0;
+        foreach ($codes as $row) {
+            $code = trim((string) ($row['material_code'] ?? ''));
+            if ($code === '') {
+                continue;
+            }
+            $taken[mb_strtolower($code, 'UTF-8')] = true;
+            if (preg_match('/^CP-(\d+)$/u', $code, $matches) === 1) {
+                $maxSequential = max($maxSequential, (int) $matches[1]);
+            }
+        }
+
+        $suggestions = [];
+        $nextSequential = $maxSequential + 1;
+        foreach ($materials as $material) {
+            // Only materials that are not already a parent can be attached upward.
+            if ((int) ($material['child_count'] ?? 0) > 0) {
+                continue;
+            }
+            $childCode = trim((string) ($material['material_code'] ?? ''));
+            if ($childCode !== '') {
+                $base = mb_substr('CP-' . $childCode, 0, 50, 'UTF-8');
+                $candidate = $base;
+                $suffixNumber = 2;
+                while (isset($taken[mb_strtolower($candidate, 'UTF-8')])) {
+                    $suffix = '-' . $suffixNumber;
+                    $suffixNumber++;
+                    $candidate = mb_substr($base, 0, 50 - mb_strlen($suffix, 'UTF-8'), 'UTF-8') . $suffix;
+                }
+            } else {
+                do {
+                    $candidate = 'CP-' . str_pad((string) $nextSequential, 3, '0', STR_PAD_LEFT);
+                    $nextSequential++;
+                } while (isset($taken[mb_strtolower($candidate, 'UTF-8')]));
+            }
+            $taken[mb_strtolower($candidate, 'UTF-8')] = true;
+            $suggestions[(int) $material['material_id']] = $candidate;
+        }
+
+        return $suggestions;
     }
 
     /**

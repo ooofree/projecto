@@ -1032,6 +1032,75 @@ SQL;
     }
 
     /**
+     * Project-level closeout progress for the project-home cards.
+     *
+     * Same口径 as statistics(): cancelled items and cancelled space sub-items
+     * stay out of both numerator and denominator. Quantity-weighted across all
+     * plans of a project; item counts are reported next to (never merged into)
+     * the quantity rate, because条数 and工程量 are two different yardsticks.
+     *
+     * @return list<array{project_id: int, plan_count: int, item_total: int, item_closed: int, qty_total: float, qty_closed: float, qty_submitted: float}>
+     */
+    public function projectProgress(): array
+    {
+        $rows = [];
+        $blank = [
+            'plan_count' => 0,
+            'item_total' => 0,
+            'item_closed' => 0,
+            'qty_total' => 0.0,
+            'qty_closed' => 0.0,
+            'qty_submitted' => 0.0,
+        ];
+
+        $planStatement = $this->db->query(
+            'SELECT project_id, COUNT(*) AS total FROM project_closeout_plans GROUP BY project_id'
+        );
+        foreach ($planStatement->fetchAll() as $row) {
+            $projectId = (int) $row['project_id'];
+            $rows[$projectId] = $blank;
+            $rows[$projectId]['plan_count'] = (int) $row['total'];
+        }
+
+        $itemStatement = $this->db->query(
+            "SELECT project_id,
+                    SUM(CASE WHEN status <> 'cancelled' THEN 1 ELSE 0 END) AS item_total,
+                    SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS item_closed
+             FROM project_closeout_items
+             GROUP BY project_id"
+        );
+        foreach ($itemStatement->fetchAll() as $row) {
+            $projectId = (int) $row['project_id'];
+            $rows[$projectId] ??= $blank;
+            $rows[$projectId]['item_total'] = (int) $row['item_total'];
+            $rows[$projectId]['item_closed'] = (int) $row['item_closed'];
+        }
+
+        $qtyStatement = $this->db->query(
+            "SELECT project_id,
+                    COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN baseline_qty ELSE 0 END), 0) AS qty_total,
+                    COALESCE(SUM(CASE WHEN status = 'closed' THEN baseline_qty ELSE 0 END), 0) AS qty_closed,
+                    COALESCE(SUM(CASE WHEN status IN ('pending_accept', 'closed') THEN baseline_qty ELSE 0 END), 0) AS qty_submitted
+             FROM project_closeout_locations
+             GROUP BY project_id"
+        );
+        foreach ($qtyStatement->fetchAll() as $row) {
+            $projectId = (int) $row['project_id'];
+            $rows[$projectId] ??= $blank;
+            $rows[$projectId]['qty_total'] = round((float) $row['qty_total'], 4);
+            $rows[$projectId]['qty_closed'] = round((float) $row['qty_closed'], 4);
+            $rows[$projectId]['qty_submitted'] = round((float) $row['qty_submitted'], 4);
+        }
+
+        $entries = [];
+        foreach ($rows as $projectId => $values) {
+            $entries[] = ['project_id' => (int) $projectId] + $values;
+        }
+
+        return $entries;
+    }
+
+    /**
      * Chart-board aggregates for one plan (or every plan when $planId is null
      * or 0): status counts from statistics(), risk mix of still-open work,
      * near-term due load and open items without an owner. Closed / cancelled

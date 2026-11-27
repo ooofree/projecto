@@ -26,6 +26,7 @@
         "POST material.delete": "material.delete",
         "POST material.composition.save": "material.composition.save",
         "POST material.composition.delete": "material.composition.delete",
+        "POST material.parent.createWithChild": "material.parent.createWithChild",
         "POST material.export": "material.export",
         "POST material.brand.save": "brand.save",
         "POST material.brand.delete": "brand.delete",

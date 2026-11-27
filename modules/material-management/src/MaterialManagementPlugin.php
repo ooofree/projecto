@@ -57,6 +57,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'material.delete' => $this->deleteMaterial($input),
             'material.composition.save' => $this->saveComposition($input),
             'material.composition.delete' => $this->deleteComposition($input),
+            'material.parent.createWithChild' => $this->createParentWithChild($input),
             'material.export' => $this->exportMaterials($input),
             'brand.save' => $this->saveBrand($input),
             'brand.delete' => $this->deleteBrand($input),
@@ -105,6 +106,8 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             'currentProject' => $project,
             'data' => $materialData,
             'compositionsByParent' => $compositionsByParent,
+            // 「CP-子项编码」建议：集成件父项默认沿用子件自身编码，可自定义或留空。
+            'assemblyCodeSuggestions' => $this->catalog->assemblyCodeSuggestions($projectId, $materialData['materials']),
             'canEdit' => Support::hasPermission($this->context->db, 'edit_materials'),
             'canDelete' => Support::hasPermission($this->context->db, 'delete_materials'),
             'nav' => $this->nav(),
@@ -352,9 +355,42 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
         // Same permissions, project scope, validation and audit as a normal post.
         if (($input['async'] ?? '') === '1') {
             Support::audit($this->context->db, 'material.composition.save', 'Record ' . $id . '.');
-            return $this->compositionJson($projectId, $this->requiredId($input, 'parent_material_id'), $id);
+            $parentId = $this->requiredId($input, 'parent_material_id');
+            $childId = $this->requiredId($input, 'child_material_id');
+            return $this->compositionJson($projectId, $parentId, $id, [], $childId);
         }
         return $this->complete('material.composition.save', '材料组成已保存。', $id, '?page=materials');
+    }
+
+    /**
+     * Bottom-up entry: create an assembly parent from a child and attach it as
+     * the first component. Answers with the same JSON shape as in-dialog
+     * composition edits so the page can refresh one row and open the new parent.
+     */
+    private function createParentWithChild(array $input): PluginResponse
+    {
+        $projectId = $this->requireMaterialEdit();
+        $result = $this->catalog->createParentWithChild($projectId, $input);
+        if (($input['async'] ?? '') === '1') {
+            Support::audit(
+                $this->context->db,
+                'material.parent.create',
+                'Record ' . $result['parent_material_id'] . '.'
+            );
+            return $this->compositionJson(
+                $projectId,
+                $result['parent_material_id'],
+                $result['composition_id'],
+                ['created_parent_material_id' => $result['parent_material_id']],
+                $this->requiredId($input, 'child_material_id')
+            );
+        }
+        return $this->complete(
+            'material.parent.create',
+            '父项已创建，子材料已纳入。',
+            $result['parent_material_id'],
+            '?page=materials'
+        );
     }
 
     private function deleteComposition(array $input): PluginResponse
@@ -369,7 +405,7 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
                     'composition_id' => $id,
                     'child_material_id' => (int) $edge['child_material_id'],
                 ],
-            ]);
+            ], (int) $edge['child_material_id']);
         }
         return $this->complete('material.composition.delete', '材料组成已删除。', $id, '?page=materials');
     }
@@ -379,13 +415,22 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
      * parent's fresh sample/exemption state and counts, so the dialog row and
      * the catalogue row can be updated in place without a second page load.
      */
-    private function compositionJson(int $projectId, int $parentId, ?int $compositionId, array $extra = []): PluginResponse
-    {
+    private function compositionJson(
+        int $projectId,
+        int $parentId,
+        ?int $compositionId,
+        array $extra = [],
+        ?int $childId = null
+    ): PluginResponse {
         $parent = null;
+        $child = null;
         foreach ($this->catalog->materialData($projectId)['materials'] as $row) {
-            if ((int) $row['material_id'] === $parentId) {
+            $rowId = (int) $row['material_id'];
+            if ($rowId === $parentId) {
                 $parent = $row;
-                break;
+            }
+            if ($childId !== null && $rowId === $childId) {
+                $child = $row;
             }
         }
         if ($parent === null) {
@@ -416,9 +461,17 @@ final class MaterialManagementPlugin implements PluginInterface, SidebarNavigati
             ],
             'parent' => [
                 'material_id' => (int) $parent['material_id'],
+                'material_name' => (string) $parent['material_name'],
                 'sample_required' => (string) ($parent['sample_required'] ?? 'required'),
                 'child_count' => (int) ($parent['child_count'] ?? 0),
                 'parent_count' => (int) ($parent['parent_count'] ?? 0),
+            ],
+            // 子件侧的计数：从子件建父/加入父项后，列表里「被 N 个父项引用」同步刷新。
+            'child' => $child === null ? null : [
+                'material_id' => (int) $child['material_id'],
+                'sample_required' => (string) ($child['sample_required'] ?? 'required'),
+                'child_count' => (int) ($child['child_count'] ?? 0),
+                'parent_count' => (int) ($child['parent_count'] ?? 0),
             ],
         ];
         return PluginResponse::raw(

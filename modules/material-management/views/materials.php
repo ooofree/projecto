@@ -10,6 +10,8 @@ $categories = $data['categories'];
 // 被其他定制项引用的子件仍可共享。这里用已加载的材料做等价筛选，避免逐材料再查库；
 // 服务端 saveComposition 仍按同一规则强制校验。
 $compositionsByParent = is_array($compositionsByParent ?? null) ? $compositionsByParent : [];
+// 「CP-子项编码」建议值（键为材料 ID）：父项默认沿用子件编码，可自定义或留空。
+$assemblyCodeSuggestions = is_array($assemblyCodeSuggestions ?? null) ? $assemblyCodeSuggestions : [];
 $compositionChildOptions = [];
 foreach ($materials as $parentMaterial) {
     $parentId = (int) $parentMaterial['material_id'];
@@ -233,9 +235,11 @@ foreach ($materials as $material) {
                                 <span class="status-badge is-green">需送样</span>
                             <?php endif; ?>
                             <?php if ($childCount > 0): ?>
-                                <span class="material-secondary">定制项 · <?= $childCount ?> 个组件</span>
+                                <button type="button" class="material-secondary material-link"
+                                        data-dialog-open="material-edit-<?= (int) $material['material_id'] ?>"
+                                        data-focus-composition>定制项 · <?= $childCount ?> 个组件</button>
                             <?php elseif ((int) ($material['parent_count'] ?? 0) > 0): ?>
-                                <span class="material-secondary">组成子件</span>
+                                <span class="material-secondary">组成子件 · 被 <?= (int) $material['parent_count'] ?> 个父项引用</span>
                             <?php endif; ?>
                         </td>
                         <td class="material-cell-actions">
@@ -382,6 +386,29 @@ foreach ($materials as $material) {
     </template>
     <div data-material-dialogs>
     <?php foreach ($materials as $material): ?>
+        <?php
+        $selfId = (int) $material['material_id'];
+        $materialChildCount = (int) ($material['child_count'] ?? 0);
+        $materialParentCount = (int) ($material['parent_count'] ?? 0);
+        $assemblyParents = [];
+        foreach ($materials as $candidateParent) {
+            $candidateId = (int) $candidateParent['material_id'];
+            if ($candidateId === $selfId || (int) ($candidateParent['child_count'] ?? 0) === 0) {
+                continue;
+            }
+            $alreadyLinked = false;
+            foreach ($compositionsByParent[$candidateId] ?? [] as $edge) {
+                if ((int) $edge['child_material_id'] === $selfId) {
+                    $alreadyLinked = true;
+                    break;
+                }
+            }
+            if (!$alreadyLinked) {
+                $assemblyParents[] = $candidateParent;
+            }
+        }
+        $assemblyCode = (string) ($assemblyCodeSuggestions[$selfId] ?? '');
+        ?>
         <dialog class="edit-dialog material-edit-dialog" id="material-edit-<?= (int) $material['material_id'] ?>" aria-labelledby="material-edit-title-<?= (int) $material['material_id'] ?>">
             <div class="dialog-heading">
                 <div>
@@ -484,6 +511,71 @@ foreach ($materials as $material) {
                     <p class="muted" data-composition-exhausted<?= $childCandidates === [] ? '' : ' hidden' ?>>暂无可添加的子材料（子材料不能是已有组成的定制项）。</p>
                 <?php endif; ?>
             </div>
+            <?php if ($canEdit): ?>
+                <div class="dialog-section assembly-section"
+                     data-assembly-section
+                     data-child-id="<?= $selfId ?>"
+                     data-child-unit="<?= $escape($material['unit']) ?>"
+                     data-child-name="<?= $escape($material['material_name']) ?>">
+                    <h3>归入父项（子件 → 父项）</h3>
+                    <p class="muted">从当前子材料向上建父项：可直接加入已有集成件，或新建一个父项并把本材料作为它的第一条子件。组成仍是父—子单层；子件可以被多个父项共用。</p>
+                    <p class="entry-status" data-assembly-status role="status" aria-live="polite" hidden></p>
+                    <?php if ($materialChildCount > 0): ?>
+                        <p class="muted">该材料已有组成子项，是父项；按单层规则不能再归入其他父项。</p>
+                    <?php else: ?>
+                        <?php if ($materialParentCount > 0): ?>
+                            <p class="muted">当前已被 <?= $materialParentCount ?> 个父项引用；仍可加入其他父项。</p>
+                        <?php endif; ?>
+                        <?php if ($assemblyParents === []): ?>
+                            <p class="muted">暂无可加入的其他父项，可直接在下方新建父项。</p>
+                        <?php else: ?>
+                            <form method="post" action="" class="inline-editor" data-assembly-attach>
+                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                <input type="hidden" name="action" value="material.composition.save">
+                                <input type="hidden" name="child_material_id" value="<?= $selfId ?>">
+                                <label>加入已有父项
+                                    <select name="parent_material_id" required>
+                                        <option value="">请选择父项</option>
+                                        <?php foreach ($assemblyParents as $parentOption): ?>
+                                            <option value="<?= (int) $parentOption['material_id'] ?>"><?= $escape(($parentOption['material_code'] ? $parentOption['material_code'] . ' · ' : '') . $parentOption['material_name']) ?>（<?= $escape($parentOption['unit']) ?>，已有 <?= (int) ($parentOption['child_count'] ?? 0) ?> 个子件）</option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </label>
+                                <label>数量系数<input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required inputmode="decimal"></label>
+                                <button class="button button-secondary" type="submit">加入已有父项</button>
+                            </form>
+                            <p class="muted">数量系数 = 每 1 父项单位所需本子件数量（单位取本材料自身单位），父子单位不同时按实际用量填。</p>
+                        <?php endif; ?>
+                        <details class="assembly-create"<?= $assemblyParents === [] ? ' open' : '' ?>>
+                            <summary>＋ 新建父项并纳入</summary>
+                            <form method="post" action="" class="form-grid assembly-create-form" data-assembly-create>
+                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                <input type="hidden" name="action" value="material.parent.createWithChild">
+                                <input type="hidden" name="child_material_id" value="<?= $selfId ?>">
+                                <label>父项名称<input name="material_name" maxlength="255" value="<?= $escape($material['material_name']) ?>" required autocomplete="off"></label>
+                                <label>父项单位<input name="unit" maxlength="50" list="material-unit-options" value="<?= $escape($material['unit']) ?>" required data-assembly-unit autocapitalize="off" spellcheck="false"></label>
+                                <label>分类
+                                    <select name="category_id">
+                                        <option value="">未分类</option>
+                                        <?php foreach ($categories as $category): ?>
+                                            <option value="<?= (int) $category['category_id'] ?>" <?= (int) $category['category_id'] === (int) ($material['category_id'] ?? 0) ? 'selected' : '' ?>><?= $escape($category['category_name']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </label>
+                                <label>材料编码 <span class="entry-field-hint">建议 · 可自定义或留空</span>
+                                    <input name="material_code" maxlength="50" value="<?= $escape($assemblyCode) ?>" data-assembly-code autocapitalize="off" spellcheck="false">
+                                </label>
+                                <label>数量系数<input type="number" name="quantity" min="0.01" step="0.01" value="1.00" required inputmode="decimal" data-assembly-quantity></label>
+                                <p class="muted field-wide" data-assembly-quantity-hint>数量系数 = 每 1 个父项单位需要多少本子件；父子单位不同时请按实际用量填写（如 每 1 套 = 3.90 m²）。</p>
+                                <p class="muted field-wide">建议把父项名称改成整合品名（如「12厚超白钢化玻璃双开门」），避免父子同名；编码默认「CP-」+ 本子件编码，可自行修改。保存后本材料自动成为第一条子件，父项默认转为「无需送样」。</p>
+                                <div class="field-wide dialog-actions">
+                                    <button class="button button-primary" type="submit">新建父项并纳入</button>
+                                </div>
+                            </form>
+                        </details>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
         </dialog>
     <?php endforeach; ?>
     </div>

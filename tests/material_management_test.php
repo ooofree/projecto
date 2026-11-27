@@ -2260,6 +2260,185 @@ $db->exec(
      SELECT 1, permission_id FROM Permissions WHERE permission_name = 'view_materials'"
 );
 
+// ---------------------------------------------------------------------------
+// 父项编号族「CP-子项编码」与子件侧「归入父项」（2026-11-27）。
+// 编号不承载层级：父项编码记录它由哪个子件建起，可自定义或留空；父子关系
+// 仍只由 Material_Compositions 表达。建父 + 建首条边必须是一个事务。
+// ---------------------------------------------------------------------------
+$assemblyChildId = $catalog->saveMaterial(1, [
+    'material_code' => 'BL-777',
+    'material_name' => '归入测试超白玻璃',
+    'unit' => 'm2',
+]);
+$assemblySuggestions = $catalog->assemblyCodeSuggestions(1, $catalog->materialData(1)['materials']);
+materialTestCheck(
+    (string) ($assemblySuggestions[$assemblyChildId] ?? '') === 'CP-BL-777',
+    'An assembly code suggestion must be CP- plus the originating child material code.'
+);
+$assemblyCodelessChildId = $catalog->saveMaterial(1, [
+    'material_name' => '归入测试无码玻璃',
+    'unit' => 'm2',
+]);
+$assemblySuggestionsWithCodeless = $catalog->assemblyCodeSuggestions(1, $catalog->materialData(1)['materials']);
+materialTestCheck(
+    preg_match('/^CP-\d{3}$/', (string) ($assemblySuggestionsWithCodeless[$assemblyCodelessChildId] ?? '')) === 1
+        && (string) ($assemblySuggestionsWithCodeless[$assemblyCodelessChildId] ?? '') !== 'CP-BL-777',
+    'A child without a code must fall back to a project-unique CP- sequence number.'
+);
+$assemblyCreated = $catalog->createParentWithChild(1, [
+    'child_material_id' => (string) $assemblyChildId,
+    'material_name' => '归入测试玻璃门',
+    'unit' => '樘',
+    'material_code' => 'CP-BL-777',
+    'quantity' => '3.90',
+]);
+$assemblyParentId = (int) ($assemblyCreated['parent_material_id'] ?? 0);
+$assemblyCompositionId = (int) ($assemblyCreated['composition_id'] ?? 0);
+$assemblyParentRow = null;
+foreach ($catalog->materialData(1)['materials'] as $assemblyRow) {
+    if ((int) $assemblyRow['material_id'] === $assemblyParentId) {
+        $assemblyParentRow = $assemblyRow;
+    }
+}
+materialTestCheck(
+    $assemblyParentId > 0
+        && $assemblyCompositionId > 0
+        && $assemblyParentRow !== null
+        && (int) $assemblyParentRow['child_count'] === 1
+        && (string) $assemblyParentRow['sample_required'] === 'exempt'
+        && abs((float) $db->query("SELECT quantity FROM Material_Compositions WHERE composition_id = {$assemblyCompositionId}")->fetchColumn() - 3.9) < 0.0001
+        && (string) $db->query("SELECT sample_required FROM Materials WHERE material_id = {$assemblyChildId}")->fetchColumn() === 'required',
+    'Creating a parent from a child must persist both rows, flip the parent to exempt and keep the child requirement.'
+);
+$assemblyChildParentCount = 0;
+foreach ($catalog->materialData(1)['materials'] as $assemblyRow) {
+    if ((int) $assemblyRow['material_id'] === $assemblyChildId) {
+        $assemblyChildParentCount = (int) $assemblyRow['parent_count'];
+    }
+}
+materialTestCheck(
+    $assemblyChildParentCount === 1,
+    'The child catalogue row must report that one parent now references it.'
+);
+// 失败必须整体回滚：编码冲突时不能留下孤儿父项或半条组成边。
+$assemblyMaterialCountBefore = (int) $db->query('SELECT COUNT(*) FROM Materials WHERE project_id = 1')->fetchColumn();
+$assemblyEdgeCountBefore = (int) $db->query('SELECT COUNT(*) FROM Material_Compositions WHERE project_id = 1')->fetchColumn();
+materialTestExpectStatus(
+    fn () => $catalog->createParentWithChild(1, [
+        'child_material_id' => (string) $assemblyChildId,
+        'material_name' => '归入测试冲突父项',
+        'unit' => '樘',
+        'material_code' => 'CP-BL-777',
+        'quantity' => '1',
+    ]),
+    409,
+    'A duplicate assembly code must be rejected with 409.'
+);
+materialTestCheck(
+    (int) $db->query('SELECT COUNT(*) FROM Materials WHERE project_id = 1')->fetchColumn() === $assemblyMaterialCountBefore
+        && (int) $db->query('SELECT COUNT(*) FROM Material_Compositions WHERE project_id = 1')->fetchColumn() === $assemblyEdgeCountBefore,
+    'A rejected create-parent request must roll back the parent row and its edge (no orphan).'
+);
+materialTestExpectStatus(
+    fn () => $catalog->createParentWithChild(1, [
+        'child_material_id' => (string) $assemblyChildId,
+        'material_name' => '归入测试玻璃门',
+        'unit' => '樘',
+        'material_code' => 'CP-BL-777-B',
+        'quantity' => '1',
+    ]),
+    409,
+    'A duplicate parent name must be rejected instead of silently creating a twin.'
+);
+$assemblyMaterialCountAfterName = (int) $db->query('SELECT COUNT(*) FROM Materials WHERE project_id = 1')->fetchColumn();
+materialTestCheck(
+    $assemblyMaterialCountAfterName === $assemblyMaterialCountBefore,
+    'A duplicate parent name must not create a second material row.'
+);
+// 子件本身已有子项 → 单层规则拒绝；父项行必须回滚。
+materialTestExpectStatus(
+    fn () => $catalog->createParentWithChild(1, [
+        'child_material_id' => (string) $materialId,
+        'material_name' => '非法嵌套父项',
+        'unit' => '樘',
+        'quantity' => '1',
+    ]),
+    422,
+    'A material that already has children must not be attached upward (single level).'
+);
+materialTestCheck(
+    (int) $db->query('SELECT COUNT(*) FROM Materials WHERE project_id = 1')->fetchColumn() === $assemblyMaterialCountBefore,
+    'A single-level rejection must roll back the just-inserted parent row.'
+);
+materialTestExpectStatus(
+    fn () => $catalog->createParentWithChild(1, [
+        'child_material_id' => (string) $assemblyChildId,
+        'material_name' => '归入测试缺系数父项',
+        'unit' => '樘',
+        'material_code' => '',
+        'quantity' => '',
+    ]),
+    422,
+    'Creating a parent without a quantity coefficient must be rejected.'
+);
+// 路由与异步 JSON：新父项 + 首条组成边 + 子件父项计数一起返回。
+$assemblyAsyncChildId = $catalog->saveMaterial(1, [
+    'material_code' => 'BL-888',
+    'material_name' => '归入测试异步玻璃',
+    'unit' => 'm2',
+]);
+$assemblyRouteResponse = $registry->dispatch('POST', 'material.parent.createWithChild', [
+    'async' => '1',
+    'child_material_id' => (string) $assemblyAsyncChildId,
+    'material_name' => '归入测试异步玻璃门',
+    'unit' => '樘',
+    'material_code' => 'CP-BL-888',
+    'quantity' => '2.50',
+]);
+$assemblyRouteJson = json_decode((string) ($assemblyRouteResponse->data['body'] ?? ''), true);
+materialTestCheck(
+    $assemblyRouteResponse instanceof PluginResponse
+        && $assemblyRouteResponse->type === 'raw'
+        && str_contains((string) ($assemblyRouteResponse->data['content_type'] ?? ''), 'application/json')
+        && is_array($assemblyRouteJson)
+        && ($assemblyRouteJson['ok'] ?? false) === true
+        && (int) ($assemblyRouteJson['created_parent_material_id'] ?? 0) > 0
+        && (int) ($assemblyRouteJson['composition']['child_material_id'] ?? 0) === $assemblyAsyncChildId
+        && (int) ($assemblyRouteJson['parent']['child_count'] ?? 0) === 1
+        && (int) ($assemblyRouteJson['child']['parent_count'] ?? 0) === 1
+        && (string) ($assemblyRouteJson['parent']['sample_required'] ?? '') === 'exempt',
+    'The create-parent route must answer asynchronously with the new edge, the parent state and the child parent count.'
+);
+$assemblySyncResponse = $plugin->dispatch('material.parent.createWithChild', [
+    'child_material_id' => (string) $assemblyCodelessChildId,
+    'material_name' => '归入测试无码玻璃门',
+    'unit' => '樘',
+    'material_code' => '',
+    'quantity' => '1',
+]);
+materialTestCheck(
+    $assemblySyncResponse->type === 'redirect' && $assemblySyncResponse->location === '?page=materials',
+    'Without the async flag the create-parent form must still fall back to the list redirect.'
+);
+$assemblyAuditCount = (int) $db->query("SELECT COUNT(*) FROM audit_logs WHERE action = 'material.parent.create'")->fetchColumn();
+materialTestCheck(
+    $assemblyAuditCount >= 1,
+    'Create-parent must write the same audit entry as a normal form post.'
+);
+// 页面：父行组件数可点开组成区；子件行给出被引用父项数；弹窗带归入父项区。
+$assemblyHtml = renderMaterialTestView($plugin->dispatch('materials', []));
+materialTestCheck(
+    str_contains($assemblyHtml, 'data-assembly-section')
+        && str_contains($assemblyHtml, 'data-assembly-create')
+        && str_contains($assemblyHtml, 'data-assembly-attach')
+        && str_contains($assemblyHtml, 'value="material.parent.createWithChild"')
+        && str_contains($assemblyHtml, '组成子件 · 被 1 个父项引用')
+        && str_contains($assemblyHtml, '定制项 · 1 个组件')
+        && str_contains($assemblyHtml, 'data-focus-composition')
+        && str_contains($assemblyHtml, 'CP-BL-777-2'),
+    'The materials page must expose the bottom-up entry, CP- child-code suggestions (with collision suffix) and parent/child counts.'
+);
+
 $db->exec(
     "DELETE FROM Role_Permissions
      WHERE permission_id = (SELECT permission_id FROM Permissions WHERE permission_name = 'view_material_quotations')"

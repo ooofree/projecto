@@ -31,6 +31,7 @@
             "php tests/closeout_management_web_smoke_test.php",
             "php tests/login_page_smoke_test.php",
             "php tests/projects_page_smoke_test.php",
+            "php tests/projects_progress_smoke_test.php",
             "php tests/layout_v21_smoke_test.php"
         ]
     },
