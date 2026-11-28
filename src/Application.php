@@ -353,6 +353,12 @@ final class Application
         // removed here — plugins already filtered their items by permission.
         $sidebarItems = isset($_SESSION['user_id']) ? $this->plugins->sidebarItems() : [];
         $projectDirectory = isset($_SESSION['user_id']) ? $this->plugins->projectDirectory() : [];
+        // Project-home cards: only the project overview asks for its list under
+        // the explicit projectOverview flag, so every other page skips the
+        // aggregate query instead of paying for a badge it never renders.
+        $projectProgress = isset($_SESSION['user_id']) && ($viewData['projectOverview'] ?? false) === true
+            ? $this->plugins->projectProgress()
+            : [];
         $db = $this->db;
         // The shell needs the current project on EVERY signed-in page, including
         // shared-catalogue views (brands/suppliers/…) that do not pass it

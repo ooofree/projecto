@@ -425,6 +425,31 @@ tbody tr:hover { background: var(--surface-muted); }
 .project-card-title { margin: 0 0 6px; overflow: hidden; font-size: .8125rem; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .project-card-meta { color: var(--text-tertiary); font-size: .6875rem; }
 .project-dates { display: flex; gap: 12px; margin-top: 13px; color: var(--text-tertiary); font-size: .6875rem; }
+/* Project-home closeout progress: solid = verified quantity, light = submitted
+   (待验收), dashed tick = the share the工期 says should be done by today. Tone
+   follows the gap between the two, so a late project turns red on its own. */
+.project-progress-form { margin: 12px 0 0; padding: 0; }
+.project-progress { display: block; width: 100%; padding: 9px 10px 8px; color: inherit; text-align: left; background: var(--surface-1); border: 1px solid var(--border-subtle); border-radius: 9px; font: inherit; cursor: pointer; transition: border-color .16s ease, background-color .16s ease; }
+.project-progress:hover { border-color: var(--card-hover-border); background: var(--surface-2); }
+.project-progress:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.project-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.project-progress-label { color: var(--text-tertiary); font-size: .625rem; font-weight: 650; letter-spacing: .02em; }
+.project-progress-state { display: inline-flex; align-items: center; gap: 6px; }
+.project-progress-value { font-size: .8125rem; font-weight: 720; font-variant-numeric: tabular-nums; }
+.project-progress-track { position: relative; display: block; height: 6px; margin-top: 7px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.project-progress-submitted { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--brand); opacity: .28; }
+.project-progress-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--brand); border-radius: 4px; }
+.project-progress-target { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--text-tertiary); opacity: .5; }
+.project-progress-foot { display: block; margin-top: 6px; color: var(--text-tertiary); font-size: .625rem; line-height: 1.5; }
+.project-progress.tone-ok .project-progress-value { color: var(--status-success-text); }
+.project-progress.tone-ok .project-progress-fill { background: var(--status-success-text); }
+.project-progress.tone-warn .project-progress-value { color: var(--status-warning-text); }
+.project-progress.tone-warn .project-progress-fill { background: var(--warning-emphasis-border); }
+.project-progress.tone-danger { background: color-mix(in srgb, var(--status-danger-bg) 70%, var(--surface-1)); border-color: color-mix(in srgb, var(--status-danger-text) 30%, var(--border-subtle)); }
+.project-progress.tone-danger .project-progress-value { color: var(--status-danger-text); }
+.project-progress.tone-danger .project-progress-fill { background: var(--status-danger-text); }
+.project-progress.tone-done .project-progress-value { color: var(--status-success-text); }
+.project-progress.tone-done .project-progress-fill { background: var(--status-success-text); }
 .project-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
 .project-footer form { margin: 0; }
 .linkbtn { padding: 0; color: var(--accent-text); background: transparent; border: 0; font-size: .6875rem; font-weight: 650; cursor: pointer; }
@@ -715,6 +740,16 @@ tbody tr:hover { background: var(--row-hover); }
 .report-heading { letter-spacing: -.035em; }
 .material-primary { display: block; }
 .material-secondary, .report-table .material-secondary { display: block; margin-top: 3px; font-size: .77rem; }
+/* Parent component count doubles as the entry into the composition editor. */
+.material-secondary.material-link {
+    margin-top: 3px; padding: 0; font: inherit; font-size: .77rem;
+    color: var(--accent-text); background: none; border: 0;
+    text-align: left; text-decoration: none; cursor: pointer;
+}
+.material-secondary.material-link:hover { text-decoration: underline; }
+.assembly-section .assembly-create { margin-top: 10px; }
+.assembly-section .assembly-create > summary { cursor: pointer; font-size: .82rem; font-weight: 600; color: var(--accent-text); }
+.assembly-section .assembly-create-form { margin-top: 10px; }
 .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .row-actions form, .actions form { display: inline-flex; }
 .row-actions .button { min-height: 33px; padding: 5px 9px; }

@@ -101,13 +101,14 @@ final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
     private function entryPageFor(array $input): string
     {
         $return = $input['return'] ?? null;
-        if (!is_string($return) || !in_array($return, ['spaces', 'materials', 'documents'], true)) {
+        if (!is_string($return) || !in_array($return, ['spaces', 'materials', 'documents', 'closeouts'], true)) {
             return 'projects';
         }
         $permission = match ($return) {
             'spaces' => 'view_project_spaces',
             'materials' => 'view_materials',
             'documents' => 'view_issues',
+            'closeouts' => 'view_closeouts',
         };
 
         return Support::hasPermission($this->context->db, $permission) ? $return : 'projects';
@@ -120,6 +121,7 @@ final class ProjectFoundationPlugin implements PluginInterface, ServicePublisher
 
         return $this->context->view('projects.php', [
             'title' => '项目',
+            'projectOverview' => true,
             'projects' => $this->projects->list($archivedView),
             'currentProject' => $this->context->currentProject(),
             'archivedView' => $archivedView,

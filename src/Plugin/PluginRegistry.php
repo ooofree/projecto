@@ -19,6 +19,8 @@ final class PluginRegistry
     private array $enabledStates = [];
     private array $sidebarItems = [];
     private array $projectDirectory = [];
+    /** @var list<array{plugin: string, provider: ProjectProgressProvider}> */
+    private array $progressProviders = [];
     private PluginEventBus $eventBus;
     private PluginServiceRegistry $services;
 
@@ -141,6 +143,14 @@ final class PluginRegistry
                     }
                     $this->projectDirectory[] = $entry;
                 }
+            }
+
+            // V2.1 project-home cards: progress providers are collected here
+            // but queried lazily (projectProgress()) so only the project list
+            // pays for the aggregate; each provider keeps its own permission
+            // gate and its own progress yardstick.
+            if ($plugin instanceof ProjectProgressProvider) {
+                $this->progressProviders[] = ['plugin' => $id, 'provider' => $plugin];
             }
 
             // "provides" publishes this plugin's implementation of a core
@@ -298,6 +308,60 @@ final class PluginRegistry
     public function projectDirectory(): array
     {
         return $this->projectDirectory;
+    }
+
+    /**
+     * Aggregated project progress contributed by enabled plugins, keyed by
+     * project id. Numbers from several providers are summed, so a future
+     * yardstick (e.g. WBS tasks) can publish into the same card without the
+     * core having to know where they came from.
+     *
+     * @return array<int, array{plan_count: int, item_total: int, item_closed: int, qty_total: float, qty_closed: float, qty_submitted: float}>
+     */
+    public function projectProgress(): array
+    {
+        $projects = [];
+        foreach ($this->progressProviders as $entry) {
+            foreach ($entry['provider']->projectProgress() as $row) {
+                if (!is_array($row) || !isset($row['project_id']) || !is_int($row['project_id']) || $row['project_id'] < 1) {
+                    throw new RuntimeException(
+                        "Plugin {$entry['plugin']} declares an invalid project progress entry."
+                    );
+                }
+                foreach (['plan_count', 'item_total', 'item_closed'] as $key) {
+                    if (!isset($row[$key]) || !is_int($row[$key]) || $row[$key] < 0) {
+                        throw new RuntimeException(
+                            "Plugin {$entry['plugin']} declares an invalid project progress entry."
+                        );
+                    }
+                }
+                foreach (['qty_total', 'qty_closed', 'qty_submitted'] as $key) {
+                    if (!isset($row[$key]) || !is_numeric($row[$key]) || (float) $row[$key] < 0) {
+                        throw new RuntimeException(
+                            "Plugin {$entry['plugin']} declares an invalid project progress entry."
+                        );
+                    }
+                }
+
+                $projectId = $row['project_id'];
+                $projects[$projectId] ??= [
+                    'plan_count' => 0,
+                    'item_total' => 0,
+                    'item_closed' => 0,
+                    'qty_total' => 0.0,
+                    'qty_closed' => 0.0,
+                    'qty_submitted' => 0.0,
+                ];
+                $projects[$projectId]['plan_count'] += $row['plan_count'];
+                $projects[$projectId]['item_total'] += $row['item_total'];
+                $projects[$projectId]['item_closed'] += $row['item_closed'];
+                $projects[$projectId]['qty_total'] += (float) $row['qty_total'];
+                $projects[$projectId]['qty_closed'] += (float) $row['qty_closed'];
+                $projects[$projectId]['qty_submitted'] += (float) $row['qty_submitted'];
+            }
+        }
+
+        return $projects;
     }
 
     public function migrations(): array

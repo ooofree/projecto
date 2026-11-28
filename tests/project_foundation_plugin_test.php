@@ -107,6 +107,20 @@ $selectEvil = $plugin->dispatch('select', ['project_id' => 1, 'return' => 'admin
 if ($selectEvil->type !== 'redirect' || $selectEvil->location !== '?page=projects') {
     throw new RuntimeException('Non-whitelisted return targets must fall back to the project list.');
 }
+
+// The project-home progress bar enters the closeout workspace: same guarded
+// POST, but only for viewers who may open closeout.
+$db->exec("INSERT INTO Permissions (permission_id, permission_name) VALUES (5, 'view_closeouts')");
+$db->exec('INSERT INTO Role_Permissions (role_id, permission_id) VALUES (1, 5)');
+$selectCloseouts = $plugin->dispatch('select', ['project_id' => 1, 'return' => 'closeouts']);
+if ($selectCloseouts->type !== 'redirect' || $selectCloseouts->location !== '?page=closeouts') {
+    throw new RuntimeException('An authorized closeout return target should open the closeout workspace.');
+}
+$db->exec('DELETE FROM Role_Permissions WHERE permission_id = 5');
+$selectCloseoutsDenied = $plugin->dispatch('select', ['project_id' => 1, 'return' => 'closeouts']);
+if ($selectCloseoutsDenied->type !== 'redirect' || $selectCloseoutsDenied->location !== '?page=projects') {
+    throw new RuntimeException('A closeout return target without its permission must fall back to the project list.');
+}
 $deleteResponse = $plugin->dispatch('project.delete', ['project_id' => 1]);
 if (
     $deleteResponse->type !== 'redirect'

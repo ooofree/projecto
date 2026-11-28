@@ -6,6 +6,146 @@ $statusLabels = [
     'on-hold' => '已暂停',
 ];
 $currentProjectId = is_array($currentProject) ? (int) $currentProject['project_id'] : 0;
+$projectProgress = is_array($projectProgress ?? null) ? $projectProgress : [];
+$todayDate = \ProjectO\Support::nowLocal('Y-m-d');
+
+if (!function_exists('project_progress_card_meta')) {
+    /**
+     * Card-level closeout progress: quantity-weighted verified vs effective
+     * baseline, plus the schedule yardstick (elapsed share of the project
+     * window). Presentation only — no number is written back anywhere.
+     * Warning bands: ≥ -5pp vs schedule = normal, -5..-15pp = slow, worse or a
+     * project running out of days (< 7 days left, < 90% done) = alert.
+     */
+    function project_progress_card_meta(array $project, ?array $summary, string $today): array
+    {
+        $unplanned = [
+            'visible' => true,
+            'tone' => 'none',
+            'chip' => '未建立',
+            'chipClass' => 'is-neutral',
+            'value' => '—',
+            'done' => null,
+            'submitted' => null,
+            'planned' => null,
+            'foot' => ['点击进入工程消项建立计划 →'],
+        ];
+        if ($summary === null) {
+            $unplanned['visible'] = false;
+            return $unplanned;
+        }
+
+        $status = (string) ($project['status'] ?? '');
+        $planCount = (int) $summary['plan_count'];
+        $itemTotal = (int) $summary['item_total'];
+        $itemClosed = (int) $summary['item_closed'];
+        $qtyTotal = (float) $summary['qty_total'];
+        $qtyClosed = (float) $summary['qty_closed'];
+        $qtySubmitted = (float) $summary['qty_submitted'];
+
+        if ($planCount === 0 && $itemTotal === 0) {
+            return $unplanned;
+        }
+
+        $foot = [];
+        if ($itemTotal > 0) {
+            $foot[] = '已消项 ' . $itemClosed . '/' . $itemTotal . ' 项';
+        }
+
+        if ($qtyTotal <= 0) {
+            return [
+                'visible' => true,
+                'tone' => 'none',
+                'chip' => $itemTotal > 0 ? '无基线' : '未纳入',
+                'chipClass' => 'is-neutral',
+                'value' => '—',
+                'done' => null,
+                'submitted' => null,
+                'planned' => null,
+                'foot' => $foot === []
+                    ? ['点击进入工程消项纳入事项 →']
+                    : array_merge($foot, ['缺少空间工程量基线']),
+            ];
+        }
+
+        $done = round(min(100, max(0, $qtyClosed / $qtyTotal * 100)), 1);
+        $submitted = round(min(100, max($done, $qtySubmitted / $qtyTotal * 100)), 1);
+
+        $planned = null;
+        $daysLeft = null;
+        $startDate = (string) ($project['start_date'] ?? '');
+        $endDate = (string) ($project['end_date'] ?? '');
+        if ($startDate !== '' && $endDate !== '') {
+            try {
+                $start = new DateTimeImmutable($startDate);
+                $end = new DateTimeImmutable($endDate);
+                $now = new DateTimeImmutable($today);
+                $window = (int) $start->diff($end)->days;
+                if ($window > 0) {
+                    $planned = $now >= $start
+                        ? round(min(100, max(0, (int) $start->diff($now)->days / $window * 100)), 0)
+                        : 0;
+                    $daysLeft = (int) $now->diff($end)->days * ($now <= $end ? 1 : -1);
+                }
+            } catch (Throwable) {
+                $planned = null;
+                $daysLeft = null;
+            }
+        }
+        if ($planned !== null) {
+            $foot[] = '工期已过 ' . $planned . '%';
+            $foot[] = $daysLeft >= 0 ? '剩 ' . $daysLeft . ' 天' : '已超期 ' . abs((int) $daysLeft) . ' 天';
+        } else {
+            $foot[] = '项目未排工期';
+        }
+
+        $tone = 'neutral';
+        $chip = '未排期';
+        $chipClass = 'is-neutral';
+        if ($status === 'completed') {
+            $tone = 'done';
+            $chip = '已完工';
+            $chipClass = 'is-green';
+        } elseif ($status === 'planning') {
+            $chip = '计划中';
+        } elseif ($status === 'on-hold') {
+            $chip = '已暂停';
+        } elseif ($planned !== null) {
+            $delta = $done - (float) $planned;
+            if ($daysLeft < 0 || $delta < -15) {
+                $tone = 'danger';
+                $chip = '预警';
+                $chipClass = 'is-red';
+            } elseif ($delta < -5) {
+                $tone = 'warn';
+                $chip = '偏慢';
+                $chipClass = 'is-amber';
+            } else {
+                $tone = 'ok';
+                $chip = '正常';
+                $chipClass = 'is-green';
+            }
+            // 日期临近仍明显未完成：即使进度偏差不大也要警示。
+            if ($daysLeft >= 0 && $daysLeft <= 7 && $done < 90) {
+                $tone = 'danger';
+                $chip = '预警';
+                $chipClass = 'is-red';
+            }
+        }
+
+        return [
+            'visible' => true,
+            'tone' => $tone,
+            'chip' => $chip,
+            'chipClass' => $chipClass,
+            'value' => number_format($done, 1, '.', '') . '%',
+            'done' => $done,
+            'submitted' => $submitted,
+            'planned' => $planned,
+            'foot' => $foot,
+        ];
+    }
+}
 
 // Portfolio report: counts derived only from the server-provided project list
 // the viewer is allowed to see. No progress/cost figures are invented.
@@ -164,6 +304,43 @@ ob_start();
                         <span>开始 <?= $escape($project['start_date'] ?: '未设置') ?></span>
                         <span>结束 <?= $escape($project['end_date'] ?: '未设置') ?></span>
                     </div>
+                    <?php
+                    $cardProgress = project_progress_card_meta(
+                        $project,
+                        $projectProgress[(int) $project['project_id']] ?? null,
+                        $todayDate
+                    );
+                    ?>
+                    <?php if (!$archivedView && $cardProgress['visible']): ?>
+                        <form method="post" class="project-progress-form">
+                            <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                            <input type="hidden" name="action" value="project.select">
+                            <input type="hidden" name="project_id" value="<?= (int) $project['project_id'] ?>">
+                            <input type="hidden" name="return" value="closeouts">
+                            <button type="submit" class="project-progress tone-<?= $escape($cardProgress['tone']) ?>"
+                                data-project-progress
+                                title="按工程量加权：实色为已验收，浅色为已申报待验收；竖线为按工期应完成位置"
+                                aria-label="进入<?= $escape($project['project_name']) ?>的工程消项工作台，当前进度 <?= $escape($cardProgress['value']) ?>，<?= $escape($cardProgress['chip']) ?>">
+                                <span class="project-progress-head">
+                                    <span class="project-progress-label">消项进度</span>
+                                    <span class="project-progress-state">
+                                        <span class="project-progress-value"><?= $escape($cardProgress['value']) ?></span>
+                                        <span class="status-badge <?= $escape($cardProgress['chipClass']) ?>"><?= $escape($cardProgress['chip']) ?></span>
+                                    </span>
+                                </span>
+                                <?php if ($cardProgress['done'] !== null): ?>
+                                    <span class="project-progress-track" aria-hidden="true">
+                                        <span class="project-progress-submitted" style="width: <?= number_format($cardProgress['submitted'], 1, '.', '') ?>%"></span>
+                                        <span class="project-progress-fill" style="width: <?= number_format($cardProgress['done'], 1, '.', '') ?>%"></span>
+                                        <?php if ($cardProgress['planned'] !== null): ?>
+                                            <span class="project-progress-target" style="left: <?= number_format($cardProgress['planned'], 1, '.', '') ?>%" title="按工期应完成位置"></span>
+                                        <?php endif; ?>
+                                    </span>
+                                <?php endif; ?>
+                                <span class="project-progress-foot"><?= $escape(implode(' · ', $cardProgress['foot'])) ?></span>
+                            </button>
+                        </form>
+                    <?php endif; ?>
                     <div class="project-footer">
                         <?php if ($archivedView): ?>
                             <?php if ($canDeleteProjects): ?>

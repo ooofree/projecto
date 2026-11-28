@@ -470,6 +470,53 @@
         });
     };
 
+    // ---- catalogue status cell -------------------------------------------
+    // Shared by the composition editor and the bottom-up "join parent" flow:
+    // a parent shows its component count, a child shows how many parents use it.
+    const statusTextOf = state => {
+        const childCount = Number(state?.child_count ?? 0);
+        const parentCount = Number(state?.parent_count ?? 0);
+        if (childCount > 0) return `定制项 · ${childCount} 个组件`;
+        if (parentCount > 0) return `组成子件 · 被 ${parentCount} 个父项引用`;
+        return '';
+    };
+
+    const syncCatalogueRow = state => {
+        if (!tbody || !state) return;
+        const row = tbody.querySelector(`.material-row[data-material-id="${state.material_id}"]`);
+        const cell = row ? row.querySelector('.material-cell-status') : null;
+        if (!cell) return;
+        const childCount = Number(state.child_count ?? 0);
+        const exempt = String(state.sample_required ?? 'required') === 'exempt';
+
+        let badge = cell.querySelector('.status-badge');
+        if (!badge) {
+            badge = document.createElement('span');
+            cell.prepend(badge);
+        }
+        badge.textContent = exempt ? '无需送样' : '需送样';
+        badge.className = 'status-badge ' + (exempt ? 'is-neutral' : 'is-green');
+
+        const existing = cell.querySelector('.material-secondary');
+        if (existing) existing.remove();
+        const text = statusTextOf(state);
+        if (text === '') return;
+        if (childCount > 0) {
+            const link = document.createElement('button');
+            link.type = 'button';
+            link.className = 'material-secondary material-link';
+            link.dataset.dialogOpen = `material-edit-${state.material_id}`;
+            link.dataset.focusComposition = '';
+            link.textContent = text;
+            cell.append(link);
+            return;
+        }
+        const span = document.createElement('span');
+        span.className = 'material-secondary';
+        span.textContent = text;
+        cell.append(span);
+    };
+
     // ---- composition editor: add several children in one dialog ---------
     // Adding a child used to be a plain form post: the page reloaded, the edit
     // dialog closed and the user landed back on the list for every single
@@ -576,37 +623,8 @@
         };
 
         // Same refresh the list rows get after a normal save, but scoped to the
-        // one row so the open dialog is untouched.
-        const syncCatalogueRow = parent => {
-            if (!tbody) return;
-            const row = tbody.querySelector(`.material-row[data-material-id="${parent.material_id}"]`);
-            const cell = row ? row.querySelector('.material-cell-status') : null;
-            if (!cell) return;
-            const childCount = Number(parent.child_count ?? 0);
-            const parentCount = Number(parent.parent_count ?? 0);
-            const exempt = String(parent.sample_required ?? 'required') === 'exempt';
-
-            let badge = cell.querySelector('.status-badge');
-            if (!badge) {
-                badge = document.createElement('span');
-                cell.prepend(badge);
-            }
-            badge.textContent = exempt ? '无需送样' : '需送样';
-            badge.className = 'status-badge ' + (exempt ? 'is-neutral' : 'is-green');
-
-            const text = childCount > 0 ? `定制项 · ${childCount} 个组件` : parentCount > 0 ? '组成子件' : '';
-            let secondary = cell.querySelector('.material-secondary');
-            if (text === '') {
-                if (secondary) secondary.remove();
-            } else {
-                if (!secondary) {
-                    secondary = document.createElement('span');
-                    secondary.className = 'material-secondary';
-                    cell.append(secondary);
-                }
-                secondary.textContent = text;
-            }
-        };
+        // one row so the open dialog is untouched. syncCatalogueRow is shared
+        // with the bottom-up assembly flow.
 
         const syncParent = (section, parent) => {
             syncTable(section);
@@ -652,6 +670,8 @@
                 const payload = await postComposition(form);
                 const composition = payload.composition ?? null;
                 const parent = payload.parent ?? {};
+                // 子件侧的父项计数同样变化：从父项弹窗加/删子件也要刷新子件行。
+                if (payload.child) syncCatalogueRow(payload.child);
                 if (addForm && composition) {
                     const row = buildRow(section, composition);
                     if (row) insertRow(section, row);
@@ -686,6 +706,130 @@
                     restoreOption(section, childId, label, unit);
                     syncParent(section, parent);
                     hint(section, `已移除「${label || '该子材料'}」。`, false);
+                }
+            } catch (error) {
+                hint(section, error instanceof Error && error.message ? error.message : '网络异常，保存失败，请重试。', true);
+            } finally {
+                form.dataset.busy = '';
+                if (submit) submit.disabled = false;
+            }
+        });
+    };
+
+    // ---- bottom-up entry: attach a child to a new or existing parent -----
+    // Inside a child material's edit dialog the user can join an existing
+    // assembly item or create one and take this material as its first
+    // component. The server completes create-parent + create-edge in one
+    // transaction; here we only keep the counts in step and, after a new
+    // parent, reopen its dialog so more children can be added.
+    const initAssembly = () => {
+        if (typeof window.fetch !== 'function') return;
+
+        const sectionOf = node => node.closest('[data-assembly-section]');
+        const hint = (section, message, isError) => {
+            const node = section ? section.querySelector('[data-assembly-status]') : null;
+            if (!node) return;
+            node.textContent = message;
+            node.classList.toggle('is-error', Boolean(isError));
+            node.classList.toggle('is-success', !isError);
+            node.hidden = false;
+            if (!isError) {
+                window.setTimeout(() => {
+                    if (node.textContent === message) node.hidden = true;
+                }, 6000);
+            }
+        };
+
+        // 1.00 is only right when parent and child share a unit. Changing the
+        // parent unit to 套/樘/项 makes the coefficient a real-world ratio, so
+        // clear the default instead of silently saving a wrong number.
+        const syncQuantity = form => {
+            const section = sectionOf(form);
+            const childUnit = (section?.dataset.childUnit ?? '').trim();
+            const unitInput = form.querySelector('[data-assembly-unit]');
+            const unit = (unitInput?.value ?? '').trim();
+            const quantity = form.querySelector('[data-assembly-quantity]');
+            const hintNode = form.querySelector('[data-assembly-quantity-hint]');
+            if (hintNode) {
+                hintNode.textContent = unit !== ''
+                    ? `数量系数 = 每 1 ${unit} 需要多少 ${childUnit}；单位不同时按实际用量填写（如 每 1 套 = 3.90 m²）。`
+                    : '数量系数 = 每 1 个父项单位需要多少本子件。';
+            }
+            if (!quantity) return;
+            if (unit === '' || unit === childUnit) {
+                if (quantity.value.trim() === '') quantity.value = '1.00';
+            } else if (quantity.value.trim() === '1.00') {
+                quantity.value = '';
+            }
+        };
+
+        const postAssembly = async form => {
+            const body = new FormData(form);
+            body.set('async', '1');
+            const response = await fetch(window.location.href, {
+                method: 'POST',
+                body,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            if (!response.ok) throw new Error(await extractError(response));
+            const payload = await response.json().catch(() => null);
+            if (!payload || payload.ok !== true) throw new Error('保存失败，请重试。');
+            return payload;
+        };
+
+        for (const form of document.querySelectorAll('form[data-assembly-create]')) syncQuantity(form);
+
+        document.addEventListener('input', event => {
+            if (!event.target.closest('[data-assembly-unit]')) return;
+            const form = event.target.closest('form[data-assembly-create]');
+            if (form) syncQuantity(form);
+        });
+
+        document.addEventListener('submit', async event => {
+            const attachForm = event.target.closest('form[data-assembly-attach]');
+            const createForm = event.target.closest('form[data-assembly-create]');
+            const form = attachForm ?? createForm;
+            if (!form) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (form.dataset.busy === '1' || !form.reportValidity()) return;
+
+            form.dataset.busy = '1';
+            const submit = form.querySelector('button[type="submit"]');
+            if (submit) submit.disabled = true;
+            const section = sectionOf(form);
+            try {
+                const payload = await postAssembly(form);
+                if (payload.parent) syncCatalogueRow(payload.parent);
+                if (payload.child) syncCatalogueRow(payload.child);
+
+                if (attachForm) {
+                    const parentName = String(payload.parent?.material_name ?? '');
+                    const count = Number(payload.child?.parent_count ?? 0);
+                    hint(
+                        section,
+                        `已加入父项${parentName !== '' ? `「${parentName}」` : ''}；本材料现被 ${count} 个父项引用。`,
+                        false
+                    );
+                    const select = attachForm.querySelector('select[name="parent_material_id"]');
+                    if (select) {
+                        const chosen = [...select.options].find(option => option.selected);
+                        if (chosen) chosen.remove();
+                        select.value = '';
+                    }
+                    const quantity = attachForm.querySelector('input[name="quantity"]');
+                    if (quantity) quantity.value = '1.00';
+                    return;
+                }
+
+                // New parent: close this dialog, refresh the catalogue, then
+                // reopen the freshly created parent so the next child can be
+                // attached without hunting for it in the list.
+                const createdId = Number(payload.created_parent_material_id ?? payload.parent?.material_id ?? 0);
+                form.closest('dialog')?.close();
+                await refreshCatalogue(createdId > 0 ? createdId : null);
+                if (createdId > 0) {
+                    document.querySelector(`[data-dialog-open="material-edit-${createdId}"]`)?.click();
                 }
             } catch (error) {
                 hint(section, error instanceof Error && error.message ? error.message : '网络异常，保存失败，请重试。', true);
@@ -790,6 +934,7 @@
     initEntry();
     initEditDialogs();
     initCompositionEditors();
+    initAssembly();
     applyFilter();
     renderUnitQuick();
 })();
@@ -806,7 +951,18 @@ document.addEventListener('click', event => {
 
     const dialogTrigger = event.target.closest('[data-dialog-open]');
     if (dialogTrigger) {
-        document.getElementById(dialogTrigger.dataset.dialogOpen)?.showModal();
+        const dialog = document.getElementById(dialogTrigger.dataset.dialogOpen);
+        dialog?.showModal();
+        // Catalogue "3 个组件" / "归入父项" jumps straight to the relevant
+        // dialog section instead of dumping the user at the top of the form.
+        const focusTarget = dialog && dialogTrigger.hasAttribute('data-focus-assembly')
+            ? dialog.querySelector('[data-assembly-section]')
+            : dialog && dialogTrigger.hasAttribute('data-focus-composition')
+                ? dialog.querySelector('[data-composition-section]')
+                : null;
+        if (focusTarget) {
+            window.requestAnimationFrame(() => focusTarget.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+        }
     }
 
     if (event.target.closest('[data-dialog-close]')) {
